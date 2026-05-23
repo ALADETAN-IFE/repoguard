@@ -1324,7 +1324,9 @@ export async function postReviewComments(
     );
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
-    logger.error(`[pr] Failed to post inline review comments: ${message}. Falling back to PR comment...`);
+    logger.error(
+      `[pr] Failed to post inline review comments: ${message}. Falling back to PR comment...`,
+    );
     try {
       const summaryText = comments
         .map((c) => `### 📄 \`${c.path}\` (line ${c.line})\n\n${c.body}`)
@@ -1338,10 +1340,17 @@ export async function postReviewComments(
           body: `## 🛡️ RepoGuard Security Findings & Remediation\n\n${summaryText}`,
         },
       );
-      logger.info(`[pr] Fallback: Posted security findings comment on PR #${prNumber}`);
+      logger.info(
+        `[pr] Fallback: Posted security findings comment on PR #${prNumber}`,
+      );
     } catch (fallbackErr) {
-      const fallbackMsg = fallbackErr instanceof Error ? fallbackErr.message : String(fallbackErr);
-      logger.error(`[pr] Failed fallback comment on PR #${prNumber}: ${fallbackMsg}`);
+      const fallbackMsg =
+        fallbackErr instanceof Error
+          ? fallbackErr.message
+          : String(fallbackErr);
+      logger.error(
+        `[pr] Failed fallback comment on PR #${prNumber}: ${fallbackMsg}`,
+      );
     }
   }
 }
