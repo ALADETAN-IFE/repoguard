@@ -1,0 +1,9 @@
+node_modules/
+dist/
+.env
+logs/
+*.log
+*.pem
+coverage/
+.DS_Store
+.repoguard-checkpoint.json
