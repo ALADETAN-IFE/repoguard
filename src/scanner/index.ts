@@ -1,5 +1,6 @@
 import type { Finding, ScanRule, ScanCommitOptions } from "../types";
 import logger from "../utils/logger";
+import { KNOWN_NPM_TYPOSQUATS, KNOWN_PYPI_TYPOSQUATS } from "./typosquat";
 
 const BINARY_EXTENSIONS = new Set([
   ".png", ".jpg", ".jpeg", ".gif", ".ico", ".svg",
@@ -155,6 +156,40 @@ const FILE_RULES: ScanRule[] = [
     test: (content) =>
       /(?:password|passwd|secret|api_key|apikey|token)\s*=\s*["'][^"']{8,}["']/i.test(content),
   },
+  {
+    id: "npm-typosquatted-package",
+    severity: "high",
+    description: "Possible typosquatted npm package name detected",
+    test: (content, filePath) => {
+      if (!filePath?.endsWith("package.json")) return false;
+      try {
+        const pkg = JSON.parse(content) as {
+          dependencies?: Record<string, string>;
+          devDependencies?: Record<string, string>;
+        };
+        const allDeps = {
+          ...pkg.dependencies,
+          ...pkg.devDependencies,
+        };
+        return Object.keys(allDeps).some((name) => name in KNOWN_NPM_TYPOSQUATS);
+      } catch {
+        return false;
+      }
+    },
+  },
+  {
+    id: "pypi-typosquatted-package",
+    severity: "high",
+    description: "Possible typosquatted PyPI package name detected",
+    test: (content, filePath) => {
+      const name = filePath?.split("/").pop()?.toLowerCase() ?? "";
+      if (name !== "requirements.txt" && name !== "requirements-dev.txt" && name !== "requirements-test.txt") {
+        return false;
+      }
+      const lines = content.split("\n").map((l) => l.trim().toLowerCase().split(/[=><!@[]/)[0].trim());
+      return lines.some((pkg) => pkg in KNOWN_PYPI_TYPOSQUATS);
+    },
+  },
 ];
 
 // ─── Workflow scan rules ──────────────────────────────────────────────────────
@@ -281,4 +316,29 @@ function applyRules(rules: ScanRule[], content: string, filePath?: string): Find
     }
   }
   return findings;
+}
+
+// ─── Typosquat detail helper ──────────────────────────────────────────────────
+// Returns the specific offending packages so PR bodies can name them explicitly.
+
+export function findTyposquattedNpmPackages(content: string): Array<{ found: string; intended: string }> {
+  try {
+    const pkg = JSON.parse(content) as {
+      dependencies?: Record<string, string>;
+      devDependencies?: Record<string, string>;
+    };
+    const allDeps = { ...pkg.dependencies, ...pkg.devDependencies };
+    return Object.keys(allDeps)
+      .filter((name) => name in KNOWN_NPM_TYPOSQUATS)
+      .map((name) => ({ found: name, intended: KNOWN_NPM_TYPOSQUATS[name] }));
+  } catch {
+    return [];
+  }
+}
+
+export function findTyposquattedPypiPackages(content: string): Array<{ found: string; intended: string }> {
+  const lines = content.split("\n").map((l) => l.trim().toLowerCase().split(/[=><!@[]/)[0].trim());
+  return lines
+    .filter((pkg) => pkg in KNOWN_PYPI_TYPOSQUATS)
+    .map((pkg) => ({ found: pkg, intended: KNOWN_PYPI_TYPOSQUATS[pkg] }));
 }
