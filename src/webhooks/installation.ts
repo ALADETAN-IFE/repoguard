@@ -257,7 +257,19 @@ export function handleInstallation(
   _app: App,
 ): (event: WebhookEvent<InstallationEventPayload>) => Promise<void> {
   return async ({ octokit, payload }) => {
-    if (payload.action !== "created") return;
+    const action = (payload as { action: string }).action;
+
+    // When app is uninstalled — clear stale checkpoint so startup resume skips it
+    if (action === "deleted") {
+      const { installation } = payload as { installation: { id: number; account: { login?: string; name?: string } } };
+      const owner = installation.account.login ?? installation.account.name ?? "unknown";
+      const installationKey = `${owner}-${installation.id}`;
+      clearCheckpoint(installationKey);
+      logger.info(`[installation] App uninstalled by ${owner} — checkpoint cleared`);
+      return;
+    }
+
+    if (action !== "created") return;
 
     const { installation, repositories } = payload;
 

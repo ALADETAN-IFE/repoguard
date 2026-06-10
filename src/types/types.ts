@@ -27,6 +27,8 @@ export interface ScanCommitOptions {
   sha: string;
   addedFiles: string[];
   modifiedFiles: string[];
+  renamedFiles?: string[];
+  removedFiles?: string[];
 }
 
 // ─── Checks ──────────────────────────────────────────────────────────────────

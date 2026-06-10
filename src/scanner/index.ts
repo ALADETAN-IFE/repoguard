@@ -1,8 +1,6 @@
 import type { Finding, ScanRule, ScanCommitOptions } from "../types";
 import logger from "../utils/logger";
 
-// ─── Binary file extensions to skip ──────────────────────────────────────────
-
 const BINARY_EXTENSIONS = new Set([
   ".png", ".jpg", ".jpeg", ".gif", ".ico", ".svg",
   ".woff", ".woff2", ".ttf", ".eot",
@@ -26,6 +24,7 @@ function isWorkflowPath(filePath: string): boolean {
 // ─── File scan rules ─────────────────────────────────────────────────────────
 
 const FILE_RULES: ScanRule[] = [
+  // ── Critical ──────────────────────────────────────────────────────────────
   {
     id: "curl-pipe-bash",
     severity: "critical",
@@ -63,6 +62,31 @@ const FILE_RULES: ScanRule[] = [
       /global\[_\$_\w+\[\d+\]\]\s*=\s*require/.test(content),
   },
   {
+    id: "python-exec-compile",
+    severity: "critical",
+    description: "Python exec(compile()) obfuscation — common in PyPI malware",
+    test: (content) =>
+      /exec\s*\(\s*compile\s*\(/.test(content) ||
+      /exec\s*\(\s*__import__\s*\(/.test(content),
+  },
+  {
+    id: "python-subprocess-network",
+    severity: "critical",
+    description: "Python subprocess spawning curl/wget — remote code execution via Python",
+    test: (content) =>
+      /subprocess\.(run|call|Popen|check_output)/.test(content) &&
+      /curl|wget|http/.test(content),
+  },
+  {
+    id: "powershell-encoded-command",
+    severity: "critical",
+    description: "Encoded PowerShell command — common Windows malware vector",
+    test: (content) =>
+      /powershell.*-[Ee]nc(odedCommand)?|\bpowershell\b.*-[Ee]\s+[A-Za-z0-9+/]{20,}/.test(content),
+  },
+
+  // ── High ──────────────────────────────────────────────────────────────────
+  {
     id: "crypto-miner-keywords",
     severity: "high",
     description: "Cryptocurrency miner indicators",
@@ -86,6 +110,44 @@ const FILE_RULES: ScanRule[] = [
       filePath?.endsWith("package.json") === true &&
       /"postinstall"\s*:\s*"[^"]*(?:curl|wget|exec|eval|node -e)[^"]*"/.test(content),
   },
+  {
+    id: "suspicious-registry-url",
+    severity: "high",
+    description: "Lock file references a non-standard npm registry — possible supply chain attack",
+    test: (content, filePath) => {
+      const isLockFile =
+        filePath?.endsWith("package-lock.json") === true ||
+        filePath?.endsWith("yarn.lock") === true ||
+        filePath?.endsWith("pnpm-lock.yaml") === true;
+      if (!isLockFile) return false;
+      return /resolved\s+"https?:\/\/(?!registry\.npmjs\.org|registry\.yarnpkg\.com)/.test(content);
+    },
+  },
+  {
+    id: "dotenv-file-committed",
+    severity: "high",
+    description: ".env file committed to repository — likely contains secrets",
+    test: (_content, filePath) => {
+      const name = filePath?.split("/").pop()?.toLowerCase() ?? "";
+      return (
+        name === ".env" ||
+        name === ".env.local" ||
+        name === ".env.production" ||
+        name === ".env.staging" ||
+        name === ".env.development"
+      );
+    },
+  },
+  {
+    id: "python-dynamic-import",
+    severity: "high",
+    description: "Dynamic __import__() hiding malicious module load",
+    test: (content) =>
+      /__import__\s*\(\s*['"][^'"]{3,}['"]/.test(content) &&
+      /os|sys|subprocess|socket|urllib|http/.test(content),
+  },
+
+  // ── Medium ────────────────────────────────────────────────────────────────
   {
     id: "hardcoded-secret",
     severity: "medium",
@@ -113,6 +175,14 @@ const WORKFLOW_RULES: ScanRule[] = [
       /curl|wget|http/.test(content),
   },
   {
+    id: "workflow-pull-request-target-checkout",
+    severity: "critical",
+    description: "pull_request_target with PR head checkout — allows arbitrary code execution from forks",
+    test: (content) =>
+      /on:\s*(pull_request_target|\[.*pull_request_target.*\])/.test(content) &&
+      /github\.event\.pull_request\.head\.sha|github\.head_ref/.test(content),
+  },
+  {
     id: "workflow-suspicious-trigger",
     severity: "high",
     description: "Workflow triggered on all events — overly broad trigger",
@@ -136,9 +206,11 @@ export async function scanCommit({
   sha,
   addedFiles,
   modifiedFiles,
+  renamedFiles = [],
+  removedFiles = [],
 }: ScanCommitOptions): Promise<Finding[]> {
   const findings: Finding[] = [];
-  const filesToScan = [...addedFiles, ...modifiedFiles];
+  const filesToScan = [...addedFiles, ...modifiedFiles, ...renamedFiles];
 
   for (const filePath of filesToScan) {
     if (isBinaryPath(filePath)) continue;
@@ -157,7 +229,6 @@ export async function scanCommit({
 
       const content = Buffer.from(data.content, "base64").toString("utf8");
       if (isWorkflowPath(filePath)) {
-        // Workflow files get both the general file rules AND the workflow-specific rules
         findings.push(...scanFileContent(content, filePath));
         findings.push(...scanWorkflowContent(content, filePath));
       } else {
@@ -166,6 +237,19 @@ export async function scanCommit({
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       logger.warn(`Could not fetch ${filePath}@${sha}: ${message}`);
+    }
+  }
+
+  // Flag deleted .env files — surface for review even on removal
+  for (const filePath of removedFiles) {
+    const name = filePath.split("/").pop()?.toLowerCase() ?? "";
+    if (name === ".env" || name.startsWith(".env.")) {
+      findings.push({
+        rule: "dotenv-file-removed",
+        severity: "medium",
+        message: `.env file deleted in this commit — verify it was not containing leaked secrets: ${filePath}`,
+        file: filePath,
+      });
     }
   }
 
@@ -180,11 +264,8 @@ export function scanWorkflowContent(content: string, filePath?: string): Finding
   return applyRules(WORKFLOW_RULES, content, filePath);
 }
 
-// ─── Internal helpers ─────────────────────────────────────────────────────────
-
 function applyRules(rules: ScanRule[], content: string, filePath?: string): Finding[] {
   const findings: Finding[] = [];
-
   for (const rule of rules) {
     try {
       if (rule.test(content, filePath)) {
@@ -196,9 +277,8 @@ function applyRules(rules: ScanRule[], content: string, filePath?: string): Find
         });
       }
     } catch {
-      // Silently skip regex errors on edge-case content
+      // Silently skip regex errors
     }
   }
-
   return findings;
 }

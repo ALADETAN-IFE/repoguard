@@ -1,11 +1,11 @@
 import fs from "fs";
 import path from "path";
 import express, { type Request, type Response } from "express";
-import { handleWebhook } from "./middleware";
+import { handleWebhook, requireWebhookSignature, webhookRateLimit } from "./middleware";
 
 const router = express.Router();
 
-router.use("/api/webhook", handleWebhook);
+router.use("/api/webhook", webhookRateLimit, requireWebhookSignature, handleWebhook);
 
 router.get("/health", (_req: Request, res: Response) => {
   res.json({ status: "ok", app: "RepoGuard", version: "1.0.0" });
