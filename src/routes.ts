@@ -20,7 +20,7 @@ router.get("/auth/callback", (req: Request, res: Response) => {
 });
 
 // Returns recent scans for a given owner/repo
-router.get("/api/scans", async (req: Request, res: Response) => {
+const getScans = async (req: Request, res: Response): Promise<void> => {
   try {
     const { owner, repo, limit = "20" } = req.query;
     const filter: Record<string, unknown> = {};
@@ -37,10 +37,11 @@ router.get("/api/scans", async (req: Request, res: Response) => {
     const message = err instanceof Error ? err.message : String(err);
     res.status(500).json({ error: message });
   }
-});
+};
+router.get("/api/scans", (req, res) => { void getScans(req, res); });
 
 // Returns findings for a specific scan
-router.get("/api/scans/:scanId/findings", async (req: Request, res: Response) => {
+const getScanFindings = async (req: Request, res: Response): Promise<void> => {
   try {
     const findings = await Finding.find({ scanId: req.params.scanId })
       .sort({ severity: 1 })
@@ -50,6 +51,7 @@ router.get("/api/scans/:scanId/findings", async (req: Request, res: Response) =>
     const message = err instanceof Error ? err.message : String(err);
     res.status(500).json({ error: message });
   }
-});
+};
+router.get("/api/scans/:scanId/findings", (req, res) => { void getScanFindings(req, res); });
 
 export default router;

@@ -115,7 +115,7 @@ const FILE_RULES: ScanRule[] = [
     id: "suspicious-registry-url",
     severity: "high",
     description: "Lock file references a non-standard npm registry — possible supply chain attack",
-    test: (content, filePath) => {
+    test: (content, filePath): boolean => {
       const isLockFile =
         filePath?.endsWith("package-lock.json") === true ||
         filePath?.endsWith("yarn.lock") === true ||
@@ -128,7 +128,7 @@ const FILE_RULES: ScanRule[] = [
     id: "dotenv-file-committed",
     severity: "high",
     description: ".env file committed to repository — likely contains secrets",
-    test: (_content, filePath) => {
+    test: (_content, filePath): boolean => {
       const name = filePath?.split("/").pop()?.toLowerCase() ?? "";
       return (
         name === ".env" ||
@@ -160,7 +160,7 @@ const FILE_RULES: ScanRule[] = [
     id: "npm-typosquatted-package",
     severity: "high",
     description: "Possible typosquatted npm package name detected",
-    test: (content, filePath) => {
+    test: (content, filePath): boolean => {
       if (!filePath?.endsWith("package.json")) return false;
       try {
         const pkg = JSON.parse(content) as {
@@ -181,7 +181,7 @@ const FILE_RULES: ScanRule[] = [
     id: "pypi-typosquatted-package",
     severity: "high",
     description: "Possible typosquatted PyPI package name detected",
-    test: (content, filePath) => {
+    test: (content, filePath): boolean => {
       const name = filePath?.split("/").pop()?.toLowerCase() ?? "";
       if (name !== "requirements.txt" && name !== "requirements-dev.txt" && name !== "requirements-test.txt") {
         return false;

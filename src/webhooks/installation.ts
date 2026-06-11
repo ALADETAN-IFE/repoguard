@@ -227,7 +227,7 @@ export function handleInstallation(
   _app: App,
 ): (event: WebhookEvent<InstallationEventPayload>) => Promise<void> {
   return async ({ octokit, payload }) => {
-    const action = payload.action as string;
+    const action = payload.action;
 
     // App uninstalled — clear checkpoint and mark installation
     if (action === "deleted") {
