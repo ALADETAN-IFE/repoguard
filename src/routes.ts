@@ -7,7 +7,7 @@ const router = express.Router();
 router.use("/api/webhook", webhookRateLimit, requireWebhookSignature, handleWebhook);
 
 router.get("/health", (_req: Request, res: Response) => {
-  res.json({ status: "ok", app: "RepoGuard", version: "1.0.0" });
+  res.json({ status: "ok", app: "RepoGuard-IfeCodes", version: "1.0.0" });
 });
 
 router.get("/auth/callback", (req: Request, res: Response) => {
@@ -19,20 +19,41 @@ router.get("/auth/callback", (req: Request, res: Response) => {
   });
 });
 
-// Returns recent scans for a given owner/repo
+// Returns recent scans for a given owner/repo (paginated)
 const getScans = async (req: Request, res: Response): Promise<void> => {
   try {
-    const { owner, repo, limit = "20" } = req.query;
+    const { owner, repo, limit = "20", page = "1" } = req.query;
+
+    const pageNum = Math.max(1, parseInt(page as string, 10));
+    const limitNum = Math.min(100, Math.max(1, parseInt(limit as string, 10)));
+    const skip = (pageNum - 1) * limitNum;
+
     const filter: Record<string, unknown> = {};
     if (owner) filter.owner = owner;
     if (repo) filter.repo = repo;
 
-    const scans = await Scan.find(filter)
-      .sort({ startedAt: -1 })
-      .limit(parseInt(limit as string, 10))
-      .lean();
+    const [scans, total] = await Promise.all([
+      Scan.find(filter)
+        .sort({ startedAt: -1 })
+        .skip(skip)
+        .limit(limitNum)
+        .lean(),
+      Scan.countDocuments(filter),
+    ]);
 
-    res.json({ scans });
+    const totalPages = Math.ceil(total / limitNum);
+
+    res.json({
+      scans,
+      pagination: {
+        total,
+        totalPages,
+        page: pageNum,
+        limit: limitNum,
+        hasNextPage: pageNum < totalPages,
+        hasPrevPage: pageNum > 1,
+      },
+    });
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     res.status(500).json({ error: message });
