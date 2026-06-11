@@ -158,7 +158,7 @@ export async function scanRepoList(
       // Update scan record
       await safeWrite(`Scan.complete:${repo.full_name}`, () =>
         Scan.updateOne(
-          { _id: scanId as unknown as Types.ObjectId },
+          { _id: scanId as Types.ObjectId },
           {
             $set: {
               status: "complete",
@@ -214,7 +214,7 @@ export async function scanRepoList(
       logger.error(`[installation] Error scanning ${repo.full_name}: ${message}`);
 
       await Scan.updateOne(
-        { _id: scanId as unknown as Types.ObjectId },
+        { _id: scanId as Types.ObjectId },
         { $set: { status: "failed", completedAt: new Date() } },
       ).catch((dbErr: unknown) => {
         const msg = dbErr instanceof Error ? dbErr.message : String(dbErr);
