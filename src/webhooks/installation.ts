@@ -1,8 +1,7 @@
-import fs from "fs";
-import path from "path";
 import type { App } from "@octokit/app";
 import { scanFileContent } from "../scanner";
 import { openFixPR } from "../pullRequest";
+import { Installation, Checkpoint, Scan, Finding as FindingModel } from "../models";
 import logger from "../utils/logger";
 import type { Finding, WebhookEvent, InstallationEventPayload, OctokitClient } from "../types/index";
 
@@ -11,158 +10,89 @@ interface RepoFile {
   content: string;
 }
 
-// ─── Checkpoint helpers ───────────────────────────────────────────────────────
+// ─── Checkpoint helpers (MongoDB) ─────────────────────────────────────────────
 
-const CHECKPOINT_FILE = path.resolve(".repoguard-checkpoint.json");
-
-interface CheckpointEntry {
-  scanned: string[];
-  startedAt: string;
-  installationId: number;
-  owner: string;
-  totalRepos: string[]; // all repo full_names from the original event
-}
-
-interface Checkpoint {
-  [installationKey: string]: CheckpointEntry;
-}
-
-function loadCheckpoint(): Checkpoint {
-  try {
-    if (fs.existsSync(CHECKPOINT_FILE)) {
-      logger.info(
-        `[checkpoint] Loading checkpoint from file: ${CHECKPOINT_FILE}`,
-      );
-      return JSON.parse(fs.readFileSync(CHECKPOINT_FILE, "utf8")) as Checkpoint;
-    }
-  } catch {
-    logger.warn("[checkpoint] Could not read checkpoint file — starting fresh");
-  }
-  return {};
-}
-
-function saveCheckpoint(checkpoint: Checkpoint): void {
-  try {
-    fs.writeFileSync(CHECKPOINT_FILE, JSON.stringify(checkpoint, null, 2));
-  } catch {
-    logger.warn("[checkpoint] Could not write checkpoint file");
-  }
-}
-
-function initCheckpoint(
+async function initCheckpoint(
   installationKey: string,
   installationId: number,
   owner: string,
   allRepos: string[],
-): void {
-  const checkpoint = loadCheckpoint();
-  logger.info(
-    `[checkpoint] Initialising checkpoint for installation: ${installationKey}`,
+): Promise<void> {
+  await Checkpoint.findOneAndUpdate(
+    { installationKey },
+    {
+      $setOnInsert: {
+        installationKey,
+        installationId,
+        owner,
+        totalRepos: allRepos,
+        scanned: [],
+        startedAt: new Date(),
+      },
+    },
+    { upsert: true, new: false },
   );
-  if (!checkpoint[installationKey]) {
-    checkpoint[installationKey] = {
-      scanned: [],
-      startedAt: new Date().toISOString(),
-      installationId,
-      owner,
-      totalRepos: allRepos,
-    };
-    logger.info(`[checkpoint] Total repos to scan: ${allRepos.length}`);
-    saveCheckpoint(checkpoint);
-  } else {
-    logger.info(
-      `[checkpoint] Checkpoint already exists for installation: ${installationKey} — resuming scan`,
-    );
-    // Backfill missing fields from the key if they were never saved
-    let dirty = false;
-    if (!checkpoint[installationKey].totalRepos) {
-      logger.info(
-        `[checkpoint] Updating totalRepos for installation: ${installationKey}`,
-      );
-      checkpoint[installationKey].totalRepos = allRepos;
-      dirty = true;
-    }
-    if (!checkpoint[installationKey].installationId) {
-      checkpoint[installationKey].installationId = installationId;
-      dirty = true;
-    }
-    if (!checkpoint[installationKey].owner) {
-      checkpoint[installationKey].owner = owner;
-      dirty = true;
-    }
-    if (dirty) saveCheckpoint(checkpoint);
-  }
+
+  // If it already existed but totalRepos was empty, patch it
+  await Checkpoint.updateOne(
+    { installationKey, totalRepos: { $size: 0 } },
+    { $set: { totalRepos: allRepos, installationId, owner } },
+  );
+
+  logger.info(
+    `[checkpoint] Initialised for ${installationKey} — ${allRepos.length} repos`,
+  );
 }
 
-function markScanned(installationKey: string, repoFullName: string): void {
-  const checkpoint = loadCheckpoint();
-  if (!checkpoint[installationKey]) return;
-  if (!checkpoint[installationKey].scanned.includes(repoFullName)) {
-    checkpoint[installationKey].scanned.push(repoFullName);
-  }
-  saveCheckpoint(checkpoint);
+async function markScanned(
+  installationKey: string,
+  repoFullName: string,
+): Promise<void> {
+  await Checkpoint.updateOne(
+    { installationKey },
+    { $addToSet: { scanned: repoFullName } },
+  );
 }
 
-export function patchCheckpointTotalRepos(
+export async function clearCheckpoint(installationKey: string): Promise<void> {
+  await Checkpoint.deleteOne({ installationKey });
+  logger.info(`[checkpoint] Cleared for ${installationKey}`);
+}
+
+export async function patchCheckpointTotalRepos(
   installationKey: string,
   totalRepos: string[],
-): void {
-  const checkpoint = loadCheckpoint();
-  if (!checkpoint[installationKey]) return;
-  checkpoint[installationKey].totalRepos = totalRepos;
-  saveCheckpoint(checkpoint);
-  logger.info(
-    `[checkpoint] Patched totalRepos for ${installationKey}: ${totalRepos.length} repos`,
+): Promise<void> {
+  await Checkpoint.updateOne(
+    { installationKey },
+    { $set: { totalRepos } },
+    { upsert: true },
   );
 }
 
-export function clearCheckpoint(installationKey: string): void {
-  const checkpoint = loadCheckpoint();
-  delete checkpoint[installationKey];
-  saveCheckpoint(checkpoint);
+export async function getIncompleteScans(): Promise<
+  Array<{
+    key: string;
+    installationId: number;
+    owner: string;
+    totalRepos: string[] | undefined;
+    scanned: string[];
+  }>
+> {
+  const checkpoints = await Checkpoint.find({
+    $expr: { $lt: [{ $size: "$scanned" }, { $size: "$totalRepos" }] },
+  }).lean();
+
+  return checkpoints.map((c) => ({
+    key: c.installationKey,
+    installationId: c.installationId,
+    owner: c.owner,
+    totalRepos: c.totalRepos,
+    scanned: c.scanned,
+  }));
 }
 
-// Returns ALL incomplete entries alongside their key.
-// For legacy entries where installationId/owner were never persisted,
-// we parse them out of the key (format: "<owner>-<installationId>").
-export function getIncompleteScans(): Array<CheckpointEntry & { key: string }> {
-  const checkpoint = loadCheckpoint();
-  const totalEntries = Object.keys(checkpoint).length;
-
-  logger.info(
-    `[checkpoint] Loaded checkpoint with ${totalEntries} installation${totalEntries > 1 ? "s" : ""}`,
-  );
-
-  return Object.entries(checkpoint)
-    .filter(([, entry]) => {
-      // Legacy entry: totalRepos not yet known — treat as incomplete so the
-      // startup resume logic can fetch the list from GitHub and continue.
-      if (!entry.totalRepos) return true;
-      return entry.scanned.length < entry.totalRepos.length;
-    })
-    .map(([key, entry]) => {
-      // Parse owner and installationId out of the key when missing from the
-      // entry itself. Key format: "<owner>-<installationId>" where
-      // installationId is the numeric suffix after the last hyphen.
-      let { owner, installationId } = entry;
-
-      if (!owner || !installationId) {
-        const lastDash = key.lastIndexOf("-");
-        if (lastDash !== -1) {
-          owner = owner || key.slice(0, lastDash);
-          installationId =
-            installationId || parseInt(key.slice(lastDash + 1), 10);
-          logger.info(
-            `[checkpoint] Recovered owner="${owner}" installationId=${installationId} from key "${key}"`,
-          );
-        }
-      }
-
-      return { ...entry, owner, installationId, key };
-    });
-}
-
-// ─── Core scan logic (shared by webhook handler and startup resume) ───────────
+// ─── Core scan logic ──────────────────────────────────────────────────────────
 
 export async function scanRepoList(
   client: OctokitClient,
@@ -170,11 +100,12 @@ export async function scanRepoList(
   owner: string,
   repos: Array<{ full_name: string; name: string }>,
 ): Promise<void> {
-  const pending = repos.filter(
-    (r) => !loadCheckpoint()[installationKey]?.scanned.includes(r.full_name),
-  );
+  const checkpoint = await Checkpoint.findOne({ installationKey }).lean();
+  const alreadyScanned = checkpoint?.scanned ?? [];
 
+  const pending = repos.filter((r) => !alreadyScanned.includes(r.full_name));
   const alreadyDone = repos.length - pending.length;
+
   if (alreadyDone > 0) {
     logger.info(
       `[installation] Resuming — skipping ${alreadyDone} already-scanned ${alreadyDone > 1 ? "repos" : "repo"}`,
@@ -184,8 +115,47 @@ export async function scanRepoList(
   for (const repo of pending) {
     logger.info(`[installation] Scanning: ${repo.full_name}`);
 
+    // Create a scan record
+    const scan = await Scan.create({
+      installationId: checkpoint?.installationId,
+      owner,
+      repo: repo.name,
+      status: "in_progress",
+      trigger: "installation",
+      startedAt: new Date(),
+    });
+
     try {
       const findings = await scanFullRepo(client, owner, repo.name);
+
+      // Persist findings
+      if (findings.length > 0) {
+        await FindingModel.insertMany(
+          findings.map((f) => ({
+            scanId: scan._id,
+            installationId: checkpoint?.installationId,
+            owner,
+            repo: repo.name,
+            rule: f.rule,
+            severity: f.severity,
+            message: f.message,
+            file: f.file,
+            detectedAt: new Date(),
+          })),
+        );
+      }
+
+      // Update scan record
+      await Scan.updateOne(
+        { _id: scan._id },
+        {
+          $set: {
+            status: "complete",
+            completedAt: new Date(),
+            findingsCount: findings.length,
+          },
+        },
+      );
 
       if (findings.length === 0) {
         logger.info(`[installation] CLEAN — ${repo.full_name}`);
@@ -225,29 +195,29 @@ export async function scanRepoList(
         await openFixPR(client, { owner, repo: repo.name, findings });
       }
 
-      markScanned(installationKey, repo.full_name);
+      await markScanned(installationKey, repo.full_name);
       logger.info(`[installation] ✓ ${repo.full_name} checkpointed`);
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
-      logger.error(
-        `[installation] Error scanning ${repo.full_name}: ${message}`,
+      logger.error(`[installation] Error scanning ${repo.full_name}: ${message}`);
+
+      await Scan.updateOne(
+        { _id: scan._id },
+        { $set: { status: "failed", completedAt: new Date() } },
       );
-      // Don't checkpoint on error — will retry on resume
+      // Don't mark as scanned — will retry on resume
     }
   }
 
-  // Check if all repos are now done
-  const checkpoint = loadCheckpoint();
-  const entry = checkpoint[installationKey];
+  // Clear checkpoint if all done
+  const updated = await Checkpoint.findOne({ installationKey }).lean();
   if (
-    entry &&
-    entry.totalRepos &&
-    entry.scanned.length >= entry.totalRepos.length
+    updated &&
+    updated.totalRepos.length > 0 &&
+    updated.scanned.length >= updated.totalRepos.length
   ) {
-    clearCheckpoint(installationKey);
-    logger.info(
-      `[installation] All repos scanned for ${owner} — checkpoint cleared`,
-    );
+    await clearCheckpoint(installationKey);
+    logger.info(`[installation] All repos scanned for ${owner} — checkpoint cleared`);
   }
 }
 
@@ -257,26 +227,46 @@ export function handleInstallation(
   _app: App,
 ): (event: WebhookEvent<InstallationEventPayload>) => Promise<void> {
   return async ({ octokit, payload }) => {
-    const action = (payload as { action: string }).action;
+    const action = payload.action as string;
 
-    // When app is uninstalled — clear stale checkpoint so startup resume skips it
+    // App uninstalled — clear checkpoint and mark installation
     if (action === "deleted") {
-      const { installation } = payload as { installation: { id: number; account: { login?: string; name?: string } } };
+      const { installation } = payload as {
+        installation: { id: number; account: { login?: string; name?: string } };
+      };
       const owner = installation.account.login ?? installation.account.name ?? "unknown";
       const installationKey = `${owner}-${installation.id}`;
-      clearCheckpoint(installationKey);
-      logger.info(`[installation] App uninstalled by ${owner} — checkpoint cleared`);
+
+      await clearCheckpoint(installationKey);
+      await Installation.updateOne(
+        { installationId: installation.id },
+        { $set: { uninstalledAt: new Date() } },
+      );
+
+      logger.info(`[installation] App uninstalled by ${owner} — records updated`);
       return;
     }
 
     if (action !== "created") return;
 
     const { installation, repositories } = payload;
-
-    const owner =
-      installation.account.login ?? installation.account.name ?? "unknown";
+    const owner = installation.account.login ?? installation.account.name ?? "unknown";
     const installationKey = `${owner}-${installation.id}`;
     const allRepos = repositories ?? [];
+
+    // Persist the installation record
+    await Installation.findOneAndUpdate(
+      { installationId: installation.id },
+      {
+        $setOnInsert: {
+          installationId: installation.id,
+          owner,
+          installedAt: new Date(),
+          uninstalledAt: null,
+        },
+      },
+      { upsert: true },
+    );
 
     logger.info(
       `[installation] App installed by ${owner} on ${allRepos.length} ${allRepos.length > 1 ? "repos" : "repo"}`,
@@ -284,7 +274,7 @@ export function handleInstallation(
 
     const client = normaliseOctokit(octokit);
 
-    initCheckpoint(
+    await initCheckpoint(
       installationKey,
       installation.id,
       owner,
@@ -332,16 +322,10 @@ async function scanFullRepo(
         { owner, repo, path: item.path },
       );
 
-      if (
-        Array.isArray(data) ||
-        data.type !== "file" ||
-        !("content" in data)
-      )
+      if (Array.isArray(data) || data.type !== "file" || !("content" in data))
         continue;
 
-      const content = Buffer.from(data.content || "", "base64").toString(
-        "utf8",
-      );
+      const content = Buffer.from(data.content || "", "base64").toString("utf8");
       files.push({ path: item.path, content });
     } catch {
       // File deleted or inaccessible — skip
@@ -358,25 +342,10 @@ async function scanFullRepo(
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
 const BINARY_EXTENSIONS = new Set([
-  ".png",
-  ".jpg",
-  ".jpeg",
-  ".gif",
-  ".ico",
-  ".svg",
-  ".woff",
-  ".woff2",
-  ".ttf",
-  ".eot",
-  ".zip",
-  ".tar",
-  ".gz",
-  ".exe",
-  ".dll",
-  ".so",
-  ".pdf",
-  ".mp4",
-  ".mp3",
+  ".png", ".jpg", ".jpeg", ".gif", ".ico", ".svg",
+  ".woff", ".woff2", ".ttf", ".eot",
+  ".zip", ".tar", ".gz", ".exe", ".dll", ".so",
+  ".pdf", ".mp4", ".mp3",
 ]);
 
 function isBinaryPath(filePath: string): boolean {

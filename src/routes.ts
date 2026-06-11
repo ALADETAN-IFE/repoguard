@@ -1,7 +1,6 @@
-import fs from "fs";
-import path from "path";
 import express, { type Request, type Response } from "express";
 import { handleWebhook, requireWebhookSignature, webhookRateLimit } from "./middleware";
+import { Scan, Finding } from "./models";
 
 const router = express.Router();
 
@@ -20,18 +19,37 @@ router.get("/auth/callback", (req: Request, res: Response) => {
   });
 });
 
-router.get("/api/scans", (_req: Request, res: Response) => {
-  const checkpointFile = path.resolve(".repoguard-checkpoint.json");
+// Returns recent scans for a given owner/repo
+router.get("/api/scans", async (req: Request, res: Response) => {
   try {
-    if (fs.existsSync(checkpointFile)) {
-      const data = JSON.parse(fs.readFileSync(checkpointFile, "utf8"));
-      res.json({ scans: Object.values(data) });
-      return;
-    }
-  } catch {
-    // Ignore error and fall back to empty list
+    const { owner, repo, limit = "20" } = req.query;
+    const filter: Record<string, unknown> = {};
+    if (owner) filter.owner = owner;
+    if (repo) filter.repo = repo;
+
+    const scans = await Scan.find(filter)
+      .sort({ startedAt: -1 })
+      .limit(parseInt(limit as string, 10))
+      .lean();
+
+    res.json({ scans });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    res.status(500).json({ error: message });
   }
-  res.json({ scans: [] });
+});
+
+// Returns findings for a specific scan
+router.get("/api/scans/:scanId/findings", async (req: Request, res: Response) => {
+  try {
+    const findings = await Finding.find({ scanId: req.params.scanId })
+      .sort({ severity: 1 })
+      .lean();
+    res.json({ findings });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    res.status(500).json({ error: message });
+  }
 });
 
 export default router;

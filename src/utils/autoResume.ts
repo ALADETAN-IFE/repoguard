@@ -1,5 +1,4 @@
 import { githubApp } from "../config/githubApp";
-
 import {
   getIncompleteScans,
   patchCheckpointTotalRepos,
@@ -10,8 +9,7 @@ import type { OctokitClient } from "../types/index";
 import logger from "./logger";
 
 export async function resumeIncompleteScans(): Promise<void> {
-  const incomplete = getIncompleteScans();
-
+  const incomplete = await getIncompleteScans();
   const totalIncomplete = incomplete.length;
 
   if (totalIncomplete === 0) {
@@ -24,8 +22,6 @@ export async function resumeIncompleteScans(): Promise<void> {
   );
 
   for (const entry of incomplete) {
-    // `key` is now always present; owner and installationId are recovered from
-    // it by getIncompleteScans() when they were missing from the stored entry.
     const { key: installationKey, owner, installationId } = entry;
 
     if (!installationId || !owner) {
@@ -37,17 +33,16 @@ export async function resumeIncompleteScans(): Promise<void> {
 
     try {
       let octokit: Awaited<ReturnType<typeof githubApp.getInstallationOctokit>>;
+
       try {
         octokit = await githubApp.getInstallationOctokit(installationId);
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
-        // A 404 means the installation was uninstalled — drop the stale entry
-        // so it doesn't block every future startup.
         if (message.includes("Not Found") || message.includes("404")) {
           logger.warn(
-            `[startup] Installation ${installationId} (${owner}) no longer exists on GitHub — clearing stale checkpoint`,
+            `[startup] Installation ${installationId} (${owner}) no longer exists — clearing stale checkpoint`,
           );
-          clearCheckpoint(installationKey);
+          await clearCheckpoint(installationKey);
         } else {
           logger.error(
             `[startup] Could not authenticate for ${owner} (${installationId}): ${message}`,
@@ -56,12 +51,10 @@ export async function resumeIncompleteScans(): Promise<void> {
         continue;
       }
 
-      // ── Legacy entries: totalRepos was not stored ──────────────────────────
-      // Fetch the full list from GitHub, patch the checkpoint, then scan only
-      // what hasn't been done yet.
-      if (!entry.totalRepos) {
+      // Legacy entries: totalRepos missing — fetch from GitHub
+      if (!entry.totalRepos || entry.totalRepos.length === 0) {
         logger.info(
-          `[startup] ${installationKey} has no totalRepos — fetching full repo list from GitHub`,
+          `[startup] ${installationKey} has no totalRepos — fetching from GitHub`,
         );
 
         const allRepos: Array<{ full_name: string; name: string }> = [];
@@ -73,26 +66,12 @@ export async function resumeIncompleteScans(): Promise<void> {
             "GET /installation/repositories",
             { per_page: 100, page },
           );
-
-          const batch = data.repositories;
-
-          allRepos.push(...batch);
-
-          if (
-            allRepos.length >= data.total_count ||
-            batch.length < 100
-          ) {
-            hasMore = false;
-          } else {
-            page++;
-          }
+          allRepos.push(...data.repositories);
+          hasMore = allRepos.length < data.total_count && data.repositories.length === 100;
+          page++;
         }
 
-        logger.info(
-          `[startup] Fetched ${allRepos.length} repos for ${installationKey} — patching checkpoint`,
-        );
-
-        patchCheckpointTotalRepos(
+        await patchCheckpointTotalRepos(
           installationKey,
           allRepos.map((r) => r.full_name),
         );
@@ -109,7 +88,6 @@ export async function resumeIncompleteScans(): Promise<void> {
         continue;
       }
 
-      // ── Normal entries: totalRepos is known ────────────────────────────────
       const remaining = entry.totalRepos.filter(
         (r) => !entry.scanned.includes(r),
       );
@@ -120,7 +98,7 @@ export async function resumeIncompleteScans(): Promise<void> {
 
       const repos = remaining.map((fullName) => ({
         full_name: fullName,
-        name: fullName.split("/")[1],
+        name: fullName.split("/")[1] ?? fullName,
       }));
 
       await scanRepoList(octokit as OctokitClient, installationKey, owner, repos);
