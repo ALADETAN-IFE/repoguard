@@ -3,7 +3,9 @@ import { scanFileContent } from "../scanner";
 import { openFixPR } from "../pullRequest";
 import { Installation, Checkpoint, Scan, Finding as FindingModel } from "../models";
 import logger from "../utils/logger";
+import { safeWrite } from "../utils/writeQueue";
 import type { Finding, WebhookEvent, InstallationEventPayload, OctokitClient } from "../types/index";
+import { Types } from "mongoose";
 
 interface RepoFile {
   path: string;
@@ -48,9 +50,11 @@ async function markScanned(
   installationKey: string,
   repoFullName: string,
 ): Promise<void> {
-  await Checkpoint.updateOne(
-    { installationKey },
-    { $addToSet: { scanned: repoFullName } },
+  await safeWrite(`markScanned:${repoFullName}`, () =>
+    Checkpoint.updateOne(
+      { installationKey },
+      { $addToSet: { scanned: repoFullName } },
+    ).then(() => undefined),
   );
 }
 
@@ -115,14 +119,18 @@ export async function scanRepoList(
   for (const repo of pending) {
     logger.info(`[installation] Scanning: ${repo.full_name}`);
 
-    // Create a scan record
-    const scan = await Scan.create({
-      installationId: checkpoint?.installationId,
-      owner,
-      repo: repo.name,
-      status: "in_progress",
-      trigger: "installation",
-      startedAt: new Date(),
+    // Create a scan record (queued on failure so loop continues)
+    let scanId: unknown = null;
+    await safeWrite(`Scan.create:${repo.full_name}`, async () => {
+      const scan = await Scan.create({
+        installationId: checkpoint?.installationId,
+        owner,
+        repo: repo.name,
+        status: "in_progress",
+        trigger: "installation",
+        startedAt: new Date(),
+      });
+      scanId = scan._id;
     });
 
     try {
@@ -130,31 +138,35 @@ export async function scanRepoList(
 
       // Persist findings
       if (findings.length > 0) {
-        await FindingModel.insertMany(
-          findings.map((f) => ({
-            scanId: scan._id,
-            installationId: checkpoint?.installationId,
-            owner,
-            repo: repo.name,
-            rule: f.rule,
-            severity: f.severity,
-            message: f.message,
-            file: f.file,
-            detectedAt: new Date(),
-          })),
+        await safeWrite(`FindingModel.insertMany:${repo.full_name}`, () =>
+          FindingModel.insertMany(
+            findings.map((f) => ({
+              scanId,
+              installationId: checkpoint?.installationId,
+              owner,
+              repo: repo.name,
+              rule: f.rule,
+              severity: f.severity,
+              message: f.message,
+              file: f.file,
+              detectedAt: new Date(),
+            })),
+          ).then(() => undefined),
         );
       }
 
       // Update scan record
-      await Scan.updateOne(
-        { _id: scan._id },
-        {
-          $set: {
-            status: "complete",
-            completedAt: new Date(),
-            findingsCount: findings.length,
+      await safeWrite(`Scan.complete:${repo.full_name}`, () =>
+        Scan.updateOne(
+          { _id: scanId as unknown as Types.ObjectId },
+          {
+            $set: {
+              status: "complete",
+              completedAt: new Date(),
+              findingsCount: findings.length,
+            },
           },
-        },
+        ).then(() => undefined),
       );
 
       if (findings.length === 0) {
@@ -202,9 +214,12 @@ export async function scanRepoList(
       logger.error(`[installation] Error scanning ${repo.full_name}: ${message}`);
 
       await Scan.updateOne(
-        { _id: scan._id },
+        { _id: scanId as unknown as Types.ObjectId },
         { $set: { status: "failed", completedAt: new Date() } },
-      );
+      ).catch((dbErr: unknown) => {
+        const msg = dbErr instanceof Error ? dbErr.message : String(dbErr);
+        logger.warn(`[installation] Could not update scan status to failed: ${msg}`);
+      });
       // Don't mark as scanned — will retry on resume
     }
   }
