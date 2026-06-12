@@ -4,6 +4,10 @@ import { Scan, Finding } from "./models";
 
 const router = express.Router();
 
+router.get("/", (_req: Request, res: Response) => {
+  res.json({ message: "Welcome to RepoGuard API" });
+})
+
 router.use("/api/webhook", webhookRateLimit, requireWebhookSignature, handleWebhook);
 
 router.get("/health", (_req: Request, res: Response) => {
