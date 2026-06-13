@@ -7,7 +7,6 @@ import { resumeIncompleteScans } from "./utils/autoResume";
 
 const app = express();
 
-app.use(express.json());
 app.use((req, res, next) => {
   if (req.path === "/api/webhook") return next();
   express.json()(req, res, next);
