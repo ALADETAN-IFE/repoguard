@@ -354,11 +354,11 @@ export async function applyPatches(
         break;
       case "obfuscated-malware-pattern":
         nextPatched = nextPatched.replace(
-          /\n[^\n]*global\[['"]!['"]\][\s\S]*/g,
+          /\n?global\[['"]!['"]\][\s\S]*/g,
           "\n// REMOVED BY REPOGUARD: obfuscated malware payload",
         );
         nextPatched = nextPatched.replace(
-          /\n[^\n]*var _\$_\w+\s*=\s*\(?function[\s\S]*/g,
+          /\n?var _\$_\w+\s*=\s*\(?function[\s\S]*/g,
           "\n// REMOVED BY REPOGUARD: obfuscated malware payload",
         );
         nextPatched = nextPatched.replace(
