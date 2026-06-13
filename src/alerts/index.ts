@@ -56,12 +56,14 @@ async function postSlackAlert(payload: AlertPayload): Promise<void> {
     mediumCount > 0 ? `🟡 ${mediumCount} Medium` : "",
   ].filter(Boolean).join("   ");
 
-  const contextLabel: Record<string, string> = {
-    push: "Push",
-    branch_create: "Branch Created",
-    workflow_file: "Workflow",
-    installation: "Installation Scan",
+  const contextConfig: Record<string, { label: string; header: string; emoji: string }> = {
+    push: { label: "Push", header: "🚨 Security Alert", emoji: "🚨" },
+    branch_create: { label: "Branch Created", header: "⚠️ Suspicious Branch", emoji: "⚠️" },
+    workflow_file: { label: "Workflow", header: "🚨 Workflow Alert", emoji: "🚨" },
+    installation: { label: "Installation Event", header: "📦 RepoGuard Event", emoji: "📦" },
   };
+
+  const ctx = contextConfig[payload.context] ?? { label: payload.context, header: "🚨 Alert", emoji: "🚨" };
 
   const findingLines = payload.findings
     .map((f) => {
@@ -71,7 +73,10 @@ async function postSlackAlert(payload: AlertPayload): Promise<void> {
     })
     .join("\n\n");
 
-  const repoUrl = `https://github.com/${payload.repository}`;
+  // ── Repository URL ──
+  const repoUrl = payload.repository.endsWith("/*")
+    ? `https://github.com/${payload.repository.replace("/*", "")}`  // owner profile URL
+    : `https://github.com/${payload.repository}`;  // specific repo URL
   const commitText = payload.commit !== "N/A"
     ? `<${repoUrl}/commit/${payload.commit}|\`${payload.commit}\`>`
     : "_N/A_";
@@ -82,7 +87,7 @@ async function postSlackAlert(payload: AlertPayload): Promise<void> {
       type: "header",
       text: {
         type: "plain_text",
-        text: `🚨 Security Alert — ${payload.repository}`,
+        text: `${ctx.header} — ${payload.repository}`,
         emoji: true,
       },
     },
@@ -93,7 +98,7 @@ async function postSlackAlert(payload: AlertPayload): Promise<void> {
       type: "section",
       fields: [
         { type: "mrkdwn", text: `*Repository*\n<${repoUrl}|${payload.repository}>` },
-        { type: "mrkdwn", text: `*Triggered By*\n${contextLabel[payload.context] ?? payload.context}` },
+        { type: "mrkdwn", text: `*Triggered By*\n${ctx.label}` },
         { type: "mrkdwn", text: `*Pusher*\n${payload.pusher}` },
         { type: "mrkdwn", text: `*Commit*\n${commitText}` },
         { type: "mrkdwn", text: `*Ref*\n\`${payload.ref}\`` },
@@ -127,9 +132,13 @@ async function postSlackAlert(payload: AlertPayload): Promise<void> {
       elements: [
         {
           type: "button",
-          text: { type: "plain_text", text: "View Repository", emoji: true },
+          text: {
+            type: "plain_text",
+            text: payload.context === "installation" ? "View Profile" : "View Repository",
+            emoji: true
+          },
           url: repoUrl,
-          style: "danger",
+          style: payload.context === "installation" ? "primary" : "danger",
         },
       ],
     },

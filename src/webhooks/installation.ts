@@ -261,7 +261,7 @@ export function handleInstallation(
 
       await sendAlert({
         owner,
-        repo: "*",
+        repo: owner,  // links to owner profile
         ref: "N/A",
         pusher: owner,
         headSha: null,
@@ -304,7 +304,7 @@ export function handleInstallation(
 
     await sendAlert({
       owner,
-      repo: "*",
+      repo: allRepos.length === 1 ? allRepos[0].name : "*",
       ref: "N/A",
       pusher: owner,
       headSha: null,
@@ -389,14 +389,14 @@ export function handleInstallationRepositories(
 
     await sendAlert({
       owner,
-      repo: "*",
+      repo: repositories_added.length === 1 ? repositories_added[0].name : owner,
       ref: "N/A",
       pusher: owner,
       headSha: null,
       findings: [{
         rule: "app-repositories-added",
         severity: "low",
-        message: `RepoGuard added ${repositories_added.length} repo${repositories_added.length > 1 ? "s" : ""} to ${owner} — scanning in progress`,
+        message: `${repositories_added.length} repo${repositories_added.length > 1 ? "s" : ""} added to RepoGuard protection: ${repositories_added.map(r => r.name).join(", ")}`,
         file: null,
       }],
       context: "installation",
