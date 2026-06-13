@@ -9,6 +9,7 @@ export async function sendAlert({
   headSha,
   findings,
   context = "push",
+  repoList
 }: AlertOptions): Promise<void> {
   const criticalCount = findings.filter((f) => f.severity === "critical").length;
   const highCount = findings.filter((f) => f.severity === "high").length;
@@ -23,6 +24,7 @@ export async function sendAlert({
     context,
     summary: `${totalFindings} finding${totalFindings > 1 ? "s" : ""}: ${criticalCount} critical, ${highCount} high`,
     findings,
+    repoList,
   };
 
   logger.warn(`SECURITY ALERT: ${JSON.stringify(payload, null, 2)}`);
@@ -147,24 +149,24 @@ async function postSlackAlert(payload: AlertPayload): Promise<void> {
 
   // ── Post main message and capture ts for thread reply ──
   try {
-    const response = await fetch(slackUrl, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ blocks }),
-    });
-
-    // ── For repo-added events, post the full repo list as a thread reply ──
-    if (
-      isInstallation &&
-      payload.findings.some((f) => f.rule === "app-repositories-added") &&
-      process.env.SLACK_BOT_TOKEN &&
-      process.env.SLACK_CHANNEL_ID
-    ) {
-      const data = await response.json() as { ts?: string; channel?: string };
-      if (data.ts && data.channel) {
-        const repoList = payload.findings[0].message
-          .split(":")[1]?.trim() ?? payload.findings[0].message;
-
+    if (process.env.SLACK_BOT_TOKEN && process.env.SLACK_CHANNEL_ID) {
+      // ── Use bot token for full threading support ──
+      const mainRes = await fetch("https://slack.com/api/chat.postMessage", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${process.env.SLACK_BOT_TOKEN}`,
+        },
+        body: JSON.stringify({
+          channel: process.env.SLACK_CHANNEL_ID,
+          blocks,
+        }),
+      });
+  
+      const mainData = await mainRes.json() as { ok: boolean; ts?: string; channel?: string };
+  
+      // ── Post repo list as thread reply if applicable ──
+      if (mainData.ok && mainData.ts && payload.repoList && payload.repoList.length > 0) {
         await fetch("https://slack.com/api/chat.postMessage", {
           method: "POST",
           headers: {
@@ -172,12 +174,19 @@ async function postSlackAlert(payload: AlertPayload): Promise<void> {
             "Authorization": `Bearer ${process.env.SLACK_BOT_TOKEN}`,
           },
           body: JSON.stringify({
-            channel: data.channel,
-            thread_ts: data.ts,
-            text: `📋 *Full repo list:*\n${repoList}`,
+            channel: process.env.SLACK_CHANNEL_ID,
+            thread_ts: mainData.ts,
+            text: `📋 *Full repo list (${payload.repoList.length}):*\n${payload.repoList.join(", ")}`,
           }),
         });
       }
+    } else {
+      // ── Fallback to incoming webhook (no threading) ──
+      await fetch(slackUrl, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ blocks }),
+      });
     }
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);

@@ -64,6 +64,7 @@ export interface AlertOptions {
   headSha: string | null;
   findings: Finding[];
   context?: AlertContext;
+  repoList?: string[];
 }
 
 export interface AlertPayload {
@@ -75,4 +76,5 @@ export interface AlertPayload {
   context: AlertContext;
   summary: string;
   findings: Finding[];
+  repoList?: string[];
 }

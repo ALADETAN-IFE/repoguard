@@ -396,10 +396,11 @@ export function handleInstallationRepositories(
       findings: [{
         rule: "app-repositories-added",
         severity: "low",
-        message: `${repositories_added.length} repos added: ${repositories_added.map(r => r.name).join(", ")}`,
+        message: `${repositories_added.length} repo${repositories_added.length > 1 ? "s" : ""} added to RepoGuard protection`,
         file: null,
       }],
       context: "installation",
+      repoList: repositories_added.map(r => r.name),
     });
 
     // Scan only the newly added repos
