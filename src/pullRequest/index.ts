@@ -357,8 +357,8 @@ export function applyPatches(
           "// REMOVED BY REPOGUARD: require definition for malware",
         );
 
-        // Clean up multiple blank lines left behind
-        nextPatched = nextPatched.replace(/\n{3,}/g, "\n\n");
+        // Clean up leftover blank lines
+        nextPatched = nextPatched.replace(/\n{3,}/g, "\n\n").trimEnd() + "\n";
         break;
       case "suspicious-npm-postinstall":
         if (filePath.endsWith("package.json")) {
