@@ -44,32 +44,92 @@ async function postSlackAlert(payload: AlertPayload): Promise<void> {
   const slackUrl = process.env.SLACK_WEBHOOK_URL;
   if (!slackUrl) return;
 
+  const criticalCount = payload.findings.filter((f) => f.severity === "critical").length;
+  const highCount = payload.findings.filter((f) => f.severity === "high").length;
+  const mediumCount = payload.findings.filter((f) => f.severity === "medium").length;
+
+  const severityBar = [
+    criticalCount > 0 ? `🔴 ${criticalCount} Critical` : "",
+    highCount > 0 ? `🟠 ${highCount} High` : "",
+    mediumCount > 0 ? `🟡 ${mediumCount} Medium` : "",
+  ].filter(Boolean).join("   ");
+
+  const contextLabel: Record<string, string> = {
+    push: "Push",
+    branch_create: "Branch Created",
+    workflow_file: "Workflow",
+    installation: "Installation Scan",
+  };
+
+  const findingLines = payload.findings
+    .map((f) => {
+      const emoji = { critical: "🔴", high: "🟠", medium: "🟡", low: "🟢" }[f.severity] ?? "⚪";
+      const file = f.file ? `\`${f.file}\`` : "_unknown file_";
+      return `${emoji} *${f.rule}* — ${file}\n    ${f.message}`;
+    })
+    .join("\n\n");
+
+  const repoUrl = `https://github.com/${payload.repository}`;
+  const commitText = payload.commit !== "N/A"
+    ? `<${repoUrl}/commit/${payload.commit}|\`${payload.commit}\`>`
+    : "_N/A_";
+
   const blocks = [
+    // ── Header ──
     {
       type: "header",
-      text: { type: "plain_text", text: `🚨 RepoGuard — ${payload.repository}` },
+      text: {
+        type: "plain_text",
+        text: `🚨 Security Alert — ${payload.repository}`,
+        emoji: true,
+      },
     },
+    { type: "divider" },
+
+    // ── Meta ──
     {
       type: "section",
       fields: [
-        { type: "mrkdwn", text: `*Repo:*\n${payload.repository}` },
-        { type: "mrkdwn", text: `*Pusher:*\n${payload.pusher}` },
-        { type: "mrkdwn", text: `*Ref:*\n${payload.ref}` },
-        { type: "mrkdwn", text: `*Commit:*\n\`${payload.commit}\`` },
+        { type: "mrkdwn", text: `*Repository*\n<${repoUrl}|${payload.repository}>` },
+        { type: "mrkdwn", text: `*Triggered By*\n${contextLabel[payload.context] ?? payload.context}` },
+        { type: "mrkdwn", text: `*Pusher*\n${payload.pusher}` },
+        { type: "mrkdwn", text: `*Commit*\n${commitText}` },
+        { type: "mrkdwn", text: `*Ref*\n\`${payload.ref}\`` },
+        { type: "mrkdwn", text: `*Time*\n<!date^${Math.floor(new Date(payload.timestamp).getTime() / 1000)}^{date_short_pretty} at {time}|${payload.timestamp}>` },
       ],
     },
-    {
-      type: "section",
-      text: { type: "mrkdwn", text: `*Summary:* ${payload.summary}` },
-    },
+    { type: "divider" },
+
+    // ── Severity summary ──
     {
       type: "section",
       text: {
         type: "mrkdwn",
-        text: payload.findings
-          .map((f) => `• \`${f.rule}\` (${f.severity}) — ${f.file ?? "N/A"}`)
-          .join("\n"),
+        text: `*${payload.findings.length} Finding${payload.findings.length > 1 ? "s" : ""} Detected*\n${severityBar}`,
       },
+    },
+
+    // ── Findings list ──
+    {
+      type: "section",
+      text: {
+        type: "mrkdwn",
+        text: findingLines || "_No findings detail available_",
+      },
+    },
+    { type: "divider" },
+
+    // ── Action button ──
+    {
+      type: "actions",
+      elements: [
+        {
+          type: "button",
+          text: { type: "plain_text", text: "View Repository", emoji: true },
+          url: repoUrl,
+          style: "danger",
+        },
+      ],
     },
   ];
 
