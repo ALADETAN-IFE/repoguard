@@ -10,6 +10,8 @@ const SUSPICIOUS_BRANCH_PATTERNS: RegExp[] = [
   /^hotfix[-_]security/i,
 ];
 
+const BOT_LOGINS = new Set(["repoguard-ifecodes[bot]"]);
+
 export function handleCreate(_app: App): (event: WebhookEvent<CreateEventPayload>) => Promise<void> {
   return async ({ octokit, payload }) => {
     const { ref_type, ref, sender, repository } = payload;
@@ -19,6 +21,8 @@ export function handleCreate(_app: App): (event: WebhookEvent<CreateEventPayload
     logger.info(
       `[create] ${owner}/${repo} — new ${ref_type}: "${ref}" by ${sender.login}`,
     );
+
+    if (BOT_LOGINS.has(sender.login) || sender.login.endsWith("[bot]")) return;
 
     try {
       let isMember = true;
