@@ -65,6 +65,7 @@ export interface CreateEventPayload {
 export interface GitHubInstallationAccount {
   login?: string;
   name?: string;
+  email?: string | null;
 }
 
 export interface GitHubInstallation {

@@ -269,6 +269,8 @@ export function handleInstallation(
     const installationKey = `${owner}-${installation.id}`;
     const allRepos = repositories ?? [];
 
+    const email = installation.account?.email ?? null;
+
     // Persist the installation record
     await Installation.findOneAndUpdate(
       { installationId: installation.id },
@@ -276,6 +278,7 @@ export function handleInstallation(
         $setOnInsert: {
           installationId: installation.id,
           owner,
+          email,
           installedAt: new Date(),
           uninstalledAt: null,
         },

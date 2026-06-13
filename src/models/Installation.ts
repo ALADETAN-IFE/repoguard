@@ -3,6 +3,7 @@ import { Schema, model, type Document, type Model } from "mongoose";
 export interface IInstallation extends Document {
     installationId: number;
     owner: string;
+    email: string | null;
     installedAt: Date;
     uninstalledAt: Date | null;
 }
@@ -17,6 +18,11 @@ const InstallationSchema = new Schema<IInstallation>({
     owner: {
         type: String,
         required: true
+    },
+    email: {
+        type: String,
+        required: false,
+        default: null
     },
     installedAt: {
         type: Date,
