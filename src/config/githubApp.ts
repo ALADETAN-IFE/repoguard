@@ -5,7 +5,7 @@ import logger from "../utils/logger";
 import { handlePush } from "../webhooks/push";
 import { handleWorkflowRun } from "../webhooks/workflowRun";
 import { handleCreate } from "../webhooks/create";
-import { handleInstallation } from "../webhooks/installation";
+import { handleInstallation, handleInstallationRepositories } from "../webhooks/installation";
 
 // ─── Validate required env vars ───────────────────────────────────────────────
 
@@ -73,6 +73,11 @@ githubApp.webhooks.on(
 githubApp.webhooks.on(
   "create",
   handleCreate(githubApp) as unknown as (event: unknown) => Promise<void>,
+);
+
+githubApp.webhooks.on(
+  "installation_repositories",
+  handleInstallationRepositories(githubApp) as unknown as (event: unknown) => Promise<void>,
 );
 
 githubApp.webhooks.onError((error) => {

@@ -303,6 +303,46 @@ export function handleInstallation(
   };
 }
 
+export function handleInstallationRepositories(
+  _app: App,
+): (event: WebhookEvent<any>) => Promise<void> {
+  return async ({ octokit, payload }) => {
+    const action = payload.action;
+
+    // Only care about repos being added
+    if (action !== "added") return;
+
+    const { installation, repositories_added } = payload as {
+      installation: { id: number; account: { login?: string; name?: string } };
+      repositories_added: Array<{ full_name: string; name: string }>;
+    };
+
+    const owner = installation.account.login ?? installation.account.name ?? "unknown";
+    const installationKey = `${owner}-${installation.id}`;
+
+    logger.info(
+      `[installation] ${repositories_added.length} repo(s) added by ${owner} — scanning`,
+    );
+
+    const client = normaliseOctokit(octokit);
+
+    // Get existing checkpoint to know what's already scanned
+    const existing = await Checkpoint.findOne({ installationKey }).lean();
+    const currentTotal = existing?.totalRepos ?? [];
+
+    // Add new repos to checkpoint
+    const updatedTotal = [
+      ...currentTotal,
+      ...repositories_added.map((r) => r.full_name),
+    ];
+
+    await patchCheckpointTotalRepos(installationKey, updatedTotal);
+
+    // Scan only the newly added repos
+    await scanRepoList(client, installationKey, owner, repositories_added);
+  };
+}
+
 // ─── Normalise the octokit client ────────────────────────────────────────────
 
 function normaliseOctokit(octokit: unknown): OctokitClient {
