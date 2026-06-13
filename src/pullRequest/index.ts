@@ -252,15 +252,15 @@ async function openSecurityIssue(
 
     const description = reason === "no_write_permission"
       ? [
-        "> RepoGuard detected security issues in this repository but could not open an automatic fix PR because the app does not have **Contents: write** permission.",
-        "",
-        "## How to enable automatic fixes",
-        "",
-        "Go to your GitHub App installation settings and grant **Repository contents: Read & write** permission. RepoGuard will then be able to open fix PRs automatically on future scans.",
-      ]
+          "> RepoGuard detected security issues in this repository but could not open an automatic fix PR because the app does not have **Contents: write** permission.",
+          "",
+          "## How to enable automatic fixes",
+          "",
+          "Go to your GitHub App installation settings and grant **Repository contents: Read & write** permission. RepoGuard will then be able to open fix PRs automatically on future scans.",
+        ]
       : [
-        "> RepoGuard detected security issues in this repository that cannot be resolved automatically. Manual review and remediation are required.",
-      ];
+          "> RepoGuard detected security issues in this repository that cannot be resolved automatically. Manual review and remediation are required.",
+        ];
 
     const bodyParts = [
       "## ⚠️ RepoGuard Security Alert",
@@ -369,6 +369,8 @@ export async function applyPatches(
           /\n?const\s+require\s*=\s*createRequire\s*\(\s*import\.meta\.url\s*\);?/g,
           "// REMOVED BY REPOGUARD: require definition for malware",
         );
+
+        // Clean up leftover blank lines
         nextPatched = nextPatched.replace(/\n{3,}/g, "\n\n").trimEnd() + "\n";
         break;
       case "suspicious-npm-postinstall":
@@ -476,7 +478,7 @@ export function buildPRBody(
   const whatRequiresManualReview = uniqueUnpatchedRules
     .map((rule) => `- ${MANUAL_REVIEW_SUMMARIES[rule] ?? `Rule \`${rule}\` requires manual verification`}`)
     .join("\n") || "_None! All detected issues were automatically patched._";
-
+  
   const totalPatchedFindings = patchedFindings.length;
   const totalUnpatchedFindings = unpatchedFindings.length;
 
