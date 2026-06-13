@@ -176,7 +176,7 @@ async function postSlackAlert(payload: AlertPayload): Promise<void> {
           body: JSON.stringify({
             channel: process.env.SLACK_CHANNEL_ID,
             thread_ts: mainData.ts,
-            text: `📋 *Full repo list (${payload.repoList.length}):*\n${payload.repoList.map(r => `• ${r}`).join("\n")}`,
+            text: `📋 *Full repo list (${payload.repoList.length}):*\n${payload.repoList.map(r => `• <https://github.com/${payload.repository.split("/")[0]}/${r}|${r}>`).join("\n")}`,
           }),
         });
       }
