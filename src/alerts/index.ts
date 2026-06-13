@@ -44,6 +44,8 @@ async function postSlackAlert(payload: AlertPayload): Promise<void> {
   const slackUrl = process.env.SLACK_WEBHOOK_URL;
   if (!slackUrl) return;
 
+  logger.info(`[slack] Sending Slack alert: ${JSON.stringify(payload, null, 2)}`);
+
   const criticalCount = payload.findings.filter((f) => f.severity === "critical").length;
   const highCount = payload.findings.filter((f) => f.severity === "high").length;
   const mediumCount = payload.findings.filter((f) => f.severity === "medium").length;
@@ -134,7 +136,7 @@ async function postSlackAlert(payload: AlertPayload): Promise<void> {
   ];
 
   try {
-    logger.info(`Sending Slack alert: ${JSON.stringify(blocks, null, 2)}`);
+    logger.info(`[slack] Sending Slack alert blocks: ${JSON.stringify(blocks, null, 2)}`);
     await fetch(slackUrl, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
