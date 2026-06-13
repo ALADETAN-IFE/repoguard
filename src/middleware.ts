@@ -15,6 +15,10 @@ export function handleWebhook(
   res: Response,
   next: NextFunction,
 ): void {
+  // Convert Buffer to string so @octokit/webhooks can verify the signature
+  if (Buffer.isBuffer(req.body)) {
+    req.body = req.body.toString("utf8");
+  }
   void webhookMiddleware(req, res, next);
 }
 
