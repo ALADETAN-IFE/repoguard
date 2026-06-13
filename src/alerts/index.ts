@@ -134,6 +134,7 @@ async function postSlackAlert(payload: AlertPayload): Promise<void> {
   ];
 
   try {
+    logger.info(`Sending Slack alert: ${JSON.stringify(blocks, null, 2)}`);
     await fetch(slackUrl, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
