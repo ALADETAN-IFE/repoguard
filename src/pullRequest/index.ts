@@ -12,10 +12,11 @@ interface OpenFixPROptions {
 async function formatContent(content: string, filePath: string): Promise<string> {
   try {
     const info = await prettier.getFileInfo(filePath);
-    if (!info.inferredParser) return content; // unsupported file type, skip
-    return await prettier.format(content, { filepath: filePath });
+    if (!info.inferredParser) return content;
+    const formatted = await prettier.format(content, { filepath: filePath });
+    return formatted.trimEnd() + "\n"; // ✅ trim AFTER prettier too
   } catch {
-    return content; // if prettier fails, return as-is
+    return content.trimEnd() + "\n"; // ✅ trim even on prettier failure
   }
 }
 
@@ -251,15 +252,15 @@ async function openSecurityIssue(
 
     const description = reason === "no_write_permission"
       ? [
-          "> RepoGuard detected security issues in this repository but could not open an automatic fix PR because the app does not have **Contents: write** permission.",
-          "",
-          "## How to enable automatic fixes",
-          "",
-          "Go to your GitHub App installation settings and grant **Repository contents: Read & write** permission. RepoGuard will then be able to open fix PRs automatically on future scans.",
-        ]
+        "> RepoGuard detected security issues in this repository but could not open an automatic fix PR because the app does not have **Contents: write** permission.",
+        "",
+        "## How to enable automatic fixes",
+        "",
+        "Go to your GitHub App installation settings and grant **Repository contents: Read & write** permission. RepoGuard will then be able to open fix PRs automatically on future scans.",
+      ]
       : [
-          "> RepoGuard detected security issues in this repository that cannot be resolved automatically. Manual review and remediation are required.",
-        ];
+        "> RepoGuard detected security issues in this repository that cannot be resolved automatically. Manual review and remediation are required.",
+      ];
 
     const bodyParts = [
       "## ⚠️ RepoGuard Security Alert",
@@ -353,23 +354,21 @@ export async function applyPatches(
         break;
       case "obfuscated-malware-pattern":
         nextPatched = nextPatched.replace(
-          /\n?global\[['"]!['"]\][\s\S]*/g,
+          /\n[^\n]*global\[['"]!['"]\][\s\S]*/g,
           "\n// REMOVED BY REPOGUARD: obfuscated malware payload",
         );
         nextPatched = nextPatched.replace(
-          /\n?var _\$_\w+\s*=\s*\(?function[\s\S]*/g,
+          /\n[^\n]*var _\$_\w+\s*=\s*\(?function[\s\S]*/g,
           "\n// REMOVED BY REPOGUARD: obfuscated malware payload",
         );
         nextPatched = nextPatched.replace(
-          /import\s*\{\s*createRequire\s*\}\s*from\s*['"]module['"];?/g,
+          /\n?import\s*\{\s*createRequire\s*\}\s*from\s*['"]module['"];?/g,
           "// REMOVED BY REPOGUARD: createRequire import for malware",
         );
         nextPatched = nextPatched.replace(
-          /const\s+require\s*=\s*createRequire\s*\(\s*import\.meta\.url\s*\);?/g,
+          /\n?const\s+require\s*=\s*createRequire\s*\(\s*import\.meta\.url\s*\);?/g,
           "// REMOVED BY REPOGUARD: require definition for malware",
         );
-
-        // Clean up leftover blank lines
         nextPatched = nextPatched.replace(/\n{3,}/g, "\n\n").trimEnd() + "\n";
         break;
       case "suspicious-npm-postinstall":
@@ -477,7 +476,7 @@ export function buildPRBody(
   const whatRequiresManualReview = uniqueUnpatchedRules
     .map((rule) => `- ${MANUAL_REVIEW_SUMMARIES[rule] ?? `Rule \`${rule}\` requires manual verification`}`)
     .join("\n") || "_None! All detected issues were automatically patched._";
-  
+
   const totalPatchedFindings = patchedFindings.length;
   const totalUnpatchedFindings = unpatchedFindings.length;
 
