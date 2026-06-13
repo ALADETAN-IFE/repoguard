@@ -341,12 +341,12 @@ export function applyPatches(
         break;
       case "obfuscated-malware-pattern":
         nextPatched = nextPatched.replace(
-          /global\[['"]!['"]\][\s\S]*/g,
-          "// REMOVED BY REPOGUARD: obfuscated malware payload",
+          /\n?global\[['"]!['"]\][\s\S]*/g,
+          "\n// REMOVED BY REPOGUARD: obfuscated malware payload",
         );
         nextPatched = nextPatched.replace(
-          /var _\$_\w+\s*=\s*\(?function[\s\S]*/g,
-          "// REMOVED BY REPOGUARD: obfuscated malware payload",
+          /\n?var _\$_\w+\s*=\s*\(?function[\s\S]*/g,
+          "\n// REMOVED BY REPOGUARD: obfuscated malware payload",
         );
         nextPatched = nextPatched.replace(
           /import\s*\{\s*createRequire\s*\}\s*from\s*['"]module['"];?/g,
