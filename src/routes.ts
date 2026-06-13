@@ -1,4 +1,4 @@
-import express, { type Request, type Response } from "express";
+import express, { raw, type Request, type Response } from "express";
 import { handleWebhook, requireWebhookSignature, webhookRateLimit } from "./middleware";
 import { Scan, Finding } from "./models";
 
@@ -8,7 +8,11 @@ router.get("/", (_req: Request, res: Response) => {
   res.json({ message: "Welcome to RepoGuard API" });
 })
 
-router.use("/api/webhook", webhookRateLimit, requireWebhookSignature, handleWebhook);
+router.use("/api/webhook", raw({ type: "application/json" }), // ← raw buffer, not parsed JSON
+webhookRateLimit,
+requireWebhookSignature,
+handleWebhook);
+
 
 router.get("/health", (_req: Request, res: Response) => {
   res.json({ status: "ok", app: "RepoGuard-IfeCodes", version: "1.0.0" });
