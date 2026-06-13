@@ -389,14 +389,14 @@ export function handleInstallationRepositories(
 
     await sendAlert({
       owner,
-      repo: repositories_added.length === 1 ? repositories_added[0].name : owner,
+      repo: owner,
       ref: "N/A",
       pusher: owner,
       headSha: null,
       findings: [{
         rule: "app-repositories-added",
         severity: "low",
-        message: `${repositories_added.length} repo${repositories_added.length > 1 ? "s" : ""} added to RepoGuard protection: ${repositories_added.map(r => r.name).join(", ")}`,
+        message: `${repositories_added.length} repos added: ${repositories_added.map(r => r.name).join(", ")}`,
         file: null,
       }],
       context: "installation",

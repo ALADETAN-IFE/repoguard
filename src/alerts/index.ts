@@ -44,8 +44,6 @@ async function postSlackAlert(payload: AlertPayload): Promise<void> {
   const slackUrl = process.env.SLACK_WEBHOOK_URL;
   if (!slackUrl) return;
 
-  logger.info(`[slack] Sending Slack alert: ${JSON.stringify(payload, null, 2)}`);
-
   const criticalCount = payload.findings.filter((f) => f.severity === "critical").length;
   const highCount = payload.findings.filter((f) => f.severity === "high").length;
   const mediumCount = payload.findings.filter((f) => f.severity === "medium").length;
@@ -56,33 +54,41 @@ async function postSlackAlert(payload: AlertPayload): Promise<void> {
     mediumCount > 0 ? `🟡 ${mediumCount} Medium` : "",
   ].filter(Boolean).join("   ");
 
-  const contextConfig: Record<string, { label: string; header: string; emoji: string }> = {
-    push: { label: "Push", header: "🚨 Security Alert", emoji: "🚨" },
-    branch_create: { label: "Branch Created", header: "⚠️ Suspicious Branch", emoji: "⚠️" },
-    workflow_file: { label: "Workflow", header: "🚨 Workflow Alert", emoji: "🚨" },
-    installation: { label: "Installation Event", header: "📦 RepoGuard Event", emoji: "📦" },
+  const contextConfig: Record<string, { label: string; header: string }> = {
+    push: { label: "Push", header: "🚨 Security Alert" },
+    branch_create: { label: "Branch Created", header: "⚠️ Suspicious Branch" },
+    workflow_file: { label: "Workflow", header: "🚨 Workflow Alert" },
+    installation: { label: "Installation Event", header: "📦 RepoGuard Event" },
   };
 
-  const ctx = contextConfig[payload.context] ?? { label: payload.context, header: "🚨 Alert", emoji: "🚨" };
+  const ctx = contextConfig[payload.context] ?? { label: payload.context, header: "🚨 Alert" };
+  const isInstallation = payload.context === "installation";
 
-  const findingLines = payload.findings
-    .map((f) => {
-      const emoji = { critical: "🔴", high: "🟠", medium: "🟡", low: "🟢" }[f.severity] ?? "⚪";
-      const file = f.file ? `\`${f.file}\`` : "_unknown file_";
-      return `${emoji} *${f.rule}* — ${file}\n    ${f.message}`;
-    })
-    .join("\n\n");
-
-  // ── Repository URL ──
   const repoUrl = payload.repository.endsWith("/*")
-    ? `https://github.com/${payload.repository.replace("/*", "")}`  // owner profile URL
-    : `https://github.com/${payload.repository}`;  // specific repo URL
+    ? `https://github.com/${payload.repository.replace("/*", "")}`
+    : `https://github.com/${payload.repository}`;
+
   const commitText = payload.commit !== "N/A"
     ? `<${repoUrl}/commit/${payload.commit}|\`${payload.commit}\`>`
     : "_N/A_";
 
-  const blocks = [
-    // ── Header ──
+  // ── For installation events, show a clean summary line only ──
+  const findingLines = isInstallation
+    ? payload.findings
+        .map((f) => {
+          const emoji = { critical: "🔴", high: "🟠", medium: "🟡", low: "🟢" }[f.severity] ?? "⚪";
+          return `${emoji} *${f.rule}*\n    ${f.message.split("—")[0].trim()}`; // just the short part
+        })
+        .join("\n\n")
+    : payload.findings
+        .map((f) => {
+          const emoji = { critical: "🔴", high: "🟠", medium: "🟡", low: "🟢" }[f.severity] ?? "⚪";
+          const file = f.file ? `\`${f.file}\`` : "_unknown file_";
+          return `${emoji} *${f.rule}* — ${file}\n    ${f.message}`;
+        })
+        .join("\n\n");
+
+  const blocks: object[] = [
     {
       type: "header",
       text: {
@@ -92,8 +98,6 @@ async function postSlackAlert(payload: AlertPayload): Promise<void> {
       },
     },
     { type: "divider" },
-
-    // ── Meta ──
     {
       type: "section",
       fields: [
@@ -107,26 +111,23 @@ async function postSlackAlert(payload: AlertPayload): Promise<void> {
     },
     { type: "divider" },
 
-    // ── Severity summary ──
-    {
+    // ── Only show severity summary for non-installation events ──
+    ...(!isInstallation ? [{
       type: "section",
       text: {
         type: "mrkdwn",
         text: `*${payload.findings.length} Finding${payload.findings.length > 1 ? "s" : ""} Detected*\n${severityBar}`,
       },
-    },
+    }] : []),
 
-    // ── Findings list ──
     {
       type: "section",
       text: {
         type: "mrkdwn",
-        text: findingLines || "_No findings detail available_",
+        text: findingLines || "_No details available_",
       },
     },
     { type: "divider" },
-
-    // ── Action button ──
     {
       type: "actions",
       elements: [
@@ -134,23 +135,50 @@ async function postSlackAlert(payload: AlertPayload): Promise<void> {
           type: "button",
           text: {
             type: "plain_text",
-            text: payload.context === "installation" ? "View Profile" : "View Repository",
-            emoji: true
+            text: isInstallation ? "View Profile" : "View Repository",
+            emoji: true,
           },
           url: repoUrl,
-          style: payload.context === "installation" ? "primary" : "danger",
+          style: isInstallation ? "primary" : "danger",
         },
       ],
     },
   ];
 
+  // ── Post main message and capture ts for thread reply ──
   try {
-    logger.info(`[slack] Sending Slack alert blocks: ${JSON.stringify(blocks, null, 2)}`);
-    await fetch(slackUrl, {
+    const response = await fetch(slackUrl, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ blocks }),
     });
+
+    // ── For repo-added events, post the full repo list as a thread reply ──
+    if (
+      isInstallation &&
+      payload.findings.some((f) => f.rule === "app-repositories-added") &&
+      process.env.SLACK_BOT_TOKEN &&
+      process.env.SLACK_CHANNEL_ID
+    ) {
+      const data = await response.json() as { ts?: string; channel?: string };
+      if (data.ts && data.channel) {
+        const repoList = payload.findings[0].message
+          .split(":")[1]?.trim() ?? payload.findings[0].message;
+
+        await fetch("https://slack.com/api/chat.postMessage", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "Authorization": `Bearer ${process.env.SLACK_BOT_TOKEN}`,
+          },
+          body: JSON.stringify({
+            channel: data.channel,
+            thread_ts: data.ts,
+            text: `📋 *Full repo list:*\n${repoList}`,
+          }),
+        });
+      }
+    }
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     logger.error(`Failed to send Slack alert: ${message}`);
