@@ -387,6 +387,21 @@ export function handleInstallationRepositories(
       { upsert: true },
     );
 
+    await sendAlert({
+      owner,
+      repo: "*",
+      ref: "N/A",
+      pusher: owner,
+      headSha: null,
+      findings: [{
+        rule: "app-repositories-added",
+        severity: "low",
+        message: `RepoGuard added ${repositories_added.length} repo${repositories_added.length > 1 ? "s" : ""} to ${owner} — scanning in progress`,
+        file: null,
+      }],
+      context: "installation",
+    });
+
     // Scan only the newly added repos
     await scanRepoList(client, installationKey, owner, repositories_added);
   };
