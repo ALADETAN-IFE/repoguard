@@ -6,6 +6,7 @@ import logger from "../utils/logger";
 import { safeWrite } from "../utils/writeQueue";
 import type { Finding, WebhookEvent, InstallationEventPayload, OctokitClient } from "../types/index";
 import { Types } from "mongoose";
+import { sendAlert } from "../alerts";
 
 interface RepoFile {
   path: string;
@@ -258,6 +259,21 @@ export function handleInstallation(
         { $set: { uninstalledAt: new Date() } },
       );
 
+      await sendAlert({
+        owner,
+        repo: "*",
+        ref: "N/A",
+        pusher: owner,
+        headSha: null,
+        findings: [{
+          rule: "app-uninstalled",
+          severity: "high",
+          message: `RepoGuard was uninstalled by ${owner} — repositories are no longer protected`,
+          file: null,
+        }],
+        context: "installation",
+      });
+
       logger.info(`[installation] App uninstalled by ${owner} — records updated`);
       return;
     }
@@ -285,6 +301,21 @@ export function handleInstallation(
       },
       { upsert: true },
     );
+
+    await sendAlert({
+      owner,
+      repo: "*",
+      ref: "N/A",
+      pusher: owner,
+      headSha: null,
+      findings: [{
+        rule: "app-installed",
+        severity: "low",
+        message: `RepoGuard installed by ${owner} on ${allRepos.length} repo${allRepos.length > 1 ? "s" : ""} — scanning in progress`,
+        file: null,
+      }],
+      context: "installation",
+    });
 
     logger.info(
       `[installation] App installed by ${owner} on ${allRepos.length} ${allRepos.length > 1 ? "repos" : "repo"}`,

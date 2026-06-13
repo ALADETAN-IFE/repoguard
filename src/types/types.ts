@@ -54,7 +54,7 @@ export interface UpdateCheckRunOptions {
 
 // ─── Alerts ──────────────────────────────────────────────────────────────────
 
-export type AlertContext = "push" | "workflow_file" | "branch_create";
+export type AlertContext = "push" | "workflow_file" | "branch_create" | "installation";
 
 export interface AlertOptions {
   owner: string;
