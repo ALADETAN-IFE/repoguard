@@ -1,10 +1,22 @@
 import type { Finding, OctokitClient } from "../types/index";
 import logger from "../utils/logger";
+import prettier from "prettier";
 
 interface OpenFixPROptions {
   owner: string;
   repo: string;
   findings: Finding[];
+}
+
+// ─── Format content with Prettier ──────────────────────────────────────────────
+async function formatContent(content: string, filePath: string): Promise<string> {
+  try {
+    const info = await prettier.getFileInfo(filePath);
+    if (!info.inferredParser) return content; // unsupported file type, skip
+    return await prettier.format(content, { filepath: filePath });
+  } catch {
+    return content; // if prettier fails, return as-is
+  }
 }
 
 // ─── Permission error detection ───────────────────────────────────────────────
@@ -63,7 +75,7 @@ export async function openFixPR(
         const fileSha: string = data.sha;
 
         const fileFindings = findings.filter((f) => f.file === filePath);
-        const { patchedContent, patchedFindings } = applyPatches(
+        const { patchedContent, patchedFindings } = await applyPatches(
           originalContent,
           fileFindings,
           filePath,
@@ -297,11 +309,11 @@ async function openSecurityIssue(
 
 // ─── Patch strategies per rule ────────────────────────────────────────────────
 
-export function applyPatches(
+export async function applyPatches(
   content: string,
   findings: Finding[],
   filePath: string,
-): { patchedContent: string; patchedFindings: Finding[] } {
+): Promise<{ patchedContent: string; patchedFindings: Finding[] }> {
   let patched = content;
   const patchedFindings: Finding[] = [];
 
@@ -389,6 +401,10 @@ export function applyPatches(
       patched = nextPatched;
       patchedFindings.push(finding);
     }
+  }
+
+  if (patchedFindings.length > 0) {
+    patched = await formatContent(patched, filePath);
   }
 
   return { patchedContent: patched, patchedFindings };
