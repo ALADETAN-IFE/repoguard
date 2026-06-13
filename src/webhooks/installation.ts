@@ -309,7 +309,6 @@ export function handleInstallationRepositories(
   return async ({ octokit, payload }) => {
     const action = payload.action;
 
-    // Only care about repos being added
     if (action !== "added") return;
 
     const { installation, repositories_added } = payload as {
@@ -326,17 +325,36 @@ export function handleInstallationRepositories(
 
     const client = normaliseOctokit(octokit);
 
-    // Get existing checkpoint to know what's already scanned
+    // Get existing repos already in checkpoint
     const existing = await Checkpoint.findOne({ installationKey }).lean();
     const currentTotal = existing?.totalRepos ?? [];
 
-    // Add new repos to checkpoint
     const updatedTotal = [
       ...currentTotal,
       ...repositories_added.map((r) => r.full_name),
     ];
 
-    await patchCheckpointTotalRepos(installationKey, updatedTotal);
+    // ✅ Use initCheckpoint so installationId is always set on the checkpoint
+    await initCheckpoint(
+      installationKey,
+      installation.id,
+      owner,
+      updatedTotal,
+    );
+
+    // Update the installation record
+    await Installation.findOneAndUpdate(
+      { installationId: installation.id },
+      {
+        $set: { owner },
+        $setOnInsert: {
+          installationId: installation.id,
+          installedAt: new Date(),
+          uninstalledAt: null,
+        },
+      },
+      { upsert: true },
+    );
 
     // Scan only the newly added repos
     await scanRepoList(client, installationKey, owner, repositories_added);
