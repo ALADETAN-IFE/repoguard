@@ -3,6 +3,7 @@ import { scanCommit } from "../scanner";
 import { createCheckRun, updateCheckRun } from "../checks";
 import { sendAlert } from "../alerts";
 import { closeRepoGuardPRsAndIssues } from "../pullRequest";
+import { normaliseOctokit } from "../utils/normaliseOctokit"; // ← add
 import logger from "../utils/logger";
 import type { WebhookEvent, PushEventPayload } from "../types/index";
 
@@ -13,12 +14,14 @@ export function handlePush(_app: App): (event: WebhookEvent<PushEventPayload>) =
     const repo = repository.name;
     const totalCommits = commits.length;
 
+    const client = normaliseOctokit(octokit); // ← add
+
     logger.info(
       `[push] ${owner}/${repo} — ${totalCommits} commit${totalCommits > 1 ? "s" : ""} by ${pusher.name}`,
     );
 
     const checkRunId = await createCheckRun({
-      octokit,
+      octokit: client, // ← use client
       owner,
       repo,
       headSha,
@@ -33,7 +36,7 @@ export function handlePush(_app: App): (event: WebhookEvent<PushEventPayload>) =
         await Promise.all(
           commits.map((commit) =>
             scanCommit({
-              octokit,
+              octokit: client, // ← use client
               owner,
               repo,
               sha: commit.id,
@@ -47,7 +50,7 @@ export function handlePush(_app: App): (event: WebhookEvent<PushEventPayload>) =
       const passed = findings.length === 0;
 
       await updateCheckRun({
-        octokit,
+        octokit: client, // ← use client
         owner,
         repo,
         checkRunId,
@@ -72,14 +75,14 @@ export function handlePush(_app: App): (event: WebhookEvent<PushEventPayload>) =
         logger.info(`[push] CLEAN — ${owner}/${repo}@${headSha.slice(0, 7)}`);
         const defaultBranch = repository.default_branch || "main";
         if (ref === `refs/heads/${defaultBranch}`) {
-          await closeRepoGuardPRsAndIssues(octokit, owner, repo);
+          await closeRepoGuardPRsAndIssues(client, owner, repo); // ← use client
         }
       }
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       logger.error(`[push] Error scanning ${owner}/${repo}: ${message}`);
       await updateCheckRun({
-        octokit,
+        octokit: client, // ← use client
         owner,
         repo,
         checkRunId,

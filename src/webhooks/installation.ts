@@ -7,6 +7,7 @@ import { safeWrite } from "../utils/writeQueue";
 import type { Finding, WebhookEvent, InstallationEventPayload, OctokitClient } from "../types/index";
 import { Types } from "mongoose";
 import { sendAlert } from "../alerts";
+import { normaliseOctokit } from "../utils/normaliseOctokit"; 
 
 interface RepoFile {
   path: string;
@@ -406,17 +407,6 @@ export function handleInstallationRepositories(
     // Scan only the newly added repos
     await scanRepoList(client, installationKey, owner, repositories_added);
   };
-}
-
-// ─── Normalise the octokit client ────────────────────────────────────────────
-
-function normaliseOctokit(octokit: unknown): OctokitClient {
-  if (octokit && typeof octokit === "object") {
-    if ("octokit" in octokit && octokit.octokit) {
-      return octokit.octokit as OctokitClient;
-    }
-  }
-  return octokit as OctokitClient;
 }
 
 // ─── Scan every file in the repo ─────────────────────────────────────────────
