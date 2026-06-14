@@ -1,3 +1,11 @@
+# ============================================================
+# REPOGUARD — MANUAL REVIEW REQUIRED: src/scanner/index.ts
+# Scanned: 2026-06-14T19:49:18.919Z
+# The following findings could NOT be automatically patched:
+#   [CRITICAL] python-exec-compile: Python exec(compile()) obfuscation — common in PyPI malware
+#   [CRITICAL] powershell-encoded-command: Encoded PowerShell command — common Windows malware vector
+# ============================================================
+
 import type { Finding, ScanRule, ScanCommitOptions } from "../types";
 import logger from "../utils/logger";
 import { KNOWN_NPM_TYPOSQUATS, KNOWN_PYPI_TYPOSQUATS } from "./typosquat";
@@ -92,7 +100,7 @@ const FILE_RULES: ScanRule[] = [
     severity: "high",
     description: "Cryptocurrency miner indicators",
     test: (content) =>
-      /xmrig|stratum\+tcp|monero|cryptonight|--mining-threads/.test(content),
+      /# REMOVED BY REPOGUARD: crypto miner
   },
   {
   id: "env-exfiltration",
