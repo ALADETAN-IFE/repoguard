@@ -335,18 +335,21 @@ export function handleInstallation(
   };
 }
 
+interface InstallationRepositoriesPayload {
+  action: string;
+  installation: { id: number; account: { login?: string; name?: string } };
+  repositories_added: Array<{ full_name: string; name: string }>;
+}
+
 export function handleInstallationRepositories(
   _app: App,
-): (event: WebhookEvent<any>) => Promise<void> {
+): (event: WebhookEvent<InstallationRepositoriesPayload>) => Promise<void> {
   return async ({ octokit, payload }) => {
     const action = payload.action;
 
     if (action !== "added") return;
 
-    const { installation, repositories_added } = payload as {
-      installation: { id: number; account: { login?: string; name?: string } };
-      repositories_added: Array<{ full_name: string; name: string }>;
-    };
+    const { installation, repositories_added } = payload;
 
     const owner = installation.account.login ?? installation.account.name ?? "unknown";
     const installationKey = `${owner}-${installation.id}`;
