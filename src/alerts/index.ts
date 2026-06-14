@@ -70,6 +70,8 @@ async function postSlackAlert(payload: AlertPayload): Promise<void> {
     ? `https://github.com/${payload.repository.replace("/*", "")}`
     : `https://github.com/${payload.repository}`;
 
+  logger.info(`${payload.repository} — ${repoUrl}`);
+
   const commitText = payload.commit !== "N/A"
     ? `<${repoUrl}/commit/${payload.commit}|\`${payload.commit}\`>`
     : "_N/A_";
