@@ -95,14 +95,16 @@ const FILE_RULES: ScanRule[] = [
       /xmrig|stratum\+tcp|monero|cryptonight|--mining-threads/.test(content),
   },
   {
-    id: "env-exfiltration",
-    severity: "high",
-    description: "Environment variable exfiltration — secrets being sent externally",
-    test: (content) =>
-      /process\.env|os\.environ/.test(content) &&
-      /fetch|axios|http\.get|requests\.get/.test(content) &&
-      /password|secret|token|key|api/i.test(content),
+  id: "env-exfiltration",
+  severity: "high",
+  description: "Environment variable exfiltration — secrets being sent externally",
+  test: (content): boolean => {
+    const directExfil = /fetch\s*\(\s*[`'"]https?:\/\/[^'"]+\$\{process\.env\.[^}]+\}/.test(content);
+    const bodyExfil = /body\s*:.*process\.env\.(PASSWORD|SECRET|TOKEN|KEY|API)/i.test(content);
+    const urlConcat = /['"`]\s*\+\s*process\.env\.(PASSWORD|SECRET|TOKEN|KEY|API)/i.test(content);
+    return directExfil || bodyExfil || urlConcat;
   },
+},
   {
     id: "suspicious-npm-postinstall",
     severity: "high",
