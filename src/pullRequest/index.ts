@@ -390,7 +390,7 @@ export async function applyPatches(
         break;
       case "crypto-miner-keywords":
         nextPatched = nextPatched.replace(
-          /xmrig[^\n]*/g,
+          /# REMOVED BY REPOGUARD: crypto miner
           "# REMOVED BY REPOGUARD: crypto miner",
         );
         break;
