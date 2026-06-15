@@ -9,6 +9,10 @@ const SKIP_EXACT = new Set([
 ]);
 
 const SKIP_PATTERNS = [
+  /node_modules\//,    
+  /^\.git\//,             
+  /vendor\//,       
+
   // Test files
   /\.(test|spec)\.(ts|js|tsx|jsx|py|rb|go)$/i,
   /^tests?\//i,
