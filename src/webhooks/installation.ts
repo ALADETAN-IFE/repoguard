@@ -101,6 +101,18 @@ export async function getIncompleteScans(): Promise<
 
 // ─── Core scan logic ──────────────────────────────────────────────────────────
 
+// ─── Known non-retryable error messages ──────────────────────────────────────
+const SKIP_ERRORS = [
+  "Git Repository is empty",
+  "Issues has been disabled",
+  "Repository access blocked",
+  "Repository was archived",
+];
+
+function isSkippableError(message: string): boolean {
+  return SKIP_ERRORS.some((e) => message.includes(e));
+}
+
 export async function scanRepoList(
   client: OctokitClient,
   installationKey: string,
@@ -223,7 +235,16 @@ export async function scanRepoList(
         const msg = dbErr instanceof Error ? dbErr.message : String(dbErr);
         logger.warn(`[installation] Could not update scan status to failed: ${msg}`);
       });
-      // Don't mark as scanned — will retry on resume
+      if (isSkippableError(message)) {
+        // Non-retryable — mark as scanned so it doesn't retry
+        await markScanned(installationKey, repo.full_name);
+        logger.warn(
+          `[installation] Skipping ${repo.full_name} permanently — ${message.split(" - ")[0]}`,
+        );
+      } else {
+        // Retryable error — leave unscanned so it retries on resume
+        logger.warn(`[installation] Will retry ${repo.full_name} on next resume`);
+      }
     }
   }
 
