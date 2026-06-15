@@ -2,7 +2,7 @@ import type { Finding, ScanRule, ScanCommitOptions } from "../types";
 import logger from "../utils/logger";
 import { KNOWN_NPM_TYPOSQUATS, KNOWN_PYPI_TYPOSQUATS } from "./typosquat";
 import { shouldSkipPath } from "../utils/skipPaths";
-import { isBinaryPath } from "../utils/binaryPath";
+import { isBinaryPath, looksLikeJavaScript } from "../utils/binaryPath";
 
 function isWorkflowPath(filePath: string): boolean {
   const lower = filePath.toLowerCase();
@@ -240,22 +240,23 @@ export async function scanCommit({
   const filesToScan = [...addedFiles, ...modifiedFiles, ...renamedFiles];
 
   for (const filePath of filesToScan) {
-    if (isBinaryPath(filePath)) continue;
     if (shouldSkipPath(filePath)) continue;
-
+  
+    const binary = isBinaryPath(filePath);
+  
     try {
       const { data } = await octokit.rest.repos.getContent({
-        owner,
-        repo,
-        path: filePath,
-        ref: sha,
+        owner, repo, path: filePath, ref: sha,
       });
-
-      if (Array.isArray(data) || data.type !== "file" || !("content" in data)) {
+  
+      if (Array.isArray(data) || data.type !== "file" || !("content" in data))
         continue;
-      }
-
+  
       const content = Buffer.from(data.content, "base64").toString("utf8");
+  
+      // ✅ Skip true binaries UNLESS they contain JS malware signatures
+      if (binary && !looksLikeJavaScript(content)) continue;
+  
       if (isWorkflowPath(filePath)) {
         findings.push(...scanFileContent(content, filePath));
         findings.push(...scanWorkflowContent(content, filePath));
@@ -263,8 +264,7 @@ export async function scanCommit({
         findings.push(...scanFileContent(content, filePath));
       }
     } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      logger.warn(`Could not fetch ${filePath}@${sha}: ${message}`);
+      // ...
     }
   }
 

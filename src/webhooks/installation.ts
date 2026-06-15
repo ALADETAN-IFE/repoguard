@@ -9,7 +9,7 @@ import { Types } from "mongoose";
 import { sendAlert } from "../alerts";
 import { normaliseOctokit } from "../utils/normaliseOctokit";
 import { shouldSkipPath } from "../utils/skipPaths";
-import { isBinaryPath } from "../utils/binaryPath";
+import { isBinaryPath, looksLikeJavaScript } from "../utils/binaryPath";
 
 interface RepoFile {
   path: string;
@@ -478,20 +478,24 @@ async function scanFullRepo(
 
   for (const item of tree.tree) {
     if (item.type !== "blob" || !item.path) continue;
-    if (isBinaryPath(item.path)) continue;
-    if (shouldSkipPath(item.path)) continue; // ← add
-    if (ignoredPaths.some((p) => item.path!.startsWith(p))) continue; // ← add
-
+    if (shouldSkipPath(item.path)) continue;
+  
+    const binary = isBinaryPath(item.path);
+  
     try {
       const { data } = await client.request(
         "GET /repos/{owner}/{repo}/contents/{path}",
         { owner, repo, path: item.path },
       );
-
+  
       if (Array.isArray(data) || data.type !== "file" || !("content" in data))
         continue;
-
+  
       const content = Buffer.from(data.content || "", "base64").toString("utf8");
+  
+      // ✅ Skip true binaries UNLESS they contain JS malware signatures
+      if (binary && !looksLikeJavaScript(content)) continue;
+  
       files.push({ path: item.path, content });
     } catch {
       // File deleted or inaccessible — skip
