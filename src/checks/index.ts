@@ -10,7 +10,7 @@ export async function createCheckRun({
   status,
 }: CreateCheckRunOptions): Promise<number | null> {
   try {
-    const { data } = await octokit.rest.checks.create({
+    const { data } = await octokit.request("POST /repos/{owner}/{repo}/check-runs", {
       owner,
       repo,
       name,
@@ -47,12 +47,12 @@ export async function updateCheckRun({
       (f: Finding) =>
         `### ${severityEmoji(f.severity)} \`${f.rule}\` — ${f.severity.toUpperCase()}\n` +
         `**File:** \`${f.file ?? "N/A"}\`\n` +
-        `${f.message}\n`
+        `${f.message}\n`,
     )
     .join("\n---\n");
 
   try {
-    await octokit.rest.checks.update({
+    await octokit.request("PATCH /repos/{owner}/{repo}/check-runs/{check_run_id}", {
       owner,
       repo,
       check_run_id: checkRunId,
