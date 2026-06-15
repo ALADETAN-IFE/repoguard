@@ -2,18 +2,7 @@ import type { Finding, ScanRule, ScanCommitOptions } from "../types";
 import logger from "../utils/logger";
 import { KNOWN_NPM_TYPOSQUATS, KNOWN_PYPI_TYPOSQUATS } from "./typosquat";
 import { shouldSkipPath } from "../utils/skipPaths";
-
-const BINARY_EXTENSIONS = new Set([
-  ".png", ".jpg", ".jpeg", ".gif", ".ico", ".svg",
-  ".woff", ".woff2", ".ttf", ".eot",
-  ".zip", ".tar", ".gz", ".exe", ".dll", ".so",
-  ".pdf", ".mp4", ".mp3",
-]);
-
-function isBinaryPath(filePath: string): boolean {
-  const lower = filePath.toLowerCase();
-  return [...BINARY_EXTENSIONS].some((ext) => lower.endsWith(ext));
-}
+import { isBinaryPath } from "../utils/binaryPath";
 
 function isWorkflowPath(filePath: string): boolean {
   const lower = filePath.toLowerCase();
@@ -96,14 +85,14 @@ const FILE_RULES: ScanRule[] = [
       /xmrig|stratum\+tcp|monero|cryptonight|--mining-threads/.test(content),
   },
   {
-  id: "env-exfiltration",
-  severity: "high",
-  description: "Environment variable exfiltration — secrets being sent externally",
-  test: (content): boolean => {
-    const directExfil = /fetch\s*\(\s*[`'"]https?:\/\/[^'"]+\$\{process\.env\.[^}]+\}/.test(content);
-    const bodyExfil = /body\s*:.*process\.env\.(PASSWORD|SECRET|TOKEN|KEY|API)/i.test(content);
-    const urlConcat = /['"`]\s*\+\s*process\.env\.(PASSWORD|SECRET|TOKEN|KEY|API)/i.test(content);
-    return directExfil || bodyExfil || urlConcat;
+    id: "env-exfiltration",
+    severity: "high",
+    description: "Environment variable exfiltration — secrets being sent externally",
+    test: (content): boolean => {
+      const directExfil = /fetch\s*\(\s*[`'"]https?:\/\/[^'"]+\$\{process\.env\.[^}]+\}/.test(content);
+      const bodyExfil = /body\s*:.*process\.env\.(PASSWORD|SECRET|TOKEN|KEY|API)/i.test(content);
+      const urlConcat = /['"`]\s*\+\s*process\.env\.(PASSWORD|SECRET|TOKEN|KEY|API)/i.test(content);
+      return directExfil || bodyExfil || urlConcat;
     },
   },
   {

@@ -9,6 +9,7 @@ import { Types } from "mongoose";
 import { sendAlert } from "../alerts";
 import { normaliseOctokit } from "../utils/normaliseOctokit";
 import { shouldSkipPath } from "../utils/skipPaths";
+import { isBinaryPath } from "../utils/binaryPath";
 
 interface RepoFile {
   path: string;
@@ -502,19 +503,4 @@ async function scanFullRepo(
   }
 
   return findings;
-}
-
-// ─── Helpers ──────────────────────────────────────────────────────────────────
-
-const BINARY_EXTENSIONS = new Set([
-  ".png", ".jpg", ".jpeg", ".gif", ".ico", ".svg",
-  ".woff", ".woff2", ".ttf", ".eot",
-  ".zip", ".tar", ".gz", ".exe", ".dll", ".so",
-  ".pdf", ".mp4", ".mp3",
-]);
-
-function isBinaryPath(filePath: string): boolean {
-  return [...BINARY_EXTENSIONS].some((ext) =>
-    filePath.toLowerCase().endsWith(ext),
-  );
 }
