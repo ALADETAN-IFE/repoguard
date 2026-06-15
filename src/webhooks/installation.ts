@@ -435,7 +435,7 @@ async function scanFullRepo(
       { owner, repo, path: ".repoguardignore" },
     );
     if (!Array.isArray(ignoreFile) && "content" in ignoreFile) {
-      const raw = Buffer.from(ignoreFile.content as string, "base64").toString("utf8");
+      const raw = Buffer.from(ignoreFile.content, "base64").toString("utf8");
       ignoredPaths = raw
         .split("\n")
         .map((l) => l.trim())
