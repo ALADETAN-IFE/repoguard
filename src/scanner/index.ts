@@ -103,8 +103,8 @@ const FILE_RULES: ScanRule[] = [
     const bodyExfil = /body\s*:.*process\.env\.(PASSWORD|SECRET|TOKEN|KEY|API)/i.test(content);
     const urlConcat = /['"`]\s*\+\s*process\.env\.(PASSWORD|SECRET|TOKEN|KEY|API)/i.test(content);
     return directExfil || bodyExfil || urlConcat;
+    },
   },
-},
   {
     id: "suspicious-npm-postinstall",
     severity: "high",
