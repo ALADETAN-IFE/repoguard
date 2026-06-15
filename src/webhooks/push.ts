@@ -14,7 +14,12 @@ export function handlePush(_app: App): (event: WebhookEvent<PushEventPayload>) =
     const repo = repository.name;
     const totalCommits = commits.length;
 
-    const client = normaliseOctokit(octokit); // ← add
+    const client = normaliseOctokit(octokit);
+
+    // ── Debug: log the client structure ──
+    logger.info(`[push] client keys: ${Object.keys(client as object).join(", ")}`);
+    logger.info(`[push] client.rest exists: ${!!(client as any).rest}`);
+    logger.info(`[push] client.rest?.checks exists: ${!!(client as any).rest?.checks}`);
 
     logger.info(
       `[push] ${owner}/${repo} — ${totalCommits} commit${totalCommits > 1 ? "s" : ""} by ${pusher.name}`,
