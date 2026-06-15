@@ -7,7 +7,7 @@ import { safeWrite } from "../utils/writeQueue";
 import type { Finding, WebhookEvent, InstallationEventPayload, OctokitClient } from "../types/index";
 import { Types } from "mongoose";
 import { sendAlert } from "../alerts";
-import { normaliseOctokit } from "../utils/normaliseOctokit"; 
+import { normaliseOctokit } from "../utils/normaliseOctokit";
 import { shouldSkipPath } from "../utils/skipPaths";
 
 interface RepoFile {
@@ -187,34 +187,41 @@ export async function scanRepoList(
       if (findings.length === 0) {
         logger.info(`[installation] CLEAN — ${repo.full_name}`);
 
-        const { data: issue } = await client.request(
-          "POST /repos/{owner}/{repo}/issues",
-          {
-            owner,
-            repo: repo.name,
-            title: "✅ RepoGuard: Initial scan complete — no issues found",
-            body: [
-              "## RepoGuard Initial Scan",
-              "",
-              "RepoGuard scanned your entire codebase on installation and found **no security issues**.",
-              "",
-              "From this point on, every push will be automatically scanned.",
-              "",
-              "---",
-              "_Closed automatically — no action required._",
-            ].join("\n"),
-          },
-        );
+        try {
+          const { data: issue } = await client.request(
+            "POST /repos/{owner}/{repo}/issues",
+            {
+              owner,
+              repo: repo.name,
+              title: "✅ RepoGuard: Initial scan complete — no issues found",
+              body: [
+                "## RepoGuard Initial Scan",
+                "",
+                "RepoGuard scanned your entire codebase on installation and found **no security issues**.",
+                "",
+                "From this point on, every push will be automatically scanned.",
+                "",
+                "---",
+                "_Closed automatically — no action required._",
+              ].join("\n"),
+            },
+          );
 
-        await client.request(
-          "PATCH /repos/{owner}/{repo}/issues/{issue_number}",
-          {
-            owner,
-            repo: repo.name,
-            issue_number: issue.number,
-            state: "closed",
-          },
-        );
+          await client.request(
+            "PATCH /repos/{owner}/{repo}/issues/{issue_number}",
+            {
+              owner,
+              repo: repo.name,
+              issue_number: issue.number,
+              state: "closed",
+            },
+          );
+        } catch (issueErr) {
+          const msg = issueErr instanceof Error ? issueErr.message : String(issueErr);
+          logger.warn(
+            `[installation] Could not post clean scan issue for ${repo.full_name}: ${msg.split(" - ")[0]}`,
+          );
+        }
       } else {
         logger.warn(
           `[installation] ${findings.length} finding${findings.length > 1 ? "s" : ""} in ${repo.full_name} — opening fix PR`,
