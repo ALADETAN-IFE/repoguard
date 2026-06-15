@@ -1,6 +1,7 @@
 import type { Finding, ScanRule, ScanCommitOptions } from "../types";
 import logger from "../utils/logger";
 import { KNOWN_NPM_TYPOSQUATS, KNOWN_PYPI_TYPOSQUATS } from "./typosquat";
+import { shouldSkipPath } from "../utils/skipPaths";
 
 const BINARY_EXTENSIONS = new Set([
   ".png", ".jpg", ".jpeg", ".gif", ".ico", ".svg",
@@ -251,6 +252,7 @@ export async function scanCommit({
 
   for (const filePath of filesToScan) {
     if (isBinaryPath(filePath)) continue;
+    if (shouldSkipPath(filePath)) continue;
 
     try {
       const { data } = await octokit.rest.repos.getContent({

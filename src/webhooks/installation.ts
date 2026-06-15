@@ -8,6 +8,7 @@ import type { Finding, WebhookEvent, InstallationEventPayload, OctokitClient } f
 import { Types } from "mongoose";
 import { sendAlert } from "../alerts";
 import { normaliseOctokit } from "../utils/normaliseOctokit"; 
+import { shouldSkipPath } from "../utils/skipPaths";
 
 interface RepoFile {
   path: string;
@@ -426,11 +427,31 @@ async function scanFullRepo(
     { owner, repo, tree_sha: "HEAD", recursive: "1" },
   );
 
+  // ── Fetch .repoguardignore if present ──────────────────────────────────────
+  let ignoredPaths: string[] = [];
+  try {
+    const { data: ignoreFile } = await client.request(
+      "GET /repos/{owner}/{repo}/contents/{path}",
+      { owner, repo, path: ".repoguardignore" },
+    );
+    if (!Array.isArray(ignoreFile) && "content" in ignoreFile) {
+      const raw = Buffer.from(ignoreFile.content as string, "base64").toString("utf8");
+      ignoredPaths = raw
+        .split("\n")
+        .map((l) => l.trim())
+        .filter((l) => l && !l.startsWith("#"));
+    }
+  } catch {
+    // No .repoguardignore — that's fine
+  }
+
   const files: RepoFile[] = [];
 
   for (const item of tree.tree) {
     if (item.type !== "blob" || !item.path) continue;
     if (isBinaryPath(item.path)) continue;
+    if (shouldSkipPath(item.path)) continue; // ← add
+    if (ignoredPaths.some((p) => item.path!.startsWith(p))) continue; // ← add
 
     try {
       const { data } = await client.request(
