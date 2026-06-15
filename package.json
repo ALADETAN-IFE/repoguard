@@ -9,6 +9,7 @@
     "dev": "ts-node-dev --respawn --transpile-only src/index.ts",
     "test": "jest --coverage",
     "lint": "eslint src/ --ext .ts",
+    "lintfix": "eslint src/ --ext .ts --fix",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
