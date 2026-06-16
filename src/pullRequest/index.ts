@@ -778,6 +778,9 @@ export async function postReviewComments(
         `**RepoGuard** detected \`${finding.rule}\` (${finding.severity})`,
         `> ${finding.message}`,
         ``,
+        `<details>`,
+        `<summary>📋 Committable suggestion</summary>`,
+        ``,
         `> [!IMPORTANT]`,
         `> Carefully review this suggestion before applying. Ensure it accurately replaces the flagged code and has no issues with indentation.`,
         ``,
@@ -785,14 +788,18 @@ export async function postReviewComments(
         suggestedLine,
         `\`\`\``,
         ``,
-        `> 💡 **Tip:** When applying this suggestion, use a conventional commit message like:`,
-        `> \`fix(security): remove ${finding.rule} from ${finding.file ?? "file"}\``,
+        `> 💡 Suggested commit message: \`fix(security): remove ${finding.rule} from ${finding.file ?? "file"}\``,
+        `</details>`,
       ].join("\n")
       : [
         `**RepoGuard** detected \`${finding.rule}\` (${finding.severity})`,
         `> ${finding.message}`,
         ``,
-        `⚠️ This requires manual review — no automatic fix available.`,
+        `<details>`,
+        `<summary>⚠️ Manual review required</summary>`,
+        ``,
+        `This finding cannot be automatically fixed. Please review and remediate manually.`,
+        `</details>`,
       ].join("\n");
 
     comments.push({
