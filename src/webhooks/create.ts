@@ -22,6 +22,8 @@ export function handleCreate(_app: App): (event: WebhookEvent<CreateEventPayload
       `[create] ${owner}/${repo} — new ${ref_type}: "${ref}" by ${sender.login}`,
     );
 
+    if (sender.login === owner) return;
+
     if (BOT_LOGINS.has(sender.login) || sender.login.endsWith("[bot]")) return;
 
     try {
