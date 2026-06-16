@@ -23,8 +23,8 @@ export function handlePush(_app: App): (event: WebhookEvent<PushEventPayload>) =
 
     // ── Debug: log the client structure ──
     logger.info(`[push] client keys: ${Object.keys(client).join(", ")}`);
-    logger.info(`[push] client.rest exists: ${!!(client as any).rest}`);
-    logger.info(`[push] client.rest?.checks exists: ${!!(client as any).rest?.checks}`);
+    logger.info(`[push] client.rest exists: ${!!(client).rest}`);
+    logger.info(`[push] client.rest?.checks exists: ${!!(client).rest?.checks}`);
 
     logger.info(
       `[push] ${owner}/${repo} — ${totalCommits} commit${totalCommits > 1 ? "s" : ""} by ${pusher.name}`,

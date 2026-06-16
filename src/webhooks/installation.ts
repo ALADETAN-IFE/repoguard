@@ -479,6 +479,7 @@ async function scanFullRepo(
   for (const item of tree.tree) {
     if (item.type !== "blob" || !item.path) continue;
     if (shouldSkipPath(item.path)) continue;
+    if (ignoredPaths.some((p) => item.path!.startsWith(p))) continue;
   
     const binary = isBinaryPath(item.path);
   
