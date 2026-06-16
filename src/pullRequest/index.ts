@@ -729,6 +729,22 @@ interface ReviewComment {
   body: string;
 }
 
+// ─── Rule-based fix suggestions ──────────────────────────────────────────────
+const RULE_SUGGESTIONS: Record<string, (line: string) => string> = {
+  "obfuscated-malware-pattern": () =>
+    "// REMOVED BY REPOGUARD: obfuscated malware payload",
+  "curl-pipe-bash": (line) =>
+    line.replace(/curl\s.+\|\s*(ba)?sh/g, "# REMOVED BY REPOGUARD: curl|bash remote execution"),
+  "wget-pipe-shell": (line) =>
+    line.replace(/wget\s.+\|\s*(ba)?sh/g, "# REMOVED BY REPOGUARD: wget|shell remote execution"),
+  "reverse-shell": (line) =>
+    line.replace(/bash\s+-i\s+>&\s+\/dev\/tcp[^\n]*/g, "# REMOVED BY REPOGUARD: reverse shell")
+      .replace(/nc\s+-e\s+\/bin\/(ba)?sh[^\n]*/g, "# REMOVED BY REPOGUARD: netcat reverse shell"),
+  "crypto-miner-keywords": (line) =>
+    line.replace(/xmrig[^\n]*/g, "# REMOVED BY REPOGUARD: crypto miner"),
+  "obfuscated-base64": (line) =>
+    line.replace(/eval\s*\([^)]*fromCharCode[^)]*\)/g, "// REMOVED BY REPOGUARD: obfuscated eval"),
+};
 
 export async function postReviewComments(
   octokit: OctokitClient,
@@ -745,15 +761,25 @@ export async function postReviewComments(
     if (!finding.file || !finding.line) continue;
 
     const patched = patchedContent.get(finding.file);
+    const originalLine = patched
+      ? patched.split("\n")[finding.line - 1] ?? ""
+      : "";
 
-    // Build committable suggestion if we have a patch
-    const body = patched
+    // Try rule-based suggestion first, then patched content, then manual review
+    const suggestionFn = RULE_SUGGESTIONS[finding.rule];
+    const suggestedLine = suggestionFn
+      ? suggestionFn(originalLine)
+      : patched
+        ? getFixedLine(patched, finding.line)
+        : null;
+
+    const body = suggestedLine
       ? [
         `**RepoGuard** detected \`${finding.rule}\` (${finding.severity})`,
         `> ${finding.message}`,
         ``,
         `\`\`\`suggestion`,
-        getFixedLine(patched, finding.line),
+        suggestedLine,
         `\`\`\``,
       ].join("\n")
       : [
