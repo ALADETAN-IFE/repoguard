@@ -72,6 +72,7 @@ export function handlePush(_app: App): (event: WebhookEvent<PushEventPayload>) =
         // Check if there's an open PR for this ref
         try {
           const branch = ref.replace("refs/heads/", "");
+          logger.info(`[push] Looking for open PR on branch: ${branch}`);
           const { data: pulls } = await client.request(
             "GET /repos/{owner}/{repo}/pulls",
             { owner, repo, state: "open", head: `${owner}:${branch}` },
@@ -84,8 +85,9 @@ export function handlePush(_app: App): (event: WebhookEvent<PushEventPayload>) =
               client, owner, repo, pr.number, headSha, findings, patchedMap
             );
           }
-        } catch {
-          // No open PR — that's fine
+        } catch (err) {
+          const message = err instanceof Error ? err.message : String(err);
+          logger.warn(`[push] Could not find/comment on open PR: ${message}`);
         }
         await sendAlert({
           owner,
