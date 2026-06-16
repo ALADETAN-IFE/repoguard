@@ -5,9 +5,20 @@ import { normaliseOctokit } from "../utils/normaliseOctokit";
 import logger from "../utils/logger";
 import type { WebhookEvent } from "../types/index";
 
+interface PullRequestOpenedPayload {
+    pull_request: {
+      number: number;
+      head: { sha: string; ref: string };
+    };
+    repository: {
+      name: string;
+      owner: { login: string };
+    };
+  }
+
 export function handlePullRequestOpened(
     _app: App,
-): (event: WebhookEvent<any>) => Promise<void> {
+): (event: WebhookEvent<PullRequestOpenedPayload>) => Promise<void> {
     return async ({ octokit, payload }) => {
         const { pull_request, repository } = payload as {
             pull_request: {
