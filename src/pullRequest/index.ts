@@ -781,6 +781,9 @@ export async function postReviewComments(
         `\`\`\`suggestion`,
         suggestedLine,
         `\`\`\``,
+        ``,
+        `> 💡 **Tip:** When applying this suggestion, use a conventional commit message like:`,
+        `> \`fix(security): remove ${finding.rule} from ${finding.file ?? "file"}\``,
       ].join("\n")
       : [
         `**RepoGuard** detected \`${finding.rule}\` (${finding.severity})`,
