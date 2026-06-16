@@ -1,6 +1,11 @@
 import { applyPatches, buildPRBody, openFixPR, closeRepoGuardPRsAndIssues } from "../src/pullRequest";
 import type { Finding } from "../src/types";
 
+jest.mock("prettier", () => ({
+  getFileInfo: jest.fn().mockResolvedValue({ inferredParser: null }),
+  format: jest.fn().mockImplementation((content: string) => Promise.resolve(content)),
+}));
+
 describe("pullRequest", () => {
   describe("applyPatches", () => {
     it("patches curl-pipe-bash and returns it as a patched finding", async () => {
