@@ -303,15 +303,15 @@ function applyRules(rules: ScanRule[], content: string, filePath?: string): Find
   for (const rule of rules) {
     try {
       if (rule.test(content, filePath)) {
-        // Find which line triggered the rule
-        const line = lines.findIndex((l) => rule.testLine?.(l, filePath) ?? false);
+        // Find the first line that matches by re-testing line by line
+        const lineIndex = lines.findIndex((l) => rule.test(l, filePath));
 
         findings.push({
           rule: rule.id,
           severity: rule.severity,
           message: rule.description,
           file: filePath ?? null,
-          line: line >= 0 ? line + 1 : null,
+          line: lineIndex >= 0 ? lineIndex + 1 : null,
         });
       }
     } catch {

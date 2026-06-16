@@ -3,7 +3,7 @@ import { scanCommit } from "../scanner";
 import { createCheckRun, updateCheckRun } from "../checks";
 import { sendAlert } from "../alerts";
 import { closeRepoGuardPRsAndIssues, postReviewComments } from "../pullRequest";
-import { normaliseOctokit } from "../utils/normaliseOctokit"; // ← add
+import { normaliseOctokit } from "../utils/normaliseOctokit";
 import logger from "../utils/logger";
 import type { WebhookEvent, PushEventPayload } from "../types/index";
 
