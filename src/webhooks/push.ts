@@ -2,7 +2,7 @@ import type { App } from "@octokit/app";
 import { scanCommit } from "../scanner";
 import { createCheckRun, updateCheckRun } from "../checks";
 import { sendAlert } from "../alerts";
-import { closeRepoGuardPRsAndIssues } from "../pullRequest";
+import { closeRepoGuardPRsAndIssues, postReviewComments } from "../pullRequest";
 import { normaliseOctokit } from "../utils/normaliseOctokit"; // ← add
 import logger from "../utils/logger";
 import type { WebhookEvent, PushEventPayload } from "../types/index";
@@ -69,6 +69,24 @@ export function handlePush(_app: App): (event: WebhookEvent<PushEventPayload>) =
       });
 
       if (!passed) {
+        // Check if there's an open PR for this ref
+        try {
+          const branch = ref.replace("refs/heads/", "");
+          const { data: pulls } = await client.request(
+            "GET /repos/{owner}/{repo}/pulls",
+            { owner, repo, state: "open", head: `${owner}:${branch}` },
+          );
+
+          if (pulls.length > 0) {
+            const pr = pulls[0];
+            const patchedMap = new Map<string, string>(); // no patches for push findings
+            await postReviewComments(
+              client, owner, repo, pr.number, headSha, findings, patchedMap
+            );
+          }
+        } catch {
+          // No open PR — that's fine
+        }
         await sendAlert({
           owner,
           repo,

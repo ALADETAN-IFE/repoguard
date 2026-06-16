@@ -298,14 +298,20 @@ export function scanWorkflowContent(content: string, filePath?: string): Finding
 
 function applyRules(rules: ScanRule[], content: string, filePath?: string): Finding[] {
   const findings: Finding[] = [];
+  const lines = content.split("\n");
+
   for (const rule of rules) {
     try {
       if (rule.test(content, filePath)) {
+        // Find which line triggered the rule
+        const line = lines.findIndex((l) => rule.testLine?.(l, filePath) ?? false);
+
         findings.push({
           rule: rule.id,
           severity: rule.severity,
           message: rule.description,
           file: filePath ?? null,
+          line: line >= 0 ? line + 1 : null,
         });
       }
     } catch {

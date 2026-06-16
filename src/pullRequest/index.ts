@@ -196,6 +196,14 @@ export async function openFixPR(
       },
     );
 
+    // ✅ Post inline review comments
+    const patchedMap = new Map(
+      filesToPatch.map((f) => [f.filePath, f.patchedContent])
+    );
+    await postReviewComments(
+      octokit, owner, repo, pr.number, baseSha, findings, patchedMap
+    );
+
     logger.info(`[pr] Opened PR #${pr.number} in ${owner}/${repo}`);
 
     // ── 7. Request review from admins ───────────────────────────────────────
@@ -252,15 +260,15 @@ async function openSecurityIssue(
 
     const description = reason === "no_write_permission"
       ? [
-          "> RepoGuard detected security issues in this repository but could not open an automatic fix PR because the app does not have **Contents: write** permission.",
-          "",
-          "## How to enable automatic fixes",
-          "",
-          "Go to your GitHub App installation settings and grant **Repository contents: Read & write** permission. RepoGuard will then be able to open fix PRs automatically on future scans.",
-        ]
+        "> RepoGuard detected security issues in this repository but could not open an automatic fix PR because the app does not have **Contents: write** permission.",
+        "",
+        "## How to enable automatic fixes",
+        "",
+        "Go to your GitHub App installation settings and grant **Repository contents: Read & write** permission. RepoGuard will then be able to open fix PRs automatically on future scans.",
+      ]
       : [
-          "> RepoGuard detected security issues in this repository that cannot be resolved automatically. Manual review and remediation are required.",
-        ];
+        "> RepoGuard detected security issues in this repository that cannot be resolved automatically. Manual review and remediation are required.",
+      ];
 
     const bodyParts = [
       "## ⚠️ RepoGuard Security Alert",
@@ -478,7 +486,7 @@ export function buildPRBody(
   const whatRequiresManualReview = uniqueUnpatchedRules
     .map((rule) => `- ${MANUAL_REVIEW_SUMMARIES[rule] ?? `Rule \`${rule}\` requires manual verification`}`)
     .join("\n") || "_None! All detected issues were automatically patched._";
-  
+
   const totalPatchedFindings = patchedFindings.length;
   const totalUnpatchedFindings = unpatchedFindings.length;
 
@@ -712,4 +720,79 @@ export async function closeRepoGuardPRsAndIssues(
       `[pr] Failed to close RepoGuard PRs/issues in ${owner}/${repo}: ${message}`,
     );
   }
+}
+
+interface ReviewComment {
+  path: string;
+  line: number;
+  side: string;
+  body: string;
+}
+
+
+export async function postReviewComments(
+  octokit: OctokitClient,
+  owner: string,
+  repo: string,
+  prNumber: number,
+  headSha: string,
+  findings: Finding[],
+  patchedContent: Map<string, string>, // filePath → patched content
+): Promise<void> {
+  const comments: ReviewComment[] = [];
+
+  for (const finding of findings) {
+    if (!finding.file || !finding.line) continue;
+
+    const patched = patchedContent.get(finding.file);
+
+    // Build committable suggestion if we have a patch
+    const body = patched
+      ? [
+        `**RepoGuard** detected \`${finding.rule}\` (${finding.severity})`,
+        `> ${finding.message}`,
+        ``,
+        `\`\`\`suggestion`,
+        getFixedLine(patched, finding.line),
+        `\`\`\``,
+      ].join("\n")
+      : [
+        `**RepoGuard** detected \`${finding.rule}\` (${finding.severity})`,
+        `> ${finding.message}`,
+        ``,
+        `⚠️ This requires manual review — no automatic fix available.`,
+      ].join("\n");
+
+    comments.push({
+      path: finding.file,
+      line: finding.line,
+      side: "RIGHT",
+      body,
+    });
+  }
+
+  if (comments.length === 0) return;
+
+  try {
+    await octokit.request(
+      "POST /repos/{owner}/{repo}/pulls/{pull_number}/reviews",
+      {
+        owner,
+        repo,
+        pull_number: prNumber,
+        commit_id: headSha,
+        event: "COMMENT",
+        comments,
+      },
+    );
+    logger.info(`[pr] Posted ${comments.length} inline review comment(s) on PR #${prNumber}`);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    logger.error(`[pr] Failed to post review comments: ${message}`);
+  }
+}
+
+function getFixedLine(patchedContent: string, lineNumber: number): string {
+  const lines = patchedContent.split("\n");
+  return lines[lineNumber - 1] ?? "";
 }

@@ -11,6 +11,7 @@ export interface ScanRule {
   severity: Severity;
   description: string;
   test: (content: string, filePath?: string) => boolean;
+  testLine?: (line: string, filePath?: string) => boolean;
 }
 
 export interface Finding {
@@ -18,6 +19,7 @@ export interface Finding {
   severity: Severity;
   message: string;
   file: string | null;
+  line?: number | null;
 }
 
 export interface ScanCommitOptions {
