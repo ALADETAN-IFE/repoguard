@@ -14,6 +14,11 @@ export function handlePush(_app: App): (event: WebhookEvent<PushEventPayload>) =
     const repo = repository.name;
     const totalCommits = commits.length;
 
+    if (headSha === "0000000000000000000000000000000000000000") {
+      logger.info(`[push] ${owner}/${repo} — branch deletion ignored`);
+      return;
+    }
+
     const client = normaliseOctokit(octokit);
 
     // ── Debug: log the client structure ──
