@@ -241,22 +241,25 @@ export async function scanCommit({
 
   for (const filePath of filesToScan) {
     if (shouldSkipPath(filePath)) continue;
-  
+
+
     const binary = isBinaryPath(filePath);
-  
+
     try {
-      const { data } = await octokit.rest.repos.getContent({
-        owner, repo, path: filePath, ref: sha,
-      });
-  
+      const { data } = await octokit.request(
+        "GET /repos/{owner}/{repo}/contents/{path}",
+        { owner, repo, path: filePath, ref: sha },
+      );
+
       if (Array.isArray(data) || data.type !== "file" || !("content" in data))
         continue;
-  
+
       const content = Buffer.from(data.content, "base64").toString("utf8");
-  
+
       // ✅ Skip true binaries UNLESS they contain JS malware signatures
       if (binary && !looksLikeJavaScript(content)) continue;
-  
+      logger.warn(`Fetching ${filePath}@${sha}`);
+
       if (isWorkflowPath(filePath)) {
         findings.push(...scanFileContent(content, filePath));
         findings.push(...scanWorkflowContent(content, filePath));
@@ -264,7 +267,8 @@ export async function scanCommit({
         findings.push(...scanFileContent(content, filePath));
       }
     } catch (err) {
-      // ...
+      const message = err instanceof Error ? err.message : String(err);
+      logger.warn(`Could not fetch ${filePath}@${sha}: ${message}`);
     }
   }
 
