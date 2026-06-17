@@ -786,6 +786,7 @@ export async function postReviewComments(
         ``,
         `\`\`\`suggestion`,
         suggestedLine,
+        `\`\`\``,   
         `</details>`,
         `<details>`,
         `<summary>💡 Suggested commit message:</summary>`,
