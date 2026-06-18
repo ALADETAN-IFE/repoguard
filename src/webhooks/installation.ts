@@ -150,7 +150,7 @@ export async function scanRepoList(
     });
 
     try {
-      const findings = await scanFullRepo(client, owner, repo.name);
+      const findings = await scanFullRepoForPush(client, owner, repo.name);
 
       // Persist findings
       if (findings.length > 0) {
@@ -444,7 +444,7 @@ export function handleInstallationRepositories(
 
 // ─── Scan every file in the repo ─────────────────────────────────────────────
 
-async function scanFullRepo(
+export async function scanFullRepoForPush(
   client: OctokitClient,
   owner: string,
   repo: string,

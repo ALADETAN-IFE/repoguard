@@ -25,6 +25,7 @@ export interface PushEventPayload {
   pusher: { name: string };
   ref: string;
   after: string; // head SHA
+  forced?: boolean;
 }
 
 // ─── workflow_run event ───────────────────────────────────────────────────────
