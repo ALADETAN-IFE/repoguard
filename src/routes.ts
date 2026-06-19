@@ -161,4 +161,8 @@ const rescanAll = async (_req: Request, res: Response) => {
 
 router.post("/api/rescan-all",  (req, res) => { void rescanAll(req, res); });
 
+router.use((_req: Request, res: Response) => {
+  res.status(404).json({ error: "Route not found" });
+});
+
 export default router;
