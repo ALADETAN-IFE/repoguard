@@ -1,6 +1,10 @@
 import express, { raw, type Request, type Response } from "express";
 import { handleWebhook, requireWebhookSignature, webhookRateLimit } from "./middleware";
-import { Scan, Finding } from "./models";
+import { Scan, Finding, Installation } from "./models";
+import { scanRepoList } from "./webhooks/installation";
+import { githubApp } from "./config/githubApp";
+import { normaliseOctokit } from "./utils/normaliseOctokit";
+import logger from "./utils/logger";
 
 const router = express.Router();
 
@@ -82,5 +86,79 @@ const getScanFindings = async (req: Request, res: Response): Promise<void> => {
   }
 };
 router.get("/api/scans/:scanId/findings", (req, res) => { void getScanFindings(req, res); });
+
+const rescanAll = async (_req: Request, res: Response) => {
+  try {
+    const installations = await Installation.find({ uninstalledAt: null }).lean();
+
+    if (installations.length === 0) {
+      res.json({ message: "No active installations found" });
+      return;
+    }
+
+    // Fire and forget — don't await, respond immediately
+    void (async () => {
+      for (const installation of installations) {
+        try {
+          const octokit = await githubApp.getInstallationOctokit(installation.installationId);
+          const client = normaliseOctokit(octokit);
+
+          // Get all repos for this installation
+          const { data: repos } = await client.request(
+            "GET /installation/repositories",
+            { per_page: 100 },
+          );
+
+          const repoList = repos.repositories.map((r: { full_name: string; name: string }) => ({
+            full_name: r.full_name,
+            name: r.name,
+          }));
+
+          if (repoList.length === 0) continue;
+
+          const installationKey = `${installation.owner}-${installation.installationId}`;
+
+          // Clear the checkpoint so scanRepoList rescans everything
+          const { Checkpoint } = await import("./models");
+          await Checkpoint.deleteOne({ installationKey });
+
+          // Re-init checkpoint with all repos
+          await Checkpoint.findOneAndUpdate(
+            { installationKey },
+            {
+              $setOnInsert: {
+                installationKey,
+                installationId: installation.installationId,
+                owner: installation.owner,
+                totalRepos: repoList.map((r: { full_name: string }) => r.full_name),
+                scanned: [],
+                startedAt: new Date(),
+              },
+            },
+            { upsert: true, new: false },
+          );
+
+          logger.info(`[rescan] Starting rescan for ${installation.owner} — ${repoList.length} repos`);
+          await scanRepoList(client, installationKey, installation.owner, repoList);
+          logger.info(`[rescan] Completed rescan for ${installation.owner}`);
+        } catch (err) {
+          const message = err instanceof Error ? err.message : String(err);
+          logger.error(`[rescan] Failed for installation ${installation.installationId}: ${message}`);
+        }
+      }
+    })();
+
+    res.json({
+      message: `Rescan triggered for ${installations.length} installation${installations.length > 1 ? "s" : ""}`,
+      installations: installations.map((i) => i.owner),
+    });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    logger.error(`[rescan] Failed to trigger rescan: ${message}`);
+    res.status(500).json({ error: message });
+  }
+}
+
+router.post("/api/rescan-all",  (req, res) => { void rescanAll(req, res); });
 
 export default router;
