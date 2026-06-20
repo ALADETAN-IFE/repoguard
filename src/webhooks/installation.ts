@@ -10,6 +10,7 @@ import { sendAlert } from "../alerts";
 import { normaliseOctokit } from "../utils/normaliseOctokit";
 import { shouldSkipPath } from "../utils/skipPaths";
 import { isBinaryPath, looksLikeJavaScript } from "../utils/binaryPath";
+import AdmZip from "adm-zip";
 
 interface RepoFile {
   path: string;
@@ -449,9 +450,70 @@ export function handleInstallationRepositories(
   };
 }
 
-// ─── Scan every file in the repo ─────────────────────────────────────────────
+// ─── Zipball-based scanning with Tree fallback ───────────────────────────────
 
-export async function scanFullRepoForPush(
+async function scanViaZipball(
+  client: OctokitClient,
+  owner: string,
+  repo: string,
+): Promise<Finding[]> {
+  const findings: Finding[] = [];
+
+  logger.info(`[scan] Downloading zipball for ${owner}/${repo}`);
+  const response = await client.request(
+    "GET /repos/{owner}/{repo}/zipball/{ref}",
+    { owner, repo, ref: "HEAD" },
+  );
+
+  const buffer = Buffer.isBuffer(response.data)
+    ? response.data
+    : Buffer.from(response.data as ArrayBuffer);
+
+  const zip = new AdmZip(buffer);
+  const entries = zip.getEntries();
+
+  // ── Fetch .repoguardignore if present in zip ───────────────────────────────
+  let ignoredPaths: string[] = [];
+  const ignoreEntry = entries.find((entry) => {
+    const parts = entry.entryName.split("/");
+    return parts.length === 2 && parts[1] === ".repoguardignore";
+  });
+
+  if (ignoreEntry) {
+    const raw = ignoreEntry.getData().toString("utf8");
+    ignoredPaths = raw
+      .split("\n")
+      .map((l) => l.trim())
+      .filter((l) => l && !l.startsWith("#"));
+  }
+
+  // ── Iterate and scan entries ───────────────────────────────────────────────
+  for (const entry of entries) {
+    if (entry.isDirectory) continue;
+
+    // GitHub zipball has root folder: owner-repo-sha/
+    const parts = entry.entryName.split("/");
+    if (parts.length <= 1) continue;
+
+    const filePath = parts.slice(1).join("/");
+    if (!filePath) continue;
+
+    if (shouldSkipPath(filePath)) continue;
+    if (ignoredPaths.some((p) => filePath.startsWith(p))) continue;
+
+    const content = entry.getData().toString("utf8");
+    const binary = isBinaryPath(filePath);
+
+    // Skip true binaries UNLESS they contain JS malware signatures
+    if (binary && !looksLikeJavaScript(content)) continue;
+
+    findings.push(...scanFileContent(content, filePath));
+  }
+
+  return findings;
+}
+
+async function scanViaTreeAndIndividualFiles(
   client: OctokitClient,
   owner: string,
   repo: string,
@@ -501,7 +563,7 @@ export async function scanFullRepoForPush(
   
       const content = Buffer.from(data.content || "", "base64").toString("utf8");
   
-      // ✅ Skip true binaries UNLESS they contain JS malware signatures
+      // Skip true binaries UNLESS they contain JS malware signatures
       if (binary && !looksLikeJavaScript(content)) continue;
   
       files.push({ path: item.path, content });
@@ -515,4 +577,21 @@ export async function scanFullRepoForPush(
   }
 
   return findings;
+}
+
+export async function scanFullRepoForPush(
+  client: OctokitClient,
+  owner: string,
+  repo: string,
+): Promise<Finding[]> {
+  try {
+    logger.info(`[scan] Attempting zipball-based scan for ${owner}/${repo}`);
+    return await scanViaZipball(client, owner, repo);
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    logger.warn(
+      `[scan] Zipball scan failed for ${owner}/${repo}: ${msg}. Falling back to file-by-file scan...`,
+    );
+    return await scanViaTreeAndIndividualFiles(client, owner, repo);
+  }
 }
