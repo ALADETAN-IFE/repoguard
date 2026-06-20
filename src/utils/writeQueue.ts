@@ -172,36 +172,32 @@ async function drainQueue(): Promise<void> {
   draining = true;
 
   try {
-    let queueNotEmpty = true;
-    while (queueNotEmpty) {
-      // 1. Check queue size and retrieve next item
-      let entry: SerializedWrite | null = null;
+    // Snapshot the current queue contents so we don't infinitely loop on offline database
+    const snapshot: SerializedWrite[] = [];
 
-      if (redis) {
-        try {
-          const raw = await redis.rpop(REDIS_QUEUE_KEY);
-          if (raw) {
-            entry = JSON.parse(raw) as SerializedWrite;
-          }
-        } catch (redisErr) {
-          const rMsg = redisErr instanceof Error ? redisErr.message : String(redisErr);
-          logger.error(`[writeQueue] Redis RPOP failed, draining memory fallback instead: ${rMsg}`);
+    if (redis) {
+      try {
+        let raw = await redis.rpop(REDIS_QUEUE_KEY);
+        while (raw) {
+          snapshot.push(JSON.parse(raw) as SerializedWrite);
+          raw = await redis.rpop(REDIS_QUEUE_KEY);
         }
+      } catch (redisErr) {
+        const rMsg = redisErr instanceof Error ? redisErr.message : String(redisErr);
+        logger.error(`[writeQueue] Redis drain snapshot failed: ${rMsg}`);
       }
+    } else {
+      snapshot.push(...queue.splice(0, queue.length));
+    }
 
-      // If Redis failed or is not configured, check in-memory queue
-      if (!entry) {
-        entry = queue.shift() ?? null;
-      }
+    if (snapshot.length === 0) {
+      draining = false;
+      return;
+    }
 
-      // If no entry is found in either queue, we are done
-      if (!entry) {
-        queueNotEmpty = false;
-        break;
-      }
+    logger.info(`[writeQueue] Draining ${snapshot.length} queued write(s)…`);
 
-      logger.info(`[writeQueue] Replaying "${entry.label}" (attempt ${entry.attempts})`);
-
+    for (const entry of snapshot) {
       // Add backoff delay based on attempts
       const delay = Math.min(
         BASE_DELAY_MS * 2 ** (entry.attempts - 1) + Math.random() * 200,
