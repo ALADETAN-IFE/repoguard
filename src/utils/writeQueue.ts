@@ -1,100 +1,269 @@
 import mongoose from "mongoose";
 import logger from "./logger";
+import { redis } from "../config/redis";
+import { Checkpoint, Scan, Finding } from "../models";
 
-type WriteOperation = () => Promise<void>;
+export type QueuedWrite =
+  | {
+      type: "MARK_SCANNED";
+      data: {
+        installationKey: string;
+        repoFullName: string;
+      };
+    }
+  | {
+      type: "CREATE_SCAN";
+      data: {
+        scanId: string;
+        installationId: number | undefined;
+        owner: string;
+        repo: string;
+        status: string;
+        trigger: string;
+        startedAt: string;
+      };
+    }
+  | {
+      type: "INSERT_FINDINGS";
+      data: {
+        findings: Array<{
+          scanId: string;
+          installationId: number | undefined;
+          owner: string;
+          repo: string;
+          rule: string;
+          severity: string;
+          message: string;
+          file: string | null;
+          detectedAt: string;
+        }>;
+      };
+    }
+  | {
+      type: "COMPLETE_SCAN";
+      data: {
+        scanId: string;
+        findingsCount: number;
+        completedAt: string;
+      };
+    };
 
-interface QueueEntry {
-  label: string;      // human-readable name for logs
-  op: WriteOperation;
+export interface SerializedWrite {
+  label: string;
+  write: QueuedWrite;
   attempts: number;
 }
 
 const MAX_ATTEMPTS = 5;
 const BASE_DELAY_MS = 500;
+const REDIS_QUEUE_KEY = "repoguard:write_queue";
 
-// ─── In-memory queue ──────────────────────────────────────────────────────────
-
-const queue: QueueEntry[] = [];
+// ─── In-memory fallback queue ──────────────────────────────────────────────────
+const queue: SerializedWrite[] = [];
 let draining = false;
+
+// ─── Internal helper: execute specific model operations with full Type Safety ───
+async function executeWrite(write: QueuedWrite): Promise<void> {
+  switch (write.type) {
+    case "MARK_SCANNED":
+      await Checkpoint.updateOne(
+        { installationKey: write.data.installationKey },
+        { $addToSet: { scanned: write.data.repoFullName } }
+      );
+      break;
+
+    case "CREATE_SCAN":
+      await Scan.create({
+        _id: new mongoose.Types.ObjectId(write.data.scanId),
+        installationId: write.data.installationId,
+        owner: write.data.owner,
+        repo: write.data.repo,
+        status: write.data.status,
+        trigger: write.data.trigger,
+        startedAt: new Date(write.data.startedAt),
+      });
+      break;
+
+    case "INSERT_FINDINGS":
+      await Finding.insertMany(
+        write.data.findings.map((f) => ({
+          scanId: new mongoose.Types.ObjectId(f.scanId),
+          installationId: f.installationId,
+          owner: f.owner,
+          repo: f.repo,
+          rule: f.rule,
+          severity: f.severity,
+          message: f.message,
+          file: f.file,
+          detectedAt: new Date(f.detectedAt),
+        }))
+      );
+      break;
+
+    case "COMPLETE_SCAN":
+      await Scan.updateOne(
+        { _id: new mongoose.Types.ObjectId(write.data.scanId) },
+        {
+          $set: {
+            status: "complete",
+            completedAt: new Date(write.data.completedAt),
+            findingsCount: write.data.findingsCount,
+          },
+        }
+      );
+      break;
+
+    default: {
+      const exhaustiveCheck: never = write;
+      throw new Error(`Unhandled write type: ${JSON.stringify(exhaustiveCheck)}`);
+    }
+  }
+}
 
 // ─── Public: enqueue a write ──────────────────────────────────────────────────
 
 /**
  * Attempt a MongoDB write immediately. If it fails (network / DB down),
- * push it onto the retry queue instead of throwing.  The caller never
- * sees an exception — progress is never lost, and the server stays up.
+ * push it onto the retry queue (Redis or in-memory) instead of throwing.
+ * The caller never sees an exception — progress is never lost, and the server stays up.
  *
  * @param label  Short description used in log messages.
- * @param op     Async function that performs the Mongoose write.
+ * @param write  The strongly-typed write operation to run.
  */
-export async function safeWrite(label: string, op: WriteOperation): Promise<void> {
+export async function safeWrite(
+  label: string,
+  write: QueuedWrite
+): Promise<void> {
   try {
-    await op();
+    await executeWrite(write);
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     logger.warn(`[writeQueue] "${label}" failed — queuing for retry. Reason: ${message}`);
-    queue.push({ label, op, attempts: 1 });
+    
+    const entry: SerializedWrite = {
+      label,
+      write,
+      attempts: 1,
+    };
+
+    try {
+      if (redis) {
+        await redis.lpush(REDIS_QUEUE_KEY, JSON.stringify(entry));
+        logger.info(`[writeQueue] Enqueued "${label}" to Redis`);
+      } else {
+        queue.push(entry);
+        logger.info(`[writeQueue] Enqueued "${label}" to in-memory queue`);
+      }
+    } catch (queueErr) {
+      const qMsg = queueErr instanceof Error ? queueErr.message : String(queueErr);
+      logger.error(`[writeQueue] Failed to write to Redis queue, falling back to memory. Error: ${qMsg}`);
+      queue.push(entry);
+    }
+
+    // Trigger an asynchronous drain in case the connection is already active/restored
+    void drainQueue();
   }
 }
 
 // ─── Internal: drain the queue ────────────────────────────────────────────────
 
 async function drainQueue(): Promise<void> {
-  if (draining || queue.length === 0) return;
+  if (draining) return;
   draining = true;
 
-  logger.info(`[writeQueue] Draining ${queue.length} queued write(s)…`);
+  try {
+    let queueNotEmpty = true;
+    while (queueNotEmpty) {
+      // 1. Check queue size and retrieve next item
+      let entry: SerializedWrite | null = null;
 
-  // Snapshot current entries — new failures during drain go to the back
-  const snapshot = queue.splice(0, queue.length);
+      if (redis) {
+        try {
+          const raw = await redis.rpop(REDIS_QUEUE_KEY);
+          if (raw) {
+            entry = JSON.parse(raw) as SerializedWrite;
+          }
+        } catch (redisErr) {
+          const rMsg = redisErr instanceof Error ? redisErr.message : String(redisErr);
+          logger.error(`[writeQueue] Redis RPOP failed, draining memory fallback instead: ${rMsg}`);
+        }
+      }
 
-  for (const entry of snapshot) {
-    const delay = Math.min(
-      BASE_DELAY_MS * 2 ** (entry.attempts - 1) + Math.random() * 200,
-      30_000,
-    );
+      // If Redis failed or is not configured, check in-memory queue
+      if (!entry) {
+        entry = queue.shift() ?? null;
+      }
 
-    await new Promise((r) => setTimeout(r, delay));
+      // If no entry is found in either queue, we are done
+      if (!entry) {
+        queueNotEmpty = false;
+        break;
+      }
 
-    try {
-      await entry.op();
-      logger.info(`[writeQueue] ✓ Replayed "${entry.label}" (attempt ${entry.attempts})`);
-    } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
+      logger.info(`[writeQueue] Replaying "${entry.label}" (attempt ${entry.attempts})`);
 
-      if (entry.attempts >= MAX_ATTEMPTS) {
-        logger.error(
-          `[writeQueue] ✗ Dropping "${entry.label}" after ${entry.attempts} attempts. Reason: ${message}`,
-        );
-      } else {
-        logger.warn(
-          `[writeQueue] Retry ${entry.attempts} failed for "${entry.label}" — will retry. Reason: ${message}`,
-        );
-        queue.push({ ...entry, attempts: entry.attempts + 1 });
+      // Add backoff delay based on attempts
+      const delay = Math.min(
+        BASE_DELAY_MS * 2 ** (entry.attempts - 1) + Math.random() * 200,
+        30_000,
+      );
+      await new Promise((r) => setTimeout(r, delay));
+
+      try {
+        await executeWrite(entry.write);
+        logger.info(`[writeQueue] ✓ Replayed "${entry.label}" successfully`);
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+
+        if (entry.attempts >= MAX_ATTEMPTS) {
+          logger.error(
+            `[writeQueue] ✗ Dropping "${entry.label}" after ${entry.attempts} attempts. Reason: ${message}`,
+          );
+        } else {
+          logger.warn(
+            `[writeQueue] Retry ${entry.attempts} failed for "${entry.label}" — re-queueing. Reason: ${message}`,
+          );
+          entry.attempts++;
+
+          try {
+            if (redis) {
+              await redis.lpush(REDIS_QUEUE_KEY, JSON.stringify(entry));
+            } else {
+              queue.push(entry);
+            }
+          } catch {
+            logger.error(`[writeQueue] Failed to re-queue "${entry.label}", falling back to memory.`);
+            queue.push(entry);
+          }
+        }
       }
     }
-  }
-
-  draining = false;
-
-  // If new items were added during the drain, schedule another pass
-  if (queue.length > 0) {
-    logger.info(`[writeQueue] ${queue.length} item(s) remain — scheduling next drain`);
-    void drainQueue();
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    logger.error(`[writeQueue] Unexpected error during drain: ${message}`);
+  } finally {
+    draining = false;
   }
 }
 
 // ─── Trigger drain on reconnect ───────────────────────────────────────────────
 
 mongoose.connection.on("reconnected", () => {
-  if (queue.length > 0) {
-    logger.info(`[writeQueue] MongoDB reconnected — replaying ${queue.length} queued write(s)`);
-    void drainQueue();
-  }
+  logger.info(`[writeQueue] MongoDB reconnected — checking for queued writes`);
+  void drainQueue();
 });
 
 // ─── Expose queue length for health checks / tests ───────────────────────────
 
-export function pendingWriteCount(): number {
-  return queue.length;
+export async function pendingWriteCount(): Promise<number> {
+  let count = queue.length;
+  if (redis) {
+    try {
+      const len = await redis.llen(REDIS_QUEUE_KEY);
+      count += len;
+    } catch {
+      // ignore
+    }
+  }
+  return count;
 }

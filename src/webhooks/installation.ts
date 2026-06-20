@@ -1,7 +1,7 @@
 import type { App } from "@octokit/app";
 import { scanFileContent } from "../scanner";
 import { openFixPR } from "../pullRequest";
-import { Installation, Checkpoint, Scan, Finding as FindingModel } from "../models";
+import { Installation, Checkpoint, Scan } from "../models";
 import logger from "../utils/logger";
 import { safeWrite } from "../utils/writeQueue";
 import type { Finding, WebhookEvent, InstallationEventPayload, OctokitClient } from "../types/index";
@@ -54,12 +54,10 @@ async function markScanned(
   installationKey: string,
   repoFullName: string,
 ): Promise<void> {
-  await safeWrite(`markScanned:${repoFullName}`, () =>
-    Checkpoint.updateOne(
-      { installationKey },
-      { $addToSet: { scanned: repoFullName } },
-    ).then(() => undefined),
-  );
+  await safeWrite(`markScanned:${repoFullName}`, {
+    type: "MARK_SCANNED",
+    data: { installationKey, repoFullName },
+  });
 }
 
 export async function clearCheckpoint(installationKey: string): Promise<void> {
@@ -135,54 +133,63 @@ export async function scanRepoList(
   for (const repo of pending) {
     logger.info(`[installation] Scanning: ${repo.full_name}`);
 
+    // Pre-generate the scan ID using Types.ObjectId to avoid race conditions
+    const scanId = new Types.ObjectId();
+
     // Create a scan record (queued on failure so loop continues)
-    let scanId: unknown = null;
-    await safeWrite(`Scan.create:${repo.full_name}`, async () => {
-      const scan = await Scan.create({
-        installationId: checkpoint?.installationId,
-        owner,
-        repo: repo.name,
-        status: "in_progress",
-        trigger: "installation",
-        startedAt: new Date(),
-      });
-      scanId = scan._id;
-    });
+    await safeWrite(
+      `Scan.create:${repo.full_name}`,
+      {
+        type: "CREATE_SCAN",
+        data: {
+          scanId: scanId.toHexString(),
+          installationId: checkpoint?.installationId,
+          owner,
+          repo: repo.name,
+          status: "in_progress",
+          trigger: "installation",
+          startedAt: new Date().toISOString(),
+        },
+      }
+    );
 
     try {
       const findings = await scanFullRepoForPush(client, owner, repo.name);
 
       // Persist findings
       if (findings.length > 0) {
-        await safeWrite(`FindingModel.insertMany:${repo.full_name}`, () =>
-          FindingModel.insertMany(
-            findings.map((f) => ({
-              scanId,
-              installationId: checkpoint?.installationId,
-              owner,
-              repo: repo.name,
-              rule: f.rule,
-              severity: f.severity,
-              message: f.message,
-              file: f.file,
-              detectedAt: new Date(),
-            })),
-          ).then(() => undefined),
+        await safeWrite(
+          `FindingModel.insertMany:${repo.full_name}`,
+          {
+            type: "INSERT_FINDINGS",
+            data: {
+              findings: findings.map((f) => ({
+                scanId: scanId.toHexString(),
+                installationId: checkpoint?.installationId,
+                owner,
+                repo: repo.name,
+                rule: f.rule,
+                severity: f.severity,
+                message: f.message,
+                file: f.file,
+                detectedAt: new Date().toISOString(),
+              })),
+            },
+          }
         );
       }
 
       // Update scan record
-      await safeWrite(`Scan.complete:${repo.full_name}`, () =>
-        Scan.updateOne(
-          { _id: scanId as Types.ObjectId },
-          {
-            $set: {
-              status: "complete",
-              completedAt: new Date(),
-              findingsCount: findings.length,
-            },
+      await safeWrite(
+        `Scan.complete:${repo.full_name}`,
+        {
+          type: "COMPLETE_SCAN",
+          data: {
+            scanId: scanId.toHexString(),
+            findingsCount: findings.length,
+            completedAt: new Date().toISOString(),
           },
-        ).then(() => undefined),
+        }
       );
 
       if (findings.length === 0) {
@@ -237,7 +244,7 @@ export async function scanRepoList(
       logger.error(`[installation] Error scanning ${repo.full_name}: ${message}`);
 
       await Scan.updateOne(
-        { _id: scanId as Types.ObjectId },
+        { _id: scanId },
         { $set: { status: "failed", completedAt: new Date() } },
       ).catch((dbErr: unknown) => {
         const msg = dbErr instanceof Error ? dbErr.message : String(dbErr);

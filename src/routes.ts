@@ -88,7 +88,7 @@ const getScanFindings = async (req: Request, res: Response): Promise<void> => {
 router.get("/api/scans/:scanId/findings", requireApiKey, (req, res) => { void getScanFindings(req, res); });
 
 // Rescan all repos
-const rescanAll = async (req: Request, res: Response) => {
+const rescanAll = async (req: Request, res: Response): Promise<void> => {
   try {
     const installations = await Installation.find({ uninstalledAt: null }).lean();
 
@@ -104,7 +104,7 @@ const rescanAll = async (req: Request, res: Response) => {
     }
 
     // Fire and forget — don't await, respond immediately
-    void (async () => {
+    void (async (): Promise<void> => {
       for (const installation of installations) {
         try {
           const octokit = await githubApp.getInstallationOctokit(installation.installationId);
