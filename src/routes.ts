@@ -1,6 +1,6 @@
 import express, { raw, type Request, type Response } from "express";
 import { handleWebhook, requireWebhookSignature, webhookRateLimit } from "./middleware";
-import { Scan, Finding, Installation } from "./models";
+import { Scan, Finding, Installation, Checkpoint } from "./models";
 import { scanRepoList } from "./webhooks/installation";
 import { githubApp } from "./config/githubApp";
 import { normaliseOctokit } from "./utils/normaliseOctokit";
@@ -87,6 +87,7 @@ const getScanFindings = async (req: Request, res: Response): Promise<void> => {
 };
 router.get("/api/scans/:scanId/findings", (req, res) => { void getScanFindings(req, res); });
 
+// Rescan all repos
 const rescanAll = async (req: Request, res: Response) => {
   try {
     const installations = await Installation.find({ uninstalledAt: null }).lean();
@@ -125,7 +126,6 @@ const rescanAll = async (req: Request, res: Response) => {
           const installationKey = `${installation.owner}-${installation.installationId}`;
 
           // Clear the checkpoint so scanRepoList rescans everything
-          const { Checkpoint } = await import("./models");
           await Checkpoint.deleteOne({ installationKey });
 
           // Re-init checkpoint with all repos
