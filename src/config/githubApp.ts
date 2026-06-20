@@ -86,6 +86,11 @@ githubApp.webhooks.on(
   handlePullRequestOpened(githubApp) as unknown as (event: unknown) => Promise<void>,
 );
 
+githubApp.webhooks.on(
+  "pull_request.synchronize",
+  handlePullRequestOpened(githubApp) as unknown as (event: unknown) => Promise<void>,
+);
+
 githubApp.webhooks.onError((error) => {
   logger.error(`Webhook error: ${error.message}`);
 });
