@@ -1,5 +1,10 @@
 import { applyPatches, buildPRBody, openFixPR, closeRepoGuardPRsAndIssues } from "../src/pullRequest";
-import type { Finding } from "../src/types";
+import type { Finding, OctokitClient } from "../src/types";
+
+/** Minimal Octokit shape used by the tests — cast to OctokitClient at call-sites. */
+interface MockOctokit {
+  request: jest.Mock;
+}
 
 jest.mock("prettier", () => ({
   getFileInfo: jest.fn().mockResolvedValue({ inferredParser: null }),
@@ -158,14 +163,13 @@ describe("pullRequest", () => {
   });
 
   describe("openFixPR workflow", () => {
-    let mockOctokit: any;
+    let mockOctokit: OctokitClient;
     let requestMock: jest.Mock;
 
     beforeEach(() => {
       requestMock = jest.fn();
-      mockOctokit = {
-        request: requestMock,
-      };
+      const stub: MockOctokit = { request: requestMock };
+      mockOctokit = stub as unknown as OctokitClient;
     });
 
     it("opens a manual review issue if there are no patchable findings", async () => {
@@ -669,14 +673,13 @@ describe("pullRequest", () => {
   });
 
   describe("closeRepoGuardPRsAndIssues", () => {
-    let mockOctokit: any;
+    let mockOctokit: OctokitClient;
     let requestMock: jest.Mock;
 
     beforeEach(() => {
       requestMock = jest.fn();
-      mockOctokit = {
-        request: requestMock,
-      };
+      const stub: MockOctokit = { request: requestMock };
+      mockOctokit = stub as unknown as OctokitClient;
     });
 
     it("comments on and closes open RepoGuard PRs and issues, and deletes PR branches", async () => {
