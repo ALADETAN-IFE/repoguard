@@ -13,9 +13,9 @@ router.get("/", (_req: Request, res: Response) => {
 })
 
 router.use("/api/webhook", raw({ type: "application/json" }), // ← raw buffer, not parsed JSON
-webhookRateLimit,
-requireWebhookSignature,
-handleWebhook);
+  webhookRateLimit,
+  requireWebhookSignature,
+  handleWebhook);
 
 
 router.get("/health", (_req: Request, res: Response) => {
@@ -87,12 +87,18 @@ const getScanFindings = async (req: Request, res: Response): Promise<void> => {
 };
 router.get("/api/scans/:scanId/findings", (req, res) => { void getScanFindings(req, res); });
 
-const rescanAll = async (_req: Request, res: Response) => {
+const rescanAll = async (req: Request, res: Response) => {
   try {
     const installations = await Installation.find({ uninstalledAt: null }).lean();
 
     if (installations.length === 0) {
       res.json({ message: "No active installations found" });
+      return;
+    }
+
+    const secret = req.headers["x-rescan-secret"];
+    if (secret !== process.env.RESCAN_SECRET) {
+      res.status(401).json({ error: "Unauthorized" });
       return;
     }
 
@@ -159,7 +165,7 @@ const rescanAll = async (_req: Request, res: Response) => {
   }
 }
 
-router.post("/api/rescan-all",  (req, res) => { void rescanAll(req, res); });
+router.post("/api/rescan-all", (req, res) => { void rescanAll(req, res); });
 
 router.use((_req: Request, res: Response) => {
   res.status(404).json({ error: "Route not found" });
