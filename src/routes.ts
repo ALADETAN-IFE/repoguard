@@ -1,5 +1,5 @@
 import express, { raw, type Request, type Response } from "express";
-import { handleWebhook, requireWebhookSignature, webhookRateLimit } from "./middleware";
+import { handleWebhook, requireApiKey, requireRescanSecret, requireWebhookSignature, webhookRateLimit } from "./middleware";
 import { Scan, Finding, Installation, Checkpoint } from "./models";
 import { scanRepoList } from "./webhooks/installation";
 import { githubApp } from "./config/githubApp";
@@ -71,7 +71,7 @@ const getScans = async (req: Request, res: Response): Promise<void> => {
     res.status(500).json({ error: message });
   }
 };
-router.get("/api/scans", (req, res) => { void getScans(req, res); });
+router.get("/api/scans", requireApiKey, (req, res) => { void getScans(req, res); });
 
 // Returns findings for a specific scan
 const getScanFindings = async (req: Request, res: Response): Promise<void> => {
@@ -85,7 +85,7 @@ const getScanFindings = async (req: Request, res: Response): Promise<void> => {
     res.status(500).json({ error: message });
   }
 };
-router.get("/api/scans/:scanId/findings", (req, res) => { void getScanFindings(req, res); });
+router.get("/api/scans/:scanId/findings", requireApiKey, (req, res) => { void getScanFindings(req, res); });
 
 // Rescan all repos
 const rescanAll = async (req: Request, res: Response) => {
@@ -165,7 +165,7 @@ const rescanAll = async (req: Request, res: Response) => {
   }
 }
 
-router.post("/api/rescan-all", (req, res) => { void rescanAll(req, res); });
+router.post("/api/rescan-all", requireRescanSecret, (req, res) => { void rescanAll(req, res); });
 
 router.use((_req: Request, res: Response) => {
   res.status(404).json({ error: "Route not found" });
