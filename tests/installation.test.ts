@@ -8,6 +8,10 @@ import {
 import type { App } from "@octokit/app";
 import type { OctokitClient, WebhookEvent, InstallationEventPayload } from "../src/types";
 
+/** Cast a jest request mock to OctokitClient for use in event handler calls. */
+const makeOctokit = (r: jest.Mock): OctokitClient =>
+  ({ request: r } as unknown as OctokitClient);
+
 // ─── Mocks ────────────────────────────────────────────────────────────────────
 
 // Mock prettier and pullRequest to prevent dynamic import issues in Jest under Node v24
@@ -330,7 +334,7 @@ describe("handleInstallation", () => {
 
   it("handles 'deleted' action — clears checkpoint and marks installation uninstalled", async () => {
     await handler({
-      octokit: { request: mockRequest },
+      octokit: makeOctokit(mockRequest),
       payload: {
         action: "deleted",
         installation: {
@@ -371,7 +375,7 @@ describe("handleInstallation", () => {
     // iterates over repos, then to signal completion when called a second time.
     // With an empty repositories array, scanRepoList finishes immediately.
     await handler({
-      octokit: { request: mockRequest },
+      octokit: makeOctokit(mockRequest),
       payload: {
         action: "created",
         installation: {
@@ -410,7 +414,7 @@ describe("handleInstallation", () => {
 
   it("returns early for unknown actions (e.g. 'suspend') without side effects", async () => {
     await handler({
-      octokit: { request: mockRequest },
+      octokit: makeOctokit(mockRequest),
       payload: {
         action: "suspend",
         installation: {
