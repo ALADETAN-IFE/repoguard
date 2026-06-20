@@ -3,24 +3,26 @@ import { scanWorkflowContent } from "../scanner";
 import { sendAlert } from "../alerts";
 import logger from "../utils/logger";
 import type { WebhookEvent, WorkflowRunEventPayload } from "../types/index";
+import { normaliseOctokit } from "../utils/normaliseOctokit";
 
 export function handleWorkflowRun(_app: App): (event: WebhookEvent<WorkflowRunEventPayload>) => Promise<void> {
   return async ({ octokit, payload }) => {
     if (payload.action !== "requested") return;
-
+    
     const { workflow_run, repository } = payload;
     const owner = repository.owner.login ?? repository.owner.name ?? "unknown";
     const repo = repository.name;
-
+    
     logger.info(
       `[workflow_run] ${owner}/${repo} — "${workflow_run.name}" by ${workflow_run.triggering_actor?.login ?? "unknown"}`,
     );
 
     const workflowPath = workflow_run.path;
     if (!workflowPath) return;
-
+    
+    const client = normaliseOctokit(octokit); 
     try {
-      const { data } = await octokit.request(
+      const { data } = await client.request(
         "GET /repos/{owner}/{repo}/contents/{path}",
         { owner, repo, path: workflowPath, ref: workflow_run.head_sha },
       );
