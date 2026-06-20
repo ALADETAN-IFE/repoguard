@@ -1,5 +1,11 @@
 import express, { raw, type Request, type Response } from "express";
-import { handleWebhook, requireApiKey, requireRescanSecret, requireWebhookSignature, webhookRateLimit } from "./middleware";
+import {
+  handleWebhook,
+  requireApiKey,
+  requireRescanSecret,
+  requireWebhookSignature,
+  webhookRateLimit,
+} from "./middleware";
 import { Scan, Finding, Installation, Checkpoint } from "./models";
 import { scanRepoList } from "./webhooks/installation";
 import { githubApp } from "./config/githubApp";
@@ -10,13 +16,15 @@ const router = express.Router();
 
 router.get("/", (_req: Request, res: Response) => {
   res.json({ message: "Welcome to RepoGuard API" });
-})
+});
 
-router.use("/api/webhook", raw({ type: "application/json" }), // ← raw buffer, not parsed JSON
+router.use(
+  "/api/webhook",
+  raw({ type: "application/json" }), // ← raw buffer, not parsed JSON
   webhookRateLimit,
   requireWebhookSignature,
-  handleWebhook);
-
+  handleWebhook,
+);
 
 router.get("/health", (_req: Request, res: Response) => {
   res.json({ status: "ok", app: "RepoGuard-IfeCodes", version: "1.0.0" });
@@ -71,7 +79,9 @@ const getScans = async (req: Request, res: Response): Promise<void> => {
     res.status(500).json({ error: message });
   }
 };
-router.get("/api/scans", requireApiKey, (req, res) => { void getScans(req, res); });
+router.get("/api/scans", requireApiKey, (req, res) => {
+  void getScans(req, res);
+});
 
 // Returns findings for a specific scan
 const getScanFindings = async (req: Request, res: Response): Promise<void> => {
@@ -85,12 +95,16 @@ const getScanFindings = async (req: Request, res: Response): Promise<void> => {
     res.status(500).json({ error: message });
   }
 };
-router.get("/api/scans/:scanId/findings", requireApiKey, (req, res) => { void getScanFindings(req, res); });
+router.get("/api/scans/:scanId/findings", requireApiKey, (req, res) => {
+  void getScanFindings(req, res);
+});
 
 // Rescan all repos
 const rescanAll = async (req: Request, res: Response): Promise<void> => {
   try {
-    const installations = await Installation.find({ uninstalledAt: null }).lean();
+    const installations = await Installation.find({
+      uninstalledAt: null,
+    }).lean();
 
     if (installations.length === 0) {
       res.json({ message: "No active installations found" });
@@ -107,7 +121,9 @@ const rescanAll = async (req: Request, res: Response): Promise<void> => {
     void (async (): Promise<void> => {
       for (const installation of installations) {
         try {
-          const octokit = await githubApp.getInstallationOctokit(installation.installationId);
+          const octokit = await githubApp.getInstallationOctokit(
+            installation.installationId,
+          );
           const client = normaliseOctokit(octokit);
 
           // Get all repos for this installation
@@ -116,10 +132,12 @@ const rescanAll = async (req: Request, res: Response): Promise<void> => {
             { per_page: 100 },
           );
 
-          const repoList = repos.repositories.map((r: { full_name: string; name: string }) => ({
-            full_name: r.full_name,
-            name: r.name,
-          }));
+          const repoList = repos.repositories.map(
+            (r: { full_name: string; name: string }) => ({
+              full_name: r.full_name,
+              name: r.name,
+            }),
+          );
 
           if (repoList.length === 0) continue;
 
@@ -136,7 +154,9 @@ const rescanAll = async (req: Request, res: Response): Promise<void> => {
                 installationKey,
                 installationId: installation.installationId,
                 owner: installation.owner,
-                totalRepos: repoList.map((r: { full_name: string }) => r.full_name),
+                totalRepos: repoList.map(
+                  (r: { full_name: string }) => r.full_name,
+                ),
                 scanned: [],
                 startedAt: new Date(),
               },
@@ -144,12 +164,21 @@ const rescanAll = async (req: Request, res: Response): Promise<void> => {
             { upsert: true, new: false },
           );
 
-          logger.info(`[rescan] Starting rescan for ${installation.owner} — ${repoList.length} repos`);
-          await scanRepoList(client, installationKey, installation.owner, repoList);
+          logger.info(
+            `[rescan] Starting rescan for ${installation.owner} — ${repoList.length} repos`,
+          );
+          await scanRepoList(
+            client,
+            installationKey,
+            installation.owner,
+            repoList,
+          );
           logger.info(`[rescan] Completed rescan for ${installation.owner}`);
         } catch (err) {
           const message = err instanceof Error ? err.message : String(err);
-          logger.error(`[rescan] Failed for installation ${installation.installationId}: ${message}`);
+          logger.error(
+            `[rescan] Failed for installation ${installation.installationId}: ${message}`,
+          );
         }
       }
     })();
@@ -163,9 +192,11 @@ const rescanAll = async (req: Request, res: Response): Promise<void> => {
     logger.error(`[rescan] Failed to trigger rescan: ${message}`);
     res.status(500).json({ error: message });
   }
-}
+};
 
-router.post("/api/rescan-all", requireRescanSecret, (req, res) => { void rescanAll(req, res); });
+router.post("/api/rescan-all", requireRescanSecret, (req, res) => {
+  void rescanAll(req, res);
+});
 
 router.use((_req: Request, res: Response) => {
   res.status(404).json({ error: "Route not found" });

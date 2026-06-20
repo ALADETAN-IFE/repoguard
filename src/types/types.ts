@@ -49,14 +49,24 @@ export interface UpdateCheckRunOptions {
   owner: string;
   repo: string;
   checkRunId: number;
-  conclusion: "success" | "failure" | "neutral" | "cancelled" | "skipped" | "timed_out";
+  conclusion:
+    | "success"
+    | "failure"
+    | "neutral"
+    | "cancelled"
+    | "skipped"
+    | "timed_out";
   findings: Finding[];
   summary?: string;
 }
 
 // ─── Alerts ──────────────────────────────────────────────────────────────────
 
-export type AlertContext = "push" | "workflow_file" | "branch_create" | "installation";
+export type AlertContext =
+  | "push"
+  | "workflow_file"
+  | "branch_create"
+  | "installation";
 
 export interface AlertOptions {
   owner: string;

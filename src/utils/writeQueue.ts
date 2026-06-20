@@ -68,7 +68,7 @@ async function executeWrite(write: QueuedWrite): Promise<void> {
     case "MARK_SCANNED":
       await Checkpoint.updateOne(
         { installationKey: write.data.installationKey },
-        { $addToSet: { scanned: write.data.repoFullName } }
+        { $addToSet: { scanned: write.data.repoFullName } },
       );
       break;
 
@@ -96,7 +96,7 @@ async function executeWrite(write: QueuedWrite): Promise<void> {
           message: f.message,
           file: f.file,
           detectedAt: new Date(f.detectedAt),
-        }))
+        })),
       );
       break;
 
@@ -109,13 +109,15 @@ async function executeWrite(write: QueuedWrite): Promise<void> {
             completedAt: new Date(write.data.completedAt),
             findingsCount: write.data.findingsCount,
           },
-        }
+        },
       );
       break;
 
     default: {
       const exhaustiveCheck: never = write;
-      throw new Error(`Unhandled write type: ${JSON.stringify(exhaustiveCheck)}`);
+      throw new Error(
+        `Unhandled write type: ${JSON.stringify(exhaustiveCheck)}`,
+      );
     }
   }
 }
@@ -132,14 +134,16 @@ async function executeWrite(write: QueuedWrite): Promise<void> {
  */
 export async function safeWrite(
   label: string,
-  write: QueuedWrite
+  write: QueuedWrite,
 ): Promise<void> {
   try {
     await executeWrite(write);
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
-    logger.warn(`[writeQueue] "${label}" failed — queuing for retry. Reason: ${message}`);
-    
+    logger.warn(
+      `[writeQueue] "${label}" failed — queuing for retry. Reason: ${message}`,
+    );
+
     const entry: SerializedWrite = {
       label,
       write,
@@ -155,8 +159,11 @@ export async function safeWrite(
         logger.info(`[writeQueue] Enqueued "${label}" to in-memory queue`);
       }
     } catch (queueErr) {
-      const qMsg = queueErr instanceof Error ? queueErr.message : String(queueErr);
-      logger.error(`[writeQueue] Failed to write to Redis queue, falling back to memory. Error: ${qMsg}`);
+      const qMsg =
+        queueErr instanceof Error ? queueErr.message : String(queueErr);
+      logger.error(
+        `[writeQueue] Failed to write to Redis queue, falling back to memory. Error: ${qMsg}`,
+      );
       queue.push(entry);
     }
 
@@ -183,7 +190,8 @@ async function drainQueue(): Promise<void> {
           raw = await redis.rpop(REDIS_QUEUE_KEY);
         }
       } catch (redisErr) {
-        const rMsg = redisErr instanceof Error ? redisErr.message : String(redisErr);
+        const rMsg =
+          redisErr instanceof Error ? redisErr.message : String(redisErr);
         logger.error(`[writeQueue] Redis drain snapshot failed: ${rMsg}`);
       }
     } else {
@@ -228,7 +236,9 @@ async function drainQueue(): Promise<void> {
               queue.push(entry);
             }
           } catch {
-            logger.error(`[writeQueue] Failed to re-queue "${entry.label}", falling back to memory.`);
+            logger.error(
+              `[writeQueue] Failed to re-queue "${entry.label}", falling back to memory.`,
+            );
             queue.push(entry);
           }
         }

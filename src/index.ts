@@ -20,9 +20,9 @@ async function start(): Promise<void> {
   await connectDatabase();
 
   app.listen(PORT, () => {
-    const baseUrl = process.env.RAILWAY_PUBLIC_DOMAIN 
-    ? `https://${process.env.RAILWAY_PUBLIC_DOMAIN}`
-    : `http://localhost:${PORT}`;
+    const baseUrl = process.env.RAILWAY_PUBLIC_DOMAIN
+      ? `https://${process.env.RAILWAY_PUBLIC_DOMAIN}`
+      : `http://localhost:${PORT}`;
 
     logger.info(`RepoGuard running on port ${PORT}`);
     logger.info(`Webhook endpoint: ${baseUrl}/api/webhook`);

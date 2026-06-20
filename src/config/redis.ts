@@ -10,7 +10,9 @@ if (REDIS_URL) {
     enableReadyCheck: true,
   });
   redis.on("connect", () => logger.info("[redis] Connected to Redis"));
-  redis.on("error", (err) => logger.error(`[redis] Connection error: ${err.message}`));
+  redis.on("error", (err) =>
+    logger.error(`[redis] Connection error: ${err.message}`),
+  );
 } else {
   logger.info("[redis] REDIS_URL not configured. Using in-memory fallback.");
 }

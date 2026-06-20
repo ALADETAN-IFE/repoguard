@@ -9,7 +9,10 @@ interface OpenFixPROptions {
 }
 
 // ─── Format content with Prettier ──────────────────────────────────────────────
-async function formatContent(content: string, filePath: string): Promise<string> {
+async function formatContent(
+  content: string,
+  filePath: string,
+): Promise<string> {
   try {
     const info = await prettier.getFileInfo(filePath);
     if (!info.inferredParser) return content;
@@ -62,11 +65,7 @@ export async function openFixPR(
           { owner, repo, path: filePath },
         );
 
-        if (
-          Array.isArray(data) ||
-          data.type !== "file" ||
-          !("content" in data)
-        )
+        if (Array.isArray(data) || data.type !== "file" || !("content" in data))
           continue;
 
         const originalContent = Buffer.from(
@@ -100,7 +99,9 @@ export async function openFixPR(
         }
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
-        logger.warn(`[pr] Could not fetch/process ${filePath} for patching: ${message}`);
+        logger.warn(
+          `[pr] Could not fetch/process ${filePath} for patching: ${message}`,
+        );
         const fileFindings = findings.filter((f) => f.file === filePath);
         allUnpatchedFindings.push(...fileFindings);
       }
@@ -115,7 +116,11 @@ export async function openFixPR(
       logger.info(
         `[pr] No auto-patchable findings in ${owner}/${repo} — opening manual review security issue`,
       );
-      await openSecurityIssue(octokit, { owner, repo, findings }, "manual_review_required");
+      await openSecurityIssue(
+        octokit,
+        { owner, repo, findings },
+        "manual_review_required",
+      );
       return;
     }
 
@@ -147,7 +152,11 @@ export async function openFixPR(
         logger.warn(
           `[pr] No write access to ${owner}/${repo} — falling back to security issue`,
         );
-        await openSecurityIssue(octokit, { owner, repo, findings }, "no_write_permission");
+        await openSecurityIssue(
+          octokit,
+          { owner, repo, findings },
+          "no_write_permission",
+        );
         return;
       }
       throw err;
@@ -164,9 +173,10 @@ export async function openFixPR(
       const fileUnpatched = file.fileFindings.filter(
         (f) => !file.patchedFindings.includes(f),
       );
-      const header = fileUnpatched.length > 0
-        ? buildFileHeader(fileUnpatched, file.filePath)
-        : "";
+      const header =
+        fileUnpatched.length > 0
+          ? buildFileHeader(fileUnpatched, file.filePath)
+          : "";
       const finalContent = header + file.patchedContent;
 
       await octokit.request("PUT /repos/{owner}/{repo}/contents/{path}", {
@@ -183,7 +193,7 @@ export async function openFixPR(
     }
 
     // ── 6. Open the PR ──────────────────────────────────────────────────────
-    const totalAllPatchedFindings = allPatchedFindings.length
+    const totalAllPatchedFindings = allPatchedFindings.length;
     const { data: pr } = await octokit.request(
       "POST /repos/{owner}/{repo}/pulls",
       {
@@ -198,10 +208,16 @@ export async function openFixPR(
 
     // ✅ Post inline review comments
     const patchedMap = new Map(
-      filesToPatch.map((f) => [f.filePath, f.patchedContent])
+      filesToPatch.map((f) => [f.filePath, f.patchedContent]),
     );
     await postReviewComments(
-      octokit, owner, repo, pr.number, baseSha, findings, patchedMap
+      octokit,
+      owner,
+      repo,
+      pr.number,
+      baseSha,
+      findings,
+      patchedMap,
     );
 
     logger.info(`[pr] Opened PR #${pr.number} in ${owner}/${repo}`);
@@ -239,7 +255,9 @@ export async function openFixPR(
 async function openSecurityIssue(
   octokit: OctokitClient,
   { owner, repo, findings }: OpenFixPROptions,
-  reason: "no_write_permission" | "manual_review_required" = "no_write_permission",
+  reason:
+    | "no_write_permission"
+    | "manual_review_required" = "no_write_permission",
 ): Promise<void> {
   try {
     const criticalCount = findings.filter(
@@ -254,21 +272,23 @@ async function openSecurityIssue(
       )
       .join("\n");
 
-    const issueTitle = reason === "no_write_permission"
-      ? `⚠️ RepoGuard: Security issues found — manual review required (${findings.length} finding${findings.length !== 1 ? "s" : ""})`
-      : `⚠️ RepoGuard: Security findings requiring manual review (${findings.length} finding${findings.length !== 1 ? "s" : ""})`;
+    const issueTitle =
+      reason === "no_write_permission"
+        ? `⚠️ RepoGuard: Security issues found — manual review required (${findings.length} finding${findings.length !== 1 ? "s" : ""})`
+        : `⚠️ RepoGuard: Security findings requiring manual review (${findings.length} finding${findings.length !== 1 ? "s" : ""})`;
 
-    const description = reason === "no_write_permission"
-      ? [
-        "> RepoGuard detected security issues in this repository but could not open an automatic fix PR because the app does not have **Contents: write** permission.",
-        "",
-        "## How to enable automatic fixes",
-        "",
-        "Go to your GitHub App installation settings and grant **Repository contents: Read & write** permission. RepoGuard will then be able to open fix PRs automatically on future scans.",
-      ]
-      : [
-        "> RepoGuard detected security issues in this repository that cannot be resolved automatically. Manual review and remediation are required.",
-      ];
+    const description =
+      reason === "no_write_permission"
+        ? [
+            "> RepoGuard detected security issues in this repository but could not open an automatic fix PR because the app does not have **Contents: write** permission.",
+            "",
+            "## How to enable automatic fixes",
+            "",
+            "Go to your GitHub App installation settings and grant **Repository contents: Read & write** permission. RepoGuard will then be able to open fix PRs automatically on future scans.",
+          ]
+        : [
+            "> RepoGuard detected security issues in this repository that cannot be resolved automatically. Manual review and remediation are required.",
+          ];
 
     const bodyParts = [
       "## ⚠️ RepoGuard Security Alert",
@@ -426,7 +446,9 @@ export function buildPRBody(
   patchedFindings: Finding[],
   unpatchedFindings: Finding[],
 ): string {
-  const criticalCount = findings.filter((f) => f.severity === "critical").length;
+  const criticalCount = findings.filter(
+    (f) => f.severity === "critical",
+  ).length;
   const highCount = findings.filter((f) => f.severity === "high").length;
   const mediumCount = findings.filter((f) => f.severity === "medium").length;
 
@@ -458,12 +480,16 @@ export function buildPRBody(
 
   // Dynamically build "What was done" based on patched rules
   const PATCH_SUMMARIES: Record<string, string> = {
-    "curl-pipe-bash": "Malicious shell execution patterns (`curl|bash`) replaced with comments",
-    "wget-pipe-shell": "Malicious shell execution patterns (`wget|sh`) replaced with comments",
+    "curl-pipe-bash":
+      "Malicious shell execution patterns (`curl|bash`) replaced with comments",
+    "wget-pipe-shell":
+      "Malicious shell execution patterns (`wget|sh`) replaced with comments",
     "reverse-shell": "Reverse shell patterns removed",
     "obfuscated-base64": "Obfuscated `eval` payloads removed",
-    "obfuscated-malware-pattern": "Obfuscated string array malware payloads and createRequire bypasses commented out",
-    "suspicious-npm-postinstall": "Suspicious `postinstall` scripts in package.json neutralized",
+    "obfuscated-malware-pattern":
+      "Obfuscated string array malware payloads and createRequire bypasses commented out",
+    "suspicious-npm-postinstall":
+      "Suspicious `postinstall` scripts in package.json neutralized",
     "crypto-miner-keywords": "Cryptocurrency miner indicators removed",
   };
 
@@ -474,18 +500,30 @@ export function buildPRBody(
 
   // Dynamically build "What requires manual review"
   const MANUAL_REVIEW_SUMMARIES: Record<string, string> = {
-    "env-exfiltration": "**Env exfiltration** — audit any network calls that reference env variables",
-    "hardcoded-secret": "**Hardcoded secrets** — rotate any exposed credentials immediately",
-    "workflow-unpinned-action": "**Unpinned Actions** — pin third-party GitHub Actions to a full commit SHA",
-    "workflow-curl-pipe-bash": "**Workflow curl|bash** — verify if curl/wget is required in workflow",
-    "workflow-exfiltrate-secrets": "**Workflow secrets exfiltration** — check if secrets are sent externally",
-    "workflow-suspicious-trigger": "**Workflow broad trigger** — restrict the triggers in workflow file",
+    "env-exfiltration":
+      "**Env exfiltration** — audit any network calls that reference env variables",
+    "hardcoded-secret":
+      "**Hardcoded secrets** — rotate any exposed credentials immediately",
+    "workflow-unpinned-action":
+      "**Unpinned Actions** — pin third-party GitHub Actions to a full commit SHA",
+    "workflow-curl-pipe-bash":
+      "**Workflow curl|bash** — verify if curl/wget is required in workflow",
+    "workflow-exfiltrate-secrets":
+      "**Workflow secrets exfiltration** — check if secrets are sent externally",
+    "workflow-suspicious-trigger":
+      "**Workflow broad trigger** — restrict the triggers in workflow file",
   };
 
-  const uniqueUnpatchedRules = [...new Set(unpatchedFindings.map((f) => f.rule))];
-  const whatRequiresManualReview = uniqueUnpatchedRules
-    .map((rule) => `- ${MANUAL_REVIEW_SUMMARIES[rule] ?? `Rule \`${rule}\` requires manual verification`}`)
-    .join("\n") || "_None! All detected issues were automatically patched._";
+  const uniqueUnpatchedRules = [
+    ...new Set(unpatchedFindings.map((f) => f.rule)),
+  ];
+  const whatRequiresManualReview =
+    uniqueUnpatchedRules
+      .map(
+        (rule) =>
+          `- ${MANUAL_REVIEW_SUMMARIES[rule] ?? `Rule \`${rule}\` requires manual verification`}`,
+      )
+      .join("\n") || "_None! All detected issues were automatically patched._";
 
   const totalPatchedFindings = patchedFindings.length;
   const totalUnpatchedFindings = unpatchedFindings.length;
@@ -554,7 +592,12 @@ async function getAdminLogins(
       "GET /repos/{owner}/{repo}/collaborators",
       { owner, repo, permission: "admin" },
     );
-    return (collaborators as Array<{ login: string; permissions?: { admin: boolean } }>)
+    return (
+      collaborators as Array<{
+        login: string;
+        permissions?: { admin: boolean };
+      }>
+    )
       .filter((c) => c.permissions?.admin)
       .map((c) => c.login)
       .slice(0, 5);
@@ -734,16 +777,32 @@ const RULE_SUGGESTIONS: Record<string, (line: string) => string> = {
   "obfuscated-malware-pattern": () =>
     "// REMOVED BY REPOGUARD: obfuscated malware payload",
   "curl-pipe-bash": (line) =>
-    line.replace(/curl\s.+\|\s*(ba)?sh/g, "# REMOVED BY REPOGUARD: curl|bash remote execution"),
+    line.replace(
+      /curl\s.+\|\s*(ba)?sh/g,
+      "# REMOVED BY REPOGUARD: curl|bash remote execution",
+    ),
   "wget-pipe-shell": (line) =>
-    line.replace(/wget\s.+\|\s*(ba)?sh/g, "# REMOVED BY REPOGUARD: wget|shell remote execution"),
+    line.replace(
+      /wget\s.+\|\s*(ba)?sh/g,
+      "# REMOVED BY REPOGUARD: wget|shell remote execution",
+    ),
   "reverse-shell": (line) =>
-    line.replace(/bash\s+-i\s+>&\s+\/dev\/tcp[^\n]*/g, "# REMOVED BY REPOGUARD: reverse shell")
-      .replace(/nc\s+-e\s+\/bin\/(ba)?sh[^\n]*/g, "# REMOVED BY REPOGUARD: netcat reverse shell"),
+    line
+      .replace(
+        /bash\s+-i\s+>&\s+\/dev\/tcp[^\n]*/g,
+        "# REMOVED BY REPOGUARD: reverse shell",
+      )
+      .replace(
+        /nc\s+-e\s+\/bin\/(ba)?sh[^\n]*/g,
+        "# REMOVED BY REPOGUARD: netcat reverse shell",
+      ),
   "crypto-miner-keywords": (line) =>
     line.replace(/xmrig[^\n]*/g, "# REMOVED BY REPOGUARD: crypto miner"),
   "obfuscated-base64": (line) =>
-    line.replace(/eval\s*\([^)]*fromCharCode[^)]*\)/g, "// REMOVED BY REPOGUARD: obfuscated eval"),
+    line.replace(
+      /eval\s*\([^)]*fromCharCode[^)]*\)/g,
+      "// REMOVED BY REPOGUARD: obfuscated eval",
+    ),
 };
 
 export async function postReviewComments(
@@ -762,7 +821,7 @@ export async function postReviewComments(
 
     const patched = patchedContent.get(finding.file);
     const originalLine = patched
-      ? patched.split("\n")[finding.line - 1] ?? ""
+      ? (patched.split("\n")[finding.line - 1] ?? "")
       : "";
 
     // Try rule-based suggestion first, then patched content, then manual review
@@ -775,35 +834,35 @@ export async function postReviewComments(
 
     const body = suggestedLine
       ? [
-        `**RepoGuard** detected \`${finding.rule}\` (${finding.severity})`,
-        `> ${finding.message}`,
-        ``,
-        `<details>`,
-        `<summary>📋 Committable suggestion</summary>`,
-        ``,
-        `> ‼️ [!IMPORTANT]`,
-        `> Carefully review the code before committing. Ensure that it accurately replaces the highlighted code, contains no missing lines, and has no issues with indentation. Thoroughly test & benchmark the code to ensure it meets the requirements.`,
-        ``,
-        `\`\`\`suggestion`,
-        suggestedLine,
-        `\`\`\``,   
-        `</details>`,
-        `<details>`,
-        `<summary>💡 Suggested commit message:</summary>`,
-        ``,
-        `>  \`fix(security): remove ${finding.rule} from ${finding.file ?? "file"}\``,
-        `</details>`,
-      ].join("\n")
+          `**RepoGuard** detected \`${finding.rule}\` (${finding.severity})`,
+          `> ${finding.message}`,
+          ``,
+          `<details>`,
+          `<summary>📋 Committable suggestion</summary>`,
+          ``,
+          `> ‼️ [!IMPORTANT]`,
+          `> Carefully review the code before committing. Ensure that it accurately replaces the highlighted code, contains no missing lines, and has no issues with indentation. Thoroughly test & benchmark the code to ensure it meets the requirements.`,
+          ``,
+          `\`\`\`suggestion`,
+          suggestedLine,
+          `\`\`\``,
+          `</details>`,
+          `<details>`,
+          `<summary>💡 Suggested commit message:</summary>`,
+          ``,
+          `>  \`fix(security): remove ${finding.rule} from ${finding.file ?? "file"}\``,
+          `</details>`,
+        ].join("\n")
       : [
-        `**RepoGuard** detected \`${finding.rule}\` (${finding.severity})`,
-        `> ${finding.message}`,
-        ``,
-        `<details>`,
-        `<summary>⚠️ Manual review required</summary>`,
-        ``,
-        `This finding cannot be automatically fixed. Please review and remediate manually.`,
-        `</details>`,
-      ].join("\n");
+          `**RepoGuard** detected \`${finding.rule}\` (${finding.severity})`,
+          `> ${finding.message}`,
+          ``,
+          `<details>`,
+          `<summary>⚠️ Manual review required</summary>`,
+          ``,
+          `This finding cannot be automatically fixed. Please review and remediate manually.`,
+          `</details>`,
+        ].join("\n");
 
     comments.push({
       path: finding.file,
@@ -827,7 +886,9 @@ export async function postReviewComments(
         comments,
       },
     );
-    logger.info(`[pr] Posted ${comments.length} inline review comment(s) on PR #${prNumber}`);
+    logger.info(
+      `[pr] Posted ${comments.length} inline review comment(s) on PR #${prNumber}`,
+    );
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     logger.error(`[pr] Failed to post review comments: ${message}`);

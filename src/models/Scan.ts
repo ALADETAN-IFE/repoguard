@@ -33,7 +33,7 @@ const ScanSchema = new Schema<IScan>(
       required: true,
     },
   },
-  { timestamps: true }
+  { timestamps: true },
 );
 
 // Compound index — common query: all scans for a repo

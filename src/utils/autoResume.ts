@@ -67,7 +67,9 @@ export async function resumeIncompleteScans(): Promise<void> {
             { per_page: 100, page },
           );
           allRepos.push(...data.repositories);
-          hasMore = allRepos.length < data.total_count && data.repositories.length === 100;
+          hasMore =
+            allRepos.length < data.total_count &&
+            data.repositories.length === 100;
           page++;
         }
 
@@ -84,7 +86,12 @@ export async function resumeIncompleteScans(): Promise<void> {
           `[startup] Resuming ${owner}: ${entry.scanned.length}/${allRepos.length} done, ${remaining.length} remaining`,
         );
 
-        await scanRepoList(octokit as OctokitClient, installationKey, owner, remaining);
+        await scanRepoList(
+          octokit as OctokitClient,
+          installationKey,
+          owner,
+          remaining,
+        );
         continue;
       }
 
@@ -101,7 +108,12 @@ export async function resumeIncompleteScans(): Promise<void> {
         name: fullName.split("/")[1] ?? fullName,
       }));
 
-      await scanRepoList(octokit as OctokitClient, installationKey, owner, repos);
+      await scanRepoList(
+        octokit as OctokitClient,
+        installationKey,
+        owner,
+        repos,
+      );
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       logger.error(`[startup] Failed to resume scan for ${owner}: ${message}`);

@@ -9,9 +9,11 @@ export async function sendAlert({
   headSha,
   findings,
   context = "push",
-  repoList
+  repoList,
 }: AlertOptions): Promise<void> {
-  const criticalCount = findings.filter((f) => f.severity === "critical").length;
+  const criticalCount = findings.filter(
+    (f) => f.severity === "critical",
+  ).length;
   const highCount = findings.filter((f) => f.severity === "high").length;
   const totalFindings = findings.length;
 
@@ -46,15 +48,23 @@ async function postSlackAlert(payload: AlertPayload): Promise<void> {
   const slackUrl = process.env.SLACK_WEBHOOK_URL;
   if (!slackUrl) return;
 
-  const criticalCount = payload.findings.filter((f) => f.severity === "critical").length;
-  const highCount = payload.findings.filter((f) => f.severity === "high").length;
-  const mediumCount = payload.findings.filter((f) => f.severity === "medium").length;
+  const criticalCount = payload.findings.filter(
+    (f) => f.severity === "critical",
+  ).length;
+  const highCount = payload.findings.filter(
+    (f) => f.severity === "high",
+  ).length;
+  const mediumCount = payload.findings.filter(
+    (f) => f.severity === "medium",
+  ).length;
 
   const severityBar = [
     criticalCount > 0 ? `🔴 ${criticalCount} Critical` : "",
     highCount > 0 ? `🟠 ${highCount} High` : "",
     mediumCount > 0 ? `🟡 ${mediumCount} Medium` : "",
-  ].filter(Boolean).join("   ");
+  ]
+    .filter(Boolean)
+    .join("   ");
 
   const contextConfig: Record<string, { label: string; header: string }> = {
     push: { label: "Push", header: "🚨 Security Alert" },
@@ -63,7 +73,10 @@ async function postSlackAlert(payload: AlertPayload): Promise<void> {
     installation: { label: "Installation Event", header: "📦 RepoGuard Event" },
   };
 
-  const ctx = contextConfig[payload.context] ?? { label: payload.context, header: "🚨 Alert" };
+  const ctx = contextConfig[payload.context] ?? {
+    label: payload.context,
+    header: "🚨 Alert",
+  };
   const isInstallation = payload.context === "installation";
 
   const repoUrl = payload.repository.endsWith("/*")
@@ -72,21 +85,28 @@ async function postSlackAlert(payload: AlertPayload): Promise<void> {
 
   logger.info(`${payload.repository} — ${repoUrl}`);
 
-  const commitText = payload.commit !== "N/A"
-    ? `<${repoUrl}/commit/${payload.commit}|\`${payload.commit}\`>`
-    : "_N/A_";
+  const commitText =
+    payload.commit !== "N/A"
+      ? `<${repoUrl}/commit/${payload.commit}|\`${payload.commit}\`>`
+      : "_N/A_";
 
   // ── For installation events, show a clean summary line only ──
   const findingLines = isInstallation
     ? payload.findings
         .map((f) => {
-          const emoji = { critical: "🔴", high: "🟠", medium: "🟡", low: "🟢" }[f.severity] ?? "⚪";
+          const emoji =
+            { critical: "🔴", high: "🟠", medium: "🟡", low: "🟢" }[
+              f.severity
+            ] ?? "⚪";
           return `${emoji} *${f.rule}*\n    ${f.message.split("—")[0].trim()}`; // just the short part
         })
         .join("\n\n")
     : payload.findings
         .map((f) => {
-          const emoji = { critical: "🔴", high: "🟠", medium: "🟡", low: "🟢" }[f.severity] ?? "⚪";
+          const emoji =
+            { critical: "🔴", high: "🟠", medium: "🟡", low: "🟢" }[
+              f.severity
+            ] ?? "⚪";
           const file = f.file ? `\`${f.file}\`` : "_unknown file_";
           return `${emoji} *${f.rule}* — ${file}\n    ${f.message}`;
         })
@@ -105,24 +125,34 @@ async function postSlackAlert(payload: AlertPayload): Promise<void> {
     {
       type: "section",
       fields: [
-        { type: "mrkdwn", text: `*Repository*\n<${repoUrl}|${payload.repository}>` },
+        {
+          type: "mrkdwn",
+          text: `*Repository*\n<${repoUrl}|${payload.repository}>`,
+        },
         { type: "mrkdwn", text: `*Triggered By*\n${ctx.label}` },
         { type: "mrkdwn", text: `*Pusher*\n${payload.pusher}` },
         { type: "mrkdwn", text: `*Commit*\n${commitText}` },
         { type: "mrkdwn", text: `*Ref*\n\`${payload.ref}\`` },
-        { type: "mrkdwn", text: `*Time*\n<!date^${Math.floor(new Date(payload.timestamp).getTime() / 1000)}^{date_short_pretty} at {time}|${payload.timestamp}>` },
+        {
+          type: "mrkdwn",
+          text: `*Time*\n<!date^${Math.floor(new Date(payload.timestamp).getTime() / 1000)}^{date_short_pretty} at {time}|${payload.timestamp}>`,
+        },
       ],
     },
     { type: "divider" },
 
     // ── Only show severity summary for non-installation events ──
-    ...(!isInstallation ? [{
-      type: "section",
-      text: {
-        type: "mrkdwn",
-        text: `*${payload.findings.length} Finding${payload.findings.length > 1 ? "s" : ""} Detected*\n${severityBar}`,
-      },
-    }] : []),
+    ...(!isInstallation
+      ? [
+          {
+            type: "section",
+            text: {
+              type: "mrkdwn",
+              text: `*${payload.findings.length} Finding${payload.findings.length > 1 ? "s" : ""} Detected*\n${severityBar}`,
+            },
+          },
+        ]
+      : []),
 
     {
       type: "section",
@@ -157,28 +187,37 @@ async function postSlackAlert(payload: AlertPayload): Promise<void> {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          "Authorization": `Bearer ${process.env.SLACK_BOT_TOKEN}`,
+          Authorization: `Bearer ${process.env.SLACK_BOT_TOKEN}`,
         },
         body: JSON.stringify({
           channel: process.env.SLACK_CHANNEL_ID,
           blocks,
         }),
       });
-  
-      const mainData = await mainRes.json() as { ok: boolean; ts?: string; channel?: string };
-  
+
+      const mainData = (await mainRes.json()) as {
+        ok: boolean;
+        ts?: string;
+        channel?: string;
+      };
+
       // ── Post repo list as thread reply if applicable ──
-      if (mainData.ok && mainData.ts && payload.repoList && payload.repoList.length > 0) {
+      if (
+        mainData.ok &&
+        mainData.ts &&
+        payload.repoList &&
+        payload.repoList.length > 0
+      ) {
         await fetch("https://slack.com/api/chat.postMessage", {
           method: "POST",
           headers: {
             "Content-Type": "application/json",
-            "Authorization": `Bearer ${process.env.SLACK_BOT_TOKEN}`,
+            Authorization: `Bearer ${process.env.SLACK_BOT_TOKEN}`,
           },
           body: JSON.stringify({
             channel: process.env.SLACK_CHANNEL_ID,
             thread_ts: mainData.ts,
-            text: `📋 *Full repo list (${payload.repoList.length}):*\n${payload.repoList.map(r => `• <https://github.com/${payload.repository.split("/")[0]}/${r}|${r}>`).join("\n")}`,
+            text: `📋 *Full repo list (${payload.repoList.length}):*\n${payload.repoList.map((r) => `• <https://github.com/${payload.repository.split("/")[0]}/${r}|${r}>`).join("\n")}`,
           }),
         });
       }

@@ -19,7 +19,8 @@ const FILE_RULES: ScanRule[] = [
   {
     id: "curl-pipe-bash",
     severity: "critical",
-    description: "curl output piped directly to bash/sh (remote code execution)",
+    description:
+      "curl output piped directly to bash/sh (remote code execution)",
     test: (content) => /curl\s.+\|\s*(ba)?sh/.test(content),
   },
   {
@@ -38,7 +39,8 @@ const FILE_RULES: ScanRule[] = [
   {
     id: "obfuscated-base64",
     severity: "critical",
-    description: "Large base64 blob combined with eval (common payload delivery)",
+    description:
+      "Large base64 blob combined with eval (common payload delivery)",
     test: (content) =>
       /(?:[A-Za-z0-9+/]{50,}={0,2})/.test(content) &&
       /eval|exec|Function\(|fromCharCode/.test(content),
@@ -46,7 +48,8 @@ const FILE_RULES: ScanRule[] = [
   {
     id: "obfuscated-malware-pattern",
     severity: "critical",
-    description: "Suspicious obfuscated string array pattern or global require assignment",
+    description:
+      "Suspicious obfuscated string array pattern or global require assignment",
     test: (content) =>
       /var\s+_\$_\w+\s*=\s*\(?function/.test(content) ||
       /global\[['"]!['"]\]/.test(content) ||
@@ -63,7 +66,8 @@ const FILE_RULES: ScanRule[] = [
   {
     id: "python-subprocess-network",
     severity: "critical",
-    description: "Python subprocess spawning curl/wget — remote code execution via Python",
+    description:
+      "Python subprocess spawning curl/wget — remote code execution via Python",
     test: (content) =>
       /subprocess\.(run|call|Popen|check_output)/.test(content) &&
       /curl|wget|http/.test(content),
@@ -73,7 +77,9 @@ const FILE_RULES: ScanRule[] = [
     severity: "critical",
     description: "Encoded PowerShell command — common Windows malware vector",
     test: (content) =>
-      /powershell.*-[Ee]nc(odedCommand)?|\bpowershell\b.*-[Ee]\s+[A-Za-z0-9+/]{20,}/.test(content),
+      /powershell.*-[Ee]nc(odedCommand)?|\bpowershell\b.*-[Ee]\s+[A-Za-z0-9+/]{20,}/.test(
+        content,
+      ),
   },
 
   // ── High ──────────────────────────────────────────────────────────────────
@@ -87,11 +93,21 @@ const FILE_RULES: ScanRule[] = [
   {
     id: "env-exfiltration",
     severity: "high",
-    description: "Environment variable exfiltration — secrets being sent externally",
+    description:
+      "Environment variable exfiltration — secrets being sent externally",
     test: (content): boolean => {
-      const directExfil = /fetch\s*\(\s*[`'"]https?:\/\/[^'"]+\$\{process\.env\.[^}]+\}/.test(content);
-      const bodyExfil = /body\s*:.*process\.env\.(PASSWORD|SECRET|TOKEN|KEY|API)/i.test(content);
-      const urlConcat = /['"`]\s*\+\s*process\.env\.(PASSWORD|SECRET|TOKEN|KEY|API)/i.test(content);
+      const directExfil =
+        /fetch\s*\(\s*[`'"]https?:\/\/[^'"]+\$\{process\.env\.[^}]+\}/.test(
+          content,
+        );
+      const bodyExfil =
+        /body\s*:.*process\.env\.(PASSWORD|SECRET|TOKEN|KEY|API)/i.test(
+          content,
+        );
+      const urlConcat =
+        /['"`]\s*\+\s*process\.env\.(PASSWORD|SECRET|TOKEN|KEY|API)/i.test(
+          content,
+        );
       return directExfil || bodyExfil || urlConcat;
     },
   },
@@ -101,19 +117,24 @@ const FILE_RULES: ScanRule[] = [
     description: "postinstall script with network call in package.json",
     test: (content, filePath) =>
       filePath?.endsWith("package.json") === true &&
-      /"postinstall"\s*:\s*"[^"]*(?:curl|wget|exec|eval|node -e)[^"]*"/.test(content),
+      /"postinstall"\s*:\s*"[^"]*(?:curl|wget|exec|eval|node -e)[^"]*"/.test(
+        content,
+      ),
   },
   {
     id: "suspicious-registry-url",
     severity: "high",
-    description: "Lock file references a non-standard npm registry — possible supply chain attack",
+    description:
+      "Lock file references a non-standard npm registry — possible supply chain attack",
     test: (content, filePath): boolean => {
       const isLockFile =
         filePath?.endsWith("package-lock.json") === true ||
         filePath?.endsWith("yarn.lock") === true ||
         filePath?.endsWith("pnpm-lock.yaml") === true;
       if (!isLockFile) return false;
-      return /resolved\s+"https?:\/\/(?!registry\.npmjs\.org|registry\.yarnpkg\.com)/.test(content);
+      return /resolved\s+"https?:\/\/(?!registry\.npmjs\.org|registry\.yarnpkg\.com)/.test(
+        content,
+      );
     },
   },
   {
@@ -146,7 +167,9 @@ const FILE_RULES: ScanRule[] = [
     severity: "medium",
     description: "Possible hardcoded credential or API key",
     test: (content) =>
-      /(?:password|passwd|secret|api_key|apikey|token)\s*=\s*["'][^"']{8,}["']/i.test(content),
+      /(?:password|passwd|secret|api_key|apikey|token)\s*=\s*["'][^"']{8,}["']/i.test(
+        content,
+      ),
   },
   {
     id: "npm-typosquatted-package",
@@ -163,7 +186,9 @@ const FILE_RULES: ScanRule[] = [
           ...pkg.dependencies,
           ...pkg.devDependencies,
         };
-        return Object.keys(allDeps).some((name) => name in KNOWN_NPM_TYPOSQUATS);
+        return Object.keys(allDeps).some(
+          (name) => name in KNOWN_NPM_TYPOSQUATS,
+        );
       } catch {
         return false;
       }
@@ -175,10 +200,20 @@ const FILE_RULES: ScanRule[] = [
     description: "Possible typosquatted PyPI package name detected",
     test: (content, filePath): boolean => {
       const name = filePath?.split("/").pop()?.toLowerCase() ?? "";
-      if (name !== "requirements.txt" && name !== "requirements-dev.txt" && name !== "requirements-test.txt") {
+      if (
+        name !== "requirements.txt" &&
+        name !== "requirements-dev.txt" &&
+        name !== "requirements-test.txt"
+      ) {
         return false;
       }
-      const lines = content.split("\n").map((l) => l.trim().toLowerCase().split(/[=><!@[]/)[0].trim());
+      const lines = content.split("\n").map((l) =>
+        l
+          .trim()
+          .toLowerCase()
+          .split(/[=><!@[]/)[0]
+          .trim(),
+      );
       return lines.some((pkg) => pkg in KNOWN_PYPI_TYPOSQUATS);
     },
   },
@@ -204,7 +239,8 @@ const WORKFLOW_RULES: ScanRule[] = [
   {
     id: "workflow-pull-request-target-checkout",
     severity: "critical",
-    description: "pull_request_target with PR head checkout — allows arbitrary code execution from forks",
+    description:
+      "pull_request_target with PR head checkout — allows arbitrary code execution from forks",
     test: (content) =>
       /on:\s*(pull_request_target|\[.*pull_request_target.*\])/.test(content) &&
       /github\.event\.pull_request\.head\.sha|github\.head_ref/.test(content),
@@ -241,7 +277,6 @@ export async function scanCommit({
 
   for (const filePath of filesToScan) {
     if (shouldSkipPath(filePath)) continue;
-
 
     const binary = isBinaryPath(filePath);
 
@@ -292,11 +327,18 @@ export function scanFileContent(content: string, filePath?: string): Finding[] {
   return applyRules(FILE_RULES, content, filePath);
 }
 
-export function scanWorkflowContent(content: string, filePath?: string): Finding[] {
+export function scanWorkflowContent(
+  content: string,
+  filePath?: string,
+): Finding[] {
   return applyRules(WORKFLOW_RULES, content, filePath);
 }
 
-function applyRules(rules: ScanRule[], content: string, filePath?: string): Finding[] {
+function applyRules(
+  rules: ScanRule[],
+  content: string,
+  filePath?: string,
+): Finding[] {
   const findings: Finding[] = [];
   const lines = content.split("\n");
 
@@ -324,7 +366,9 @@ function applyRules(rules: ScanRule[], content: string, filePath?: string): Find
 // ─── Typosquat detail helper ──────────────────────────────────────────────────
 // Returns the specific offending packages so PR bodies can name them explicitly.
 
-export function findTyposquattedNpmPackages(content: string): Array<{ found: string; intended: string }> {
+export function findTyposquattedNpmPackages(
+  content: string,
+): Array<{ found: string; intended: string }> {
   try {
     const pkg = JSON.parse(content) as {
       dependencies?: Record<string, string>;
@@ -339,8 +383,16 @@ export function findTyposquattedNpmPackages(content: string): Array<{ found: str
   }
 }
 
-export function findTyposquattedPypiPackages(content: string): Array<{ found: string; intended: string }> {
-  const lines = content.split("\n").map((l) => l.trim().toLowerCase().split(/[=><!@[]/)[0].trim());
+export function findTyposquattedPypiPackages(
+  content: string,
+): Array<{ found: string; intended: string }> {
+  const lines = content.split("\n").map((l) =>
+    l
+      .trim()
+      .toLowerCase()
+      .split(/[=><!@[]/)[0]
+      .trim(),
+  );
   return lines
     .filter((pkg) => pkg in KNOWN_PYPI_TYPOSQUATS)
     .map((pkg) => ({ found: pkg, intended: KNOWN_PYPI_TYPOSQUATS[pkg] }));

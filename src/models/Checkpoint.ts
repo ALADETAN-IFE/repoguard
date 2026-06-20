@@ -12,7 +12,12 @@ export interface ICheckpoint extends Document {
 
 const CheckpointSchema = new Schema<ICheckpoint>(
   {
-    installationKey: { type: String, required: true, unique: true, index: true },
+    installationKey: {
+      type: String,
+      required: true,
+      unique: true,
+      index: true,
+    },
     installationId: { type: Number, required: true },
     owner: { type: String, required: true },
     totalRepos: { type: [String], required: true, default: [] },
@@ -21,10 +26,10 @@ const CheckpointSchema = new Schema<ICheckpoint>(
   },
   {
     timestamps: true, // adds createdAt and updatedAt automatically
-  }
+  },
 );
 
 export const Checkpoint: Model<ICheckpoint> = model<ICheckpoint>(
   "Checkpoint",
-  CheckpointSchema
+  CheckpointSchema,
 );

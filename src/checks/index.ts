@@ -1,4 +1,8 @@
-import type { CreateCheckRunOptions, UpdateCheckRunOptions, Finding } from "../types";
+import type {
+  CreateCheckRunOptions,
+  UpdateCheckRunOptions,
+  Finding,
+} from "../types";
 import logger from "../utils/logger";
 
 export async function createCheckRun({
@@ -10,14 +14,17 @@ export async function createCheckRun({
   status,
 }: CreateCheckRunOptions): Promise<number | null> {
   try {
-    const { data } = await octokit.request("POST /repos/{owner}/{repo}/check-runs", {
-      owner,
-      repo,
-      name,
-      head_sha: headSha,
-      status,
-      started_at: new Date().toISOString(),
-    });
+    const { data } = await octokit.request(
+      "POST /repos/{owner}/{repo}/check-runs",
+      {
+        owner,
+        repo,
+        name,
+        head_sha: headSha,
+        status,
+        started_at: new Date().toISOString(),
+      },
+    );
     return data.id;
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
@@ -52,19 +59,22 @@ export async function updateCheckRun({
     .join("\n---\n");
 
   try {
-    await octokit.request("PATCH /repos/{owner}/{repo}/check-runs/{check_run_id}", {
-      owner,
-      repo,
-      check_run_id: checkRunId,
-      status: "completed",
-      conclusion,
-      completed_at: new Date().toISOString(),
-      output: {
-        title: passed ? "RepoGuard: Clean" : "RepoGuard: Issues Found",
-        summary: summary ?? defaultSummary,
-        text: text || undefined,
+    await octokit.request(
+      "PATCH /repos/{owner}/{repo}/check-runs/{check_run_id}",
+      {
+        owner,
+        repo,
+        check_run_id: checkRunId,
+        status: "completed",
+        conclusion,
+        completed_at: new Date().toISOString(),
+        output: {
+          title: passed ? "RepoGuard: Clean" : "RepoGuard: Issues Found",
+          summary: summary ?? defaultSummary,
+          text: text || undefined,
+        },
       },
-    });
+    );
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     logger.error(`Failed to update check run ${checkRunId}: ${message}`);

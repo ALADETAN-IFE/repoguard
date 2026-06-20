@@ -12,7 +12,9 @@ const SUSPICIOUS_BRANCH_PATTERNS: RegExp[] = [
 
 const BOT_LOGINS = new Set(["repoguard-ifecodes[bot]"]);
 
-export function handleCreate(_app: App): (event: WebhookEvent<CreateEventPayload>) => Promise<void> {
+export function handleCreate(
+  _app: App,
+): (event: WebhookEvent<CreateEventPayload>) => Promise<void> {
   return async ({ octokit, payload }) => {
     const { ref_type, ref, sender, repository } = payload;
     const owner = repository.owner.login ?? repository.owner.name ?? "unknown";

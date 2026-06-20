@@ -4,7 +4,12 @@ import { openFixPR } from "../pullRequest";
 import { Installation, Checkpoint, Scan } from "../models";
 import logger from "../utils/logger";
 import { safeWrite } from "../utils/writeQueue";
-import type { Finding, WebhookEvent, InstallationEventPayload, OctokitClient } from "../types/index";
+import type {
+  Finding,
+  WebhookEvent,
+  InstallationEventPayload,
+  OctokitClient,
+} from "../types/index";
 import { Types } from "mongoose";
 import { sendAlert } from "../alerts";
 import { normaliseOctokit } from "../utils/normaliseOctokit";
@@ -138,60 +143,51 @@ export async function scanRepoList(
     const scanId = new Types.ObjectId();
 
     // Create a scan record (queued on failure so loop continues)
-    await safeWrite(
-      `Scan.create:${repo.full_name}`,
-      {
-        type: "CREATE_SCAN",
-        data: {
-          scanId: scanId.toHexString(),
-          installationId: checkpoint?.installationId,
-          owner,
-          repo: repo.name,
-          status: "in_progress",
-          trigger: "installation",
-          startedAt: new Date().toISOString(),
-        },
-      }
-    );
+    await safeWrite(`Scan.create:${repo.full_name}`, {
+      type: "CREATE_SCAN",
+      data: {
+        scanId: scanId.toHexString(),
+        installationId: checkpoint?.installationId,
+        owner,
+        repo: repo.name,
+        status: "in_progress",
+        trigger: "installation",
+        startedAt: new Date().toISOString(),
+      },
+    });
 
     try {
       const findings = await scanFullRepoForPush(client, owner, repo.name);
 
       // Persist findings
       if (findings.length > 0) {
-        await safeWrite(
-          `FindingModel.insertMany:${repo.full_name}`,
-          {
-            type: "INSERT_FINDINGS",
-            data: {
-              findings: findings.map((f) => ({
-                scanId: scanId.toHexString(),
-                installationId: checkpoint?.installationId,
-                owner,
-                repo: repo.name,
-                rule: f.rule,
-                severity: f.severity,
-                message: f.message,
-                file: f.file,
-                detectedAt: new Date().toISOString(),
-              })),
-            },
-          }
-        );
+        await safeWrite(`FindingModel.insertMany:${repo.full_name}`, {
+          type: "INSERT_FINDINGS",
+          data: {
+            findings: findings.map((f) => ({
+              scanId: scanId.toHexString(),
+              installationId: checkpoint?.installationId,
+              owner,
+              repo: repo.name,
+              rule: f.rule,
+              severity: f.severity,
+              message: f.message,
+              file: f.file,
+              detectedAt: new Date().toISOString(),
+            })),
+          },
+        });
       }
 
       // Update scan record
-      await safeWrite(
-        `Scan.complete:${repo.full_name}`,
-        {
-          type: "COMPLETE_SCAN",
-          data: {
-            scanId: scanId.toHexString(),
-            findingsCount: findings.length,
-            completedAt: new Date().toISOString(),
-          },
-        }
-      );
+      await safeWrite(`Scan.complete:${repo.full_name}`, {
+        type: "COMPLETE_SCAN",
+        data: {
+          scanId: scanId.toHexString(),
+          findingsCount: findings.length,
+          completedAt: new Date().toISOString(),
+        },
+      });
 
       if (findings.length === 0) {
         logger.info(`[installation] CLEAN — ${repo.full_name}`);
@@ -226,7 +222,8 @@ export async function scanRepoList(
             },
           );
         } catch (issueErr) {
-          const msg = issueErr instanceof Error ? issueErr.message : String(issueErr);
+          const msg =
+            issueErr instanceof Error ? issueErr.message : String(issueErr);
           logger.warn(
             `[installation] Could not post clean scan issue for ${repo.full_name}: ${msg.split(" - ")[0]}`,
           );
@@ -242,14 +239,18 @@ export async function scanRepoList(
       logger.info(`[installation] ✓ ${repo.full_name} checkpointed`);
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
-      logger.error(`[installation] Error scanning ${repo.full_name}: ${message}`);
+      logger.error(
+        `[installation] Error scanning ${repo.full_name}: ${message}`,
+      );
 
       await Scan.updateOne(
         { _id: scanId },
         { $set: { status: "failed", completedAt: new Date() } },
       ).catch((dbErr: unknown) => {
         const msg = dbErr instanceof Error ? dbErr.message : String(dbErr);
-        logger.warn(`[installation] Could not update scan status to failed: ${msg}`);
+        logger.warn(
+          `[installation] Could not update scan status to failed: ${msg}`,
+        );
       });
       if (isSkippableError(message)) {
         // Non-retryable — mark as scanned so it doesn't retry
@@ -259,7 +260,9 @@ export async function scanRepoList(
         );
       } else {
         // Retryable error — leave unscanned so it retries on resume
-        logger.warn(`[installation] Will retry ${repo.full_name} on next resume`);
+        logger.warn(
+          `[installation] Will retry ${repo.full_name} on next resume`,
+        );
       }
     }
   }
@@ -272,7 +275,9 @@ export async function scanRepoList(
     updated.scanned.length >= updated.totalRepos.length
   ) {
     await clearCheckpoint(installationKey);
-    logger.info(`[installation] All repos scanned for ${owner} — checkpoint cleared`);
+    logger.info(
+      `[installation] All repos scanned for ${owner} — checkpoint cleared`,
+    );
   }
 }
 
@@ -287,9 +292,13 @@ export function handleInstallation(
     // App uninstalled — clear checkpoint and mark installation
     if (action === "deleted") {
       const { installation } = payload as {
-        installation: { id: number; account: { login?: string; name?: string } };
+        installation: {
+          id: number;
+          account: { login?: string; name?: string };
+        };
       };
-      const owner = installation.account.login ?? installation.account.name ?? "unknown";
+      const owner =
+        installation.account.login ?? installation.account.name ?? "unknown";
       const installationKey = `${owner}-${installation.id}`;
 
       await clearCheckpoint(installationKey);
@@ -300,27 +309,32 @@ export function handleInstallation(
 
       await sendAlert({
         owner,
-        repo: owner,  // links to owner profile
+        repo: owner, // links to owner profile
         ref: "N/A",
         pusher: owner,
         headSha: null,
-        findings: [{
-          rule: "app-uninstalled",
-          severity: "high",
-          message: `RepoGuard was uninstalled by ${owner} — repositories are no longer protected`,
-          file: null,
-        }],
+        findings: [
+          {
+            rule: "app-uninstalled",
+            severity: "high",
+            message: `RepoGuard was uninstalled by ${owner} — repositories are no longer protected`,
+            file: null,
+          },
+        ],
         context: "installation",
       });
 
-      logger.info(`[installation] App uninstalled by ${owner} — records updated`);
+      logger.info(
+        `[installation] App uninstalled by ${owner} — records updated`,
+      );
       return;
     }
 
     if (action !== "created") return;
 
     const { installation, repositories } = payload;
-    const owner = installation.account.login ?? installation.account.name ?? "unknown";
+    const owner =
+      installation.account.login ?? installation.account.name ?? "unknown";
     const installationKey = `${owner}-${installation.id}`;
     const allRepos = repositories ?? [];
 
@@ -347,12 +361,14 @@ export function handleInstallation(
       ref: "N/A",
       pusher: owner,
       headSha: null,
-      findings: [{
-        rule: "app-installed",
-        severity: "low",
-        message: `RepoGuard installed by ${owner} on ${allRepos.length} repo${allRepos.length > 1 ? "s" : ""} — scanning in progress`,
-        file: null,
-      }],
+      findings: [
+        {
+          rule: "app-installed",
+          severity: "low",
+          message: `RepoGuard installed by ${owner} on ${allRepos.length} repo${allRepos.length > 1 ? "s" : ""} — scanning in progress`,
+          file: null,
+        },
+      ],
       context: "installation",
     });
 
@@ -389,7 +405,8 @@ export function handleInstallationRepositories(
 
     const { installation, repositories_added } = payload;
 
-    const owner = installation.account.login ?? installation.account.name ?? "unknown";
+    const owner =
+      installation.account.login ?? installation.account.name ?? "unknown";
     const installationKey = `${owner}-${installation.id}`;
 
     logger.info(
@@ -408,12 +425,7 @@ export function handleInstallationRepositories(
     ];
 
     // ✅ Use initCheckpoint so installationId is always set on the checkpoint
-    await initCheckpoint(
-      installationKey,
-      installation.id,
-      owner,
-      updatedTotal,
-    );
+    await initCheckpoint(installationKey, installation.id, owner, updatedTotal);
 
     // Update the installation record
     await Installation.findOneAndUpdate(
@@ -435,14 +447,16 @@ export function handleInstallationRepositories(
       ref: "N/A",
       pusher: owner,
       headSha: null,
-      findings: [{
-        rule: "app-repositories-added",
-        severity: "low",
-        message: `${repositories_added.length} repo${repositories_added.length > 1 ? "s" : ""} added to RepoGuard protection`,
-        file: null,
-      }],
+      findings: [
+        {
+          rule: "app-repositories-added",
+          severity: "low",
+          message: `${repositories_added.length} repo${repositories_added.length > 1 ? "s" : ""} added to RepoGuard protection`,
+          file: null,
+        },
+      ],
       context: "installation",
-      repoList: repositories_added.map(r => r.name),
+      repoList: repositories_added.map((r) => r.name),
     });
 
     // Scan only the newly added repos
@@ -549,23 +563,25 @@ async function scanViaTreeAndIndividualFiles(
     if (item.type !== "blob" || !item.path) continue;
     if (shouldSkipPath(item.path)) continue;
     if (ignoredPaths.some((p) => item.path!.startsWith(p))) continue;
-  
+
     const binary = isBinaryPath(item.path);
-  
+
     try {
       const { data } = await client.request(
         "GET /repos/{owner}/{repo}/contents/{path}",
         { owner, repo, path: item.path },
       );
-  
+
       if (Array.isArray(data) || data.type !== "file" || !("content" in data))
         continue;
-  
-      const content = Buffer.from(data.content || "", "base64").toString("utf8");
-  
+
+      const content = Buffer.from(data.content || "", "base64").toString(
+        "utf8",
+      );
+
       // Skip true binaries UNLESS they contain JS malware signatures
       if (binary && !looksLikeJavaScript(content)) continue;
-  
+
       files.push({ path: item.path, content });
     } catch {
       // File deleted or inaccessible — skip

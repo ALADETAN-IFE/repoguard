@@ -12,7 +12,7 @@ const logger = createLogger({
       return st
         ? `[${ts}] ${level.toUpperCase()}: ${msg}\n${st}`
         : `[${ts}] ${level.toUpperCase()}: ${msg}`;
-    })
+    }),
   ),
   transports: [
     new transports.Console(),

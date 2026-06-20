@@ -16,7 +16,12 @@ export interface IFinding extends Document {
 
 const FindingSchema = new Schema<IFinding>(
   {
-    scanId: { type: Schema.Types.ObjectId, ref: "Scan", required: true, index: true },
+    scanId: {
+      type: Schema.Types.ObjectId,
+      ref: "Scan",
+      required: true,
+      index: true,
+    },
     installationId: { type: Number, required: true, index: true },
     owner: { type: String, required: true },
     repo: { type: String, required: true },
@@ -31,11 +36,14 @@ const FindingSchema = new Schema<IFinding>(
     detectedAt: { type: Date, required: true, default: Date.now },
     resolvedAt: { type: Date, default: null },
   },
-  { timestamps: true }
+  { timestamps: true },
 );
 
 // Common queries: all findings for a repo, all unresolved critical findings
 FindingSchema.index({ installationId: 1, repo: 1 });
 FindingSchema.index({ severity: 1, resolvedAt: 1 });
 
-export const Finding: Model<IFinding> = model<IFinding>("Finding", FindingSchema);
+export const Finding: Model<IFinding> = model<IFinding>(
+  "Finding",
+  FindingSchema,
+);

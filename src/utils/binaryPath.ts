@@ -1,10 +1,25 @@
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
 const BINARY_EXTENSIONS = new Set([
-  ".png", ".jpg", ".jpeg", ".gif", ".ico", ".svg",
-  ".woff", ".woff2", ".ttf", ".eot", 
-  ".zip", ".tar", ".gz", ".exe", ".dll", ".so",
-  ".pdf", ".mp4", ".mp3",
+  ".png",
+  ".jpg",
+  ".jpeg",
+  ".gif",
+  ".ico",
+  ".svg",
+  ".woff",
+  ".woff2",
+  ".ttf",
+  ".eot",
+  ".zip",
+  ".tar",
+  ".gz",
+  ".exe",
+  ".dll",
+  ".so",
+  ".pdf",
+  ".mp4",
+  ".mp3",
 ]);
 
 // ── Detects JS malware hidden inside binary-named files ──

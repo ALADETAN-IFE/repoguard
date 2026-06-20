@@ -8,7 +8,9 @@ import { scanFullRepoForPush } from "./installation";
 import logger from "../utils/logger";
 import type { WebhookEvent, PushEventPayload, Finding } from "../types/index";
 
-export function handlePush(_app: App): (event: WebhookEvent<PushEventPayload>) => Promise<void> {
+export function handlePush(
+  _app: App,
+): (event: WebhookEvent<PushEventPayload>) => Promise<void> {
   return async ({ octokit, payload }) => {
     const { repository, commits, pusher, ref, after: headSha } = payload;
     const owner = repository.owner.login ?? repository.owner.name ?? "unknown";
@@ -22,7 +24,8 @@ export function handlePush(_app: App): (event: WebhookEvent<PushEventPayload>) =
     }
 
     const isForcePush = payload.forced === true;
-    const isDefaultBranch = ref === `refs/heads/${repository.default_branch || "main"}`;
+    const isDefaultBranch =
+      ref === `refs/heads/${repository.default_branch || "main"}`;
     const client = normaliseOctokit(octokit);
 
     logger.info(
@@ -45,7 +48,9 @@ export function handlePush(_app: App): (event: WebhookEvent<PushEventPayload>) =
 
       if (isForcePush && isDefaultBranch) {
         // ✅ Force push on default branch — scan entire repo, not just diff
-        logger.warn(`[push] Force push detected on ${owner}/${repo} — running full repo scan`);
+        logger.warn(
+          `[push] Force push detected on ${owner}/${repo} — running full repo scan`,
+        );
         findings = await scanFullRepoForPush(client, owner, repo);
       } else {
         // Normal push — scan only changed files
@@ -91,7 +96,13 @@ export function handlePush(_app: App): (event: WebhookEvent<PushEventPayload>) =
             const pr = (pulls as Array<{ number: number }>)[0];
             const patchedMap = new Map<string, string>();
             await postReviewComments(
-              client, owner, repo, pr.number, headSha, findings, patchedMap,
+              client,
+              owner,
+              repo,
+              pr.number,
+              headSha,
+              findings,
+              patchedMap,
             );
           }
         } catch (err) {
