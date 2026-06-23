@@ -72,6 +72,12 @@ Scans all changed files
 3. Select the repositorie(s) in the account/org you want to protect
 4. RepoGuard immediately scans your codebase and reports findings
 
+<!-- 1. Go to the [RepoGuard GitHub Marketplace listing](https://github.com/marketplace/repoguard-ifecodes) -->
+<!-- 2. Select the account/org you want to protect -->
+<!-- 3. Click **Install it for free** -->
+<!-- 4. Select the repositorie(s) in the account/org you want to protect -->
+<!-- 5. RepoGuard immediately scans your codebase and reports findings -->
+
 ---
 
 ## Permissions Required
@@ -165,9 +171,3 @@ npx smee-client --url https://smee.io/your-channel --target http://localhost:300
 ## License
 
 MIT
-
-<!-- 1. Go to the [RepoGuard GitHub Marketplace listing](https://github.com/marketplace/repoguard-ifecodes) -->
-<!-- 2. Select the account/org you want to protect -->
-<!-- 3. Click **Install it for free** -->
-<!-- 4. Select the repositorie(s) in the account/org you want to protect -->
-<!-- 5. RepoGuard immediately scans your codebase and reports findings -->
