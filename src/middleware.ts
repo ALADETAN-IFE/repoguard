@@ -2,6 +2,7 @@ import { type Request, type Response, type NextFunction } from "express";
 import { createNodeMiddleware, type Webhooks } from "@octokit/webhooks";
 import { githubApp } from "./config/githubApp";
 import logger from "./utils/logger";
+import crypto from "crypto";
 
 // ─── Webhook middleware ───────────────────────────────────────────────────────
 
@@ -99,7 +100,17 @@ export function requireApiKey(
   next: NextFunction,
 ): void {
   const apiKey = req.headers["x-api-key"];
-  if (!apiKey || apiKey !== process.env.API_SECRET) {
+  if (!apiKey || typeof apiKey !== "string" || !process.env.API_SECRET) {
+    res.status(401).json({ error: "Unauthorized" });
+    return;
+  }
+  const keyBuffer = Buffer.from(apiKey);
+  const secretBuffer = Buffer.from(process.env.API_SECRET);
+
+  if (
+    keyBuffer.length !== secretBuffer.length ||
+    !crypto.timingSafeEqual(keyBuffer, secretBuffer)
+  ) {
     res.status(401).json({ error: "Unauthorized" });
     return;
   }
@@ -112,7 +123,17 @@ export function requireRescanSecret(
   next: NextFunction,
 ): void {
   const secret = req.headers["x-rescan-secret"];
-  if (!secret || secret !== process.env.RESCAN_SECRET) {
+  if (!secret || typeof secret !== "string" || !process.env.RESCAN_SECRET) {
+    res.status(401).json({ error: "Unauthorized" });
+    return;
+  }
+  const keyBuffer = Buffer.from(secret);
+  const secretBuffer = Buffer.from(process.env.RESCAN_SECRET);
+
+  if (
+    keyBuffer.length !== secretBuffer.length ||
+    !crypto.timingSafeEqual(keyBuffer, secretBuffer)
+  ) {
     res.status(401).json({ error: "Unauthorized" });
     return;
   }
