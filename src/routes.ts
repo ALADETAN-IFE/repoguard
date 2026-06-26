@@ -76,7 +76,8 @@ const getScans = async (req: Request, res: Response): Promise<void> => {
     });
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
-    res.status(500).json({ error: message });
+    logger.error(`[scans] Failed to fetch scans: ${message}`);
+    res.status(500).json({ error: "Internal server error" });
   }
 };
 router.get("/api/scans", requireApiKey, (req, res) => {
@@ -92,7 +93,8 @@ const getScanFindings = async (req: Request, res: Response): Promise<void> => {
     res.json({ findings });
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
-    res.status(500).json({ error: message });
+    logger.error(`[scans] Failed to fetch scans: ${message}`);
+    res.status(500).json({ error: "Internal server error" });
   }
 };
 router.get("/api/scans/:scanId/findings", requireApiKey, (req, res) => {
