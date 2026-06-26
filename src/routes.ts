@@ -192,7 +192,7 @@ const rescanAll = async (req: Request, res: Response): Promise<void> => {
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     logger.error(`[rescan] Failed to trigger rescan: ${message}`);
-    res.status(500).json({ error: message });
+    res.status(500).json({ error: "Internal server error" });
   }
 };
 
