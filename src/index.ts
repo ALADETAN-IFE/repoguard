@@ -1,5 +1,6 @@
 import "dotenv/config";
 import express from "express";
+import helmet from "helmet";
 import logger from "./utils/logger";
 import router from "./routes";
 import { connectDatabase } from "./config/db";
@@ -8,6 +9,7 @@ import { resumeIncompleteScans } from "./utils/autoResume";
 const app = express();
 
 app.set("trust proxy", 1);
+app.use(helmet());
 
 app.use((req, res, next) => {
   if (req.path === "/api/webhook") return next();
