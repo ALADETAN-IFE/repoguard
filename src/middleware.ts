@@ -51,9 +51,18 @@ export function requireWebhookSignature(
   next();
 }
 
+// ─── Shared Redis Configuration helper ────────────────────────────────────────
+
+const createRedisStore = (): RedisStore | undefined => {
+  return redis
+    ? new RedisStore({
+        // @ts-expect-error - Safely routes commands across different client versions
+        sendCommand: (...args: string[]) => redis.sendCommand(args),
+      })
+    : undefined;
+};
+
 // ─── Security: simple in-memory rate limiter for the webhook endpoint ─────────
-// Prevents hammering — max 60 requests per IP per minute.
-// For production with multiple instances, replace with Redis-backed rate limit.
 
 const RATE_LIMIT_WINDOW_MS = 60_000;
 const RATE_LIMIT_MAX = 60;
@@ -63,12 +72,7 @@ export const webhookRateLimit: RequestHandler = rateLimit({
   max: RATE_LIMIT_MAX, // Max 60 requests per window per IP
   standardHeaders: true,
   legacyHeaders: false,
-  store: redis
-    ? new RedisStore({
-        // @ts-expect-error - Safely routes commands across different client versions
-        sendCommand: (...args: string[]) => redis.sendCommand(args),
-      })
-    : undefined,
+  store: createRedisStore(),
 
   handler: (req, res, _next, options) => {
     logger.warn(`[security] Rate limit exceeded for IP ${req.ip ?? "unknown"}`);
@@ -77,6 +81,46 @@ export const webhookRateLimit: RequestHandler = rateLimit({
 
   message: { error: "Too many requests" },
 });
+
+// ─── Security: Auth Endpoint Rate Limiter (Brute-Force Protection) ────────────
+// Drastically slows down scanning endpoints to a maximum of 5 requests per minute.
+
+export const authRateLimit: RequestHandler = rateLimit({
+  windowMs: RATE_LIMIT_WINDOW_MS, // 1 minute window
+  max: 5, // Max 5 attempts per minute per IP
+  standardHeaders: true,
+  legacyHeaders: false,
+  store: createRedisStore(),
+  handler: (req, res, _next, options) => {
+    logger.warn(
+      `[security] Brute-force protection triggered on auth route from IP ${req.ip ?? "unknown"}`,
+    );
+    res
+      .status(options.statusCode)
+      .json({ error: "Too many requests. Please try again later." });
+  },
+});
+
+// ─── Security Helpers for Key Verification ────────────────────────────────────
+
+/**
+ * A wrapper around crypto.timingSafeEqual that safely handles inputs of
+ * mismatched string lengths without leaking execution timing profile differences.
+ */
+function safeCompare(input: string, secret: string): boolean {
+  const inputBuffer = Buffer.from(input);
+  const secretBuffer = Buffer.from(secret);
+
+  if (inputBuffer.length !== secretBuffer.length) {
+    // Generate a dummy comparison to mimic computation overhead
+    crypto.timingSafeEqual(secretBuffer, secretBuffer);
+    return false;
+  }
+
+  return crypto.timingSafeEqual(inputBuffer, secretBuffer);
+}
+
+// ─── Route Guards ─────────────────────────────────────────────────────────────
 
 export function requireApiKey(
   req: Request,
@@ -88,13 +132,8 @@ export function requireApiKey(
     res.status(401).json({ error: "Unauthorized" });
     return;
   }
-  const keyBuffer = Buffer.from(apiKey);
-  const secretBuffer = Buffer.from(process.env.API_SECRET);
 
-  if (
-    keyBuffer.length !== secretBuffer.length ||
-    !crypto.timingSafeEqual(keyBuffer, secretBuffer)
-  ) {
+  if (!safeCompare(apiKey, process.env.API_SECRET)) {
     res.status(401).json({ error: "Unauthorized" });
     return;
   }
@@ -111,13 +150,8 @@ export function requireRescanSecret(
     res.status(401).json({ error: "Unauthorized" });
     return;
   }
-  const keyBuffer = Buffer.from(secret);
-  const secretBuffer = Buffer.from(process.env.RESCAN_SECRET);
 
-  if (
-    keyBuffer.length !== secretBuffer.length ||
-    !crypto.timingSafeEqual(keyBuffer, secretBuffer)
-  ) {
+  if (!safeCompare(secret, process.env.RESCAN_SECRET)) {
     res.status(401).json({ error: "Unauthorized" });
     return;
   }

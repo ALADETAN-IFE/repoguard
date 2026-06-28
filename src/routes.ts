@@ -1,5 +1,6 @@
 import express, { raw, type Request, type Response } from "express";
 import {
+  authRateLimit,
   handleWebhook,
   requireApiKey,
   requireRescanSecret,
@@ -80,7 +81,7 @@ const getScans = async (req: Request, res: Response): Promise<void> => {
     res.status(500).json({ error: "Internal server error" });
   }
 };
-router.get("/api/scans", requireApiKey, (req, res) => {
+router.get("/api/scans", authRateLimit, requireApiKey, (req, res) => {
   void getScans(req, res);
 });
 
@@ -97,9 +98,14 @@ const getScanFindings = async (req: Request, res: Response): Promise<void> => {
     res.status(500).json({ error: "Internal server error" });
   }
 };
-router.get("/api/scans/:scanId/findings", requireApiKey, (req, res) => {
-  void getScanFindings(req, res);
-});
+router.get(
+  "/api/scans/:scanId/findings",
+  authRateLimit,
+  requireApiKey,
+  (req, res) => {
+    void getScanFindings(req, res);
+  },
+);
 
 // Rescan all repos
 const rescanAll = async (req: Request, res: Response): Promise<void> => {
@@ -196,9 +202,14 @@ const rescanAll = async (req: Request, res: Response): Promise<void> => {
   }
 };
 
-router.post("/api/rescan-all", requireRescanSecret, (req, res) => {
-  void rescanAll(req, res);
-});
+router.post(
+  "/api/rescan-all",
+  authRateLimit,
+  requireRescanSecret,
+  (req, res) => {
+    void rescanAll(req, res);
+  },
+);
 
 router.use((_req: Request, res: Response) => {
   res.status(404).json({ error: "Route not found" });
