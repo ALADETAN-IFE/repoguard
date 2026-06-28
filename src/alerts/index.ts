@@ -29,7 +29,11 @@ export async function sendAlert({
     repoList,
   };
 
-  logger.warn(`SECURITY ALERT: ${JSON.stringify(payload, null, 2)}`);
+  logger.warn(
+    `SECURITY ALERT: ${payload.summary} — ${payload.repository}/${payload.ref}`,
+  );
+
+  logger.debug(`SECURITY ALERT (full): ${JSON.stringify(payload)}`);
 
   const tasks: Promise<void>[] = [];
 
