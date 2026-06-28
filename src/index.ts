@@ -11,7 +11,7 @@ app.set("trust proxy", 1);
 
 app.use((req, res, next) => {
   if (req.path === "/api/webhook") return next();
-  express.json()(req, res, next);
+  express.json({ limit: "1mb" })(req, res, next);
 });
 app.use("/", router);
 
