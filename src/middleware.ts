@@ -1,8 +1,16 @@
-import { type Request, type Response, type NextFunction } from "express";
+import {
+  type Request,
+  type Response,
+  type NextFunction,
+  RequestHandler,
+} from "express";
 import { createNodeMiddleware, type Webhooks } from "@octokit/webhooks";
 import { githubApp } from "./config/githubApp";
 import logger from "./utils/logger";
 import crypto from "crypto";
+import rateLimit from "express-rate-limit";
+import RedisStore from "rate-limit-redis";
+import { redis } from "./config/redis";
 
 // ─── Webhook middleware ───────────────────────────────────────────────────────
 
@@ -50,49 +58,25 @@ export function requireWebhookSignature(
 const RATE_LIMIT_WINDOW_MS = 60_000;
 const RATE_LIMIT_MAX = 60;
 
-interface RateLimitEntry {
-  count: number;
-  resetAt: number;
-}
+export const webhookRateLimit: RequestHandler = rateLimit({
+  windowMs: RATE_LIMIT_WINDOW_MS, // 1 minute
+  max: RATE_LIMIT_MAX, // Max 60 requests per window per IP
+  standardHeaders: true,
+  legacyHeaders: false,
+  store: redis
+    ? new RedisStore({
+        // @ts-expect-error - Safely routes commands across different client versions
+        sendCommand: (...args: string[]) => redis.sendCommand(args),
+      })
+    : undefined,
 
-const rateLimitStore = new Map<string, RateLimitEntry>();
+  handler: (req, res, _next, options) => {
+    logger.warn(`[security] Rate limit exceeded for IP ${req.ip ?? "unknown"}`);
+    res.status(options.statusCode).json(options.message);
+  },
 
-// Clean up stale entries every 5 minutes so the map doesn't grow unbounded
-setInterval(() => {
-  const now = Date.now();
-  for (const [key, entry] of rateLimitStore.entries()) {
-    if (entry.resetAt < now) rateLimitStore.delete(key);
-  }
-}, 5 * 60_000);
-
-export function webhookRateLimit(
-  req: Request,
-  res: Response,
-  next: NextFunction,
-): void {
-  const ip = req.ip ?? req.socket.remoteAddress ?? "unknown";
-  const now = Date.now();
-
-  const entry = rateLimitStore.get(ip);
-
-  if (!entry || entry.resetAt < now) {
-    rateLimitStore.set(ip, { count: 1, resetAt: now + RATE_LIMIT_WINDOW_MS });
-    next();
-    return;
-  }
-
-  entry.count++;
-
-  if (entry.count > RATE_LIMIT_MAX) {
-    logger.warn(
-      `[security] Rate limit exceeded for IP ${ip} — ${entry.count} requests in window`,
-    );
-    res.status(429).json({ error: "Too many requests" });
-    return;
-  }
-
-  next();
-}
+  message: { error: "Too many requests" },
+});
 
 export function requireApiKey(
   req: Request,
