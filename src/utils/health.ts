@@ -1,4 +1,4 @@
-import mongoose, { ConnectionStates } from "mongoose";
+import mongoose from "mongoose";
 import { redis } from "../config/redis";
 
 export type CheckStatus = "ok" | "error" | "skipped";
@@ -19,7 +19,7 @@ export interface HealthReport {
 }
 
 async function checkMongoDB(): Promise<HealthCheck> {
-  if (mongoose.connection.readyState !== ConnectionStates.connected) {
+  if (Number(mongoose.connection.readyState) !== 1) {
     return {
       status: "error",
       message: `MongoDB not connected (readyState=${mongoose.connection.readyState})`,
