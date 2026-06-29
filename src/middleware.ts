@@ -57,7 +57,10 @@ const createRedisStore = (): RedisStore | undefined => {
   return redis
     ? new RedisStore({
         // @ts-expect-error - Safely routes commands across different client versions
-        sendCommand: (...args: string[]) => redis.sendCommand(args),
+        // sendCommand: (...args: string[]) => redis.sendCommand(args),
+        // For ioredis, use client.call(...) and spread the arguments list
+        sendCommand: (command: string, ...args: string[]): Promise<unknown> =>
+          redis!.call(command, ...args),
       })
     : undefined;
 };
