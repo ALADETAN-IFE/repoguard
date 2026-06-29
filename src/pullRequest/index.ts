@@ -656,6 +656,23 @@ interface GitHubIssue {
   labels?: Array<{ name: string }>;
 }
 
+export async function hasOpenRepoGuardFixPR(
+  octokit: OctokitClient,
+  owner: string,
+  repo: string,
+): Promise<boolean> {
+  const { data: pulls } = await octokit.request(
+    "GET /repos/{owner}/{repo}/pulls",
+    { owner, repo, state: "open", per_page: 100 },
+  );
+
+  return (pulls as GitHubPullRequest[]).some(
+    (pr) =>
+      pr.head.ref.startsWith("repoguard/fixes-") ||
+      pr.title.includes("RepoGuard:"),
+  );
+}
+
 export async function closeRepoGuardPRsAndIssues(
   octokit: OctokitClient,
   owner: string,

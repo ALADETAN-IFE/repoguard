@@ -2,7 +2,12 @@ import type { App } from "@octokit/app";
 import { scanCommit } from "../scanner";
 import { createCheckRun, updateCheckRun } from "../checks";
 import { sendAlert } from "../alerts";
-import { closeRepoGuardPRsAndIssues, postReviewComments } from "../pullRequest";
+import {
+  closeRepoGuardPRsAndIssues,
+  hasOpenRepoGuardFixPR,
+  openFixPR,
+  postReviewComments,
+} from "../pullRequest";
 import { normaliseOctokit } from "../utils/normaliseOctokit";
 import { scanFullRepoForPush } from "./installation";
 import logger from "../utils/logger";
@@ -119,6 +124,20 @@ export function handlePush(
           findings,
           context: "push",
         });
+
+        if (isDefaultBranch) {
+          const hasFixPR = await hasOpenRepoGuardFixPR(client, owner, repo);
+          if (hasFixPR) {
+            logger.info(
+              `[push] Open RepoGuard fix PR already exists for ${owner}/${repo} — skipping`,
+            );
+          } else {
+            logger.warn(
+              `[push] ${findings.length} finding${findings.length > 1 ? "s" : ""} on default branch — opening fix PR`,
+            );
+            await openFixPR(client, { owner, repo, findings });
+          }
+        }
 
         logger.warn(
           `[push] BLOCKED — ${findings.length} finding${findings.length > 1 ? "s" : ""} in ${owner}/${repo}`,
