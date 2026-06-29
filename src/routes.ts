@@ -12,6 +12,7 @@ import { scanRepoList } from "./webhooks/installation";
 import { githubApp } from "./config/githubApp";
 import { normaliseOctokit } from "./utils/normaliseOctokit";
 import logger from "./utils/logger";
+import { getHealthReport, getHealthStatusCode } from "./utils/health";
 
 const router = express.Router();
 
@@ -28,7 +29,24 @@ router.use(
 );
 
 router.get("/health", (_req: Request, res: Response) => {
-  res.json({ status: "ok", app: "RepoGuard-IfeCodes", version: "1.0.0" });
+  void (async (): Promise<void> => {
+    try {
+      const report = await getHealthReport();
+      res.status(getHealthStatusCode(report)).json(report);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      logger.error(`[health] Health check failed: ${message}`);
+      res.status(503).json({
+        status: "degraded",
+        app: "RepoGuard-IfeCodes",
+        version: "1.0.0",
+        checks: {
+          mongodb: { status: "error", message },
+          redis: { status: "error", message: "Health check aborted" },
+        },
+      });
+    }
+  })();
 });
 
 router.get("/auth/callback", (req: Request, res: Response) => {
