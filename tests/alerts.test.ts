@@ -4,7 +4,7 @@ import type { Finding, AlertContext } from "../src/types";
 
 jest.mock("../src/utils/logger", () => ({
   __esModule: true,
-  default: { info: jest.fn(), warn: jest.fn(), error: jest.fn() },
+  default: { info: jest.fn(), warn: jest.fn(), error: jest.fn(), debug: jest.fn() },
 }));
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
