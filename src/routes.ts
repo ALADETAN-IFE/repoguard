@@ -13,6 +13,7 @@ import { githubApp } from "./config/githubApp";
 import { normaliseOctokit } from "./utils/normaliseOctokit";
 import logger from "./utils/logger";
 import { getHealthReport, getHealthStatusCode } from "./utils/health";
+import { handleMarketplaceWebhook } from "./webhooks/marketplace";
 
 const router = express.Router();
 
@@ -57,6 +58,15 @@ router.get("/auth/callback", (req: Request, res: Response) => {
     setup_action,
   });
 });
+
+// Marketplace billing webhook — receives purchase/change/cancel events from GitHub
+router.post(
+  "/api/marketplace-webhook",
+  raw({ type: "application/json" }), // raw buffer needed for signature verification
+  (req, res) => {
+    void handleMarketplaceWebhook(req, res);
+  },
+);
 
 // Returns recent scans for a given owner/repo (paginated)
 const getScans = async (req: Request, res: Response): Promise<void> => {

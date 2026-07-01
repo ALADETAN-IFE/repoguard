@@ -6,6 +6,13 @@ export interface IInstallation extends Document {
   email: string | null;
   installedAt: Date;
   uninstalledAt: Date | null;
+  // Marketplace fields
+  marketplacePlan: string | null;
+  billingCycle: "monthly" | "yearly" | null;
+  onFreeTrial: boolean;
+  freeTrialEndsOn: Date | null;
+  marketplaceUpdatedAt: Date | null;
+  marketplaceCancelledAt: Date | null;
 }
 
 const InstallationSchema = new Schema<IInstallation>(
@@ -31,6 +38,31 @@ const InstallationSchema = new Schema<IInstallation>(
       default: Date.now,
     },
     uninstalledAt: {
+      type: Date,
+      default: null,
+    },
+    marketplacePlan: {
+      type: String,
+      default: null,
+    },
+    billingCycle: {
+      type: String,
+      enum: ["monthly", "yearly", null],
+      default: null,
+    },
+    onFreeTrial: {
+      type: Boolean,
+      default: false,
+    },
+    freeTrialEndsOn: {
+      type: Date,
+      default: null,
+    },
+    marketplaceUpdatedAt: {
+      type: Date,
+      default: null,
+    },
+    marketplaceCancelledAt: {
       type: Date,
       default: null,
     },
