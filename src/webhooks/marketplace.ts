@@ -3,6 +3,7 @@ import type { Request, Response } from "express";
 import { Installation } from "../models";
 import logger from "../utils/logger";
 import { sendMarketplaceAlert } from "../alerts/marketplace";
+import { getClientIp } from "../utils/getClientIp";
 
 // ─── Payload types ────────────────────────────────────────────────────────────
 
@@ -84,7 +85,7 @@ export function handleMarketplaceWebhook(req: Request, res: Response): void {
   const signature = req.headers["x-hub-signature-256"] as string | undefined;
 
   if (!verifySignature(rawBody, signature, secret)) {
-    logger.warn(`[marketplace] Invalid signature from ${req.ip ?? "unknown"}`);
+    logger.warn(`[marketplace] Invalid signature from ${getClientIp(req)}`);
     res.status(401).json({ error: "Invalid signature" });
     return;
   }

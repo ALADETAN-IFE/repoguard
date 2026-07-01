@@ -11,6 +11,7 @@ import crypto from "crypto";
 import rateLimit from "express-rate-limit";
 import RedisStore from "rate-limit-redis";
 import { redis } from "./config/redis";
+import { getClientIp } from "./utils/getClientIp";
 
 // ─── Webhook middleware ───────────────────────────────────────────────────────
 
@@ -43,7 +44,7 @@ export function requireWebhookSignature(
   const sig = req.headers["x-hub-signature-256"];
   if (!sig) {
     logger.warn(
-      `[security] Rejected unsigned webhook request from ${req.ip ?? "unknown"}`,
+      `[security] Rejected unsigned webhook request from ${getClientIp(req)}`,
     );
     res.status(400).json({ error: "Missing x-hub-signature-256 header" });
     return;
@@ -78,7 +79,7 @@ export const webhookRateLimit: RequestHandler = rateLimit({
   store: createRedisStore(),
 
   handler: (req, res, _next, options) => {
-    logger.warn(`[security] Rate limit exceeded for IP ${req.ip ?? "unknown"}`);
+    logger.warn(`[security] Rate limit exceeded for IP ${getClientIp(req)}`);
     res.status(options.statusCode).json(options.message);
   },
 
@@ -96,7 +97,7 @@ export const authRateLimit: RequestHandler = rateLimit({
   store: createRedisStore(),
   handler: (req, res, _next, options) => {
     logger.warn(
-      `[security] Brute-force protection triggered on auth route from IP ${req.ip ?? "unknown"}`,
+      `[security] Brute-force protection triggered on auth route from IP ${getClientIp(req)}`,
     );
     res
       .status(options.statusCode)
