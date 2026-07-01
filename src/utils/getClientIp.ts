@@ -1,4 +1,5 @@
 import type { Request } from "express";
+import logger from "./logger";
 
 /**
  * Extracts the real client IP from a request.
@@ -15,6 +16,8 @@ export function getClientIp(req: Request): string {
 
   if (forwarded) {
     const ips = Array.isArray(forwarded) ? forwarded[0] : forwarded;
+
+    logger.info(`[IP] All available Ip's ${ips}`);
 
     // Take the first (leftmost) IP — that's the real client
     const clientIp = ips.split(",")[0]?.trim();
