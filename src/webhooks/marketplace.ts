@@ -127,7 +127,7 @@ export function handleMarketplaceWebhook(req: Request, res: Response): void {
       `[marketplace] Malformed payload — missing marketplace_purchase`,
     );
     logger.warn(
-      `[marketplace] Payload keys: ${Object.keys(payload as object).join(", ")}`,
+      `[marketplace] Payload keys: ${Object.keys(payload).join(", ")}`,
     );
     res.status(400).json({ error: "Malformed marketplace payload" });
     return;
