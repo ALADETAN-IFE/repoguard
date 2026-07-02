@@ -9,6 +9,7 @@ import { getClientIp } from "../utils/getClientIp";
 
 export type MarketplaceAction =
   | "purchased"
+  | "ping"
   | "pending_change"
   | "pending_change_cancelled"
   | "changed"
@@ -23,6 +24,7 @@ interface MarketplacePlan {
 }
 
 interface MarketplacePurchasePayload {
+  zen?: string;
   action: MarketplaceAction;
   effective_date: string;
   sender: { login: string; id: number };
@@ -103,6 +105,20 @@ export function handleMarketplaceWebhook(req: Request, res: Response): void {
     // Could be a ping event — respond OK and log
     if ("zen" in (payload as object)) {
       logger.info(`[marketplace] Ping received — webhook connection verified`);
+      void (async (): Promise<void> => {
+        await handleAction({
+          action: "ping",
+          buyer: payload.zen ?? "unknown",
+          sender: "unknown",
+          plan: "unknown",
+          previousPlan: null,
+          billingCycle: "monthly",
+          onFreeTrial: false,
+          freeTrialEndsOn: null,
+          installationId: null,
+          effectiveDate: new Date().toISOString(),
+        });
+      })();
       res.status(200).json({ received: true });
       return;
     }
@@ -189,6 +205,9 @@ export interface MarketplaceContext {
 
 async function handleAction(ctx: MarketplaceContext): Promise<void> {
   switch (ctx.action) {
+    case "ping":
+      await onPing(ctx);
+      break;
     case "purchased":
       await onPurchased(ctx);
       break;
@@ -217,6 +236,15 @@ async function handleAction(ctx: MarketplaceContext): Promise<void> {
 }
 
 // ─── Individual handlers ──────────────────────────────────────────────────────
+
+async function onPing(ctx: MarketplaceContext): Promise<void> {
+  logger.info(`[marketplace] Ping received — webhook connection verified`);
+  await sendMarketplaceAlert({
+    ...ctx,
+    emoji: "🔄",
+    label: "Ping Received",
+  });
+}
 
 async function onPurchased(ctx: MarketplaceContext): Promise<void> {
   logger.info(
