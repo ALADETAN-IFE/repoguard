@@ -83,7 +83,7 @@ export function handleMarketplaceWebhook(req: Request, res: Response): void {
         : JSON.stringify(req.body);
 
   const signature = req.headers["x-hub-signature-256"] as string | undefined;
-  console.log(signature);
+  logger.info(`[marketplace] signature: ${signature ?? "missing"}`);
 
   if (!verifySignature(rawBody, signature, secret)) {
     logger.warn(`[marketplace] Invalid signature from ${getClientIp(req)}`);
@@ -96,6 +96,18 @@ export function handleMarketplaceWebhook(req: Request, res: Response): void {
     payload = JSON.parse(rawBody) as MarketplacePurchasePayload;
   } catch {
     res.status(400).json({ error: "Invalid JSON payload" });
+    return;
+  }
+
+  // Guard against missing marketplace_purchase
+  if (!payload.marketplace_purchase || !payload.sender) {
+    logger.warn(
+      `[marketplace] Malformed payload — missing marketplace_purchase or sender`,
+    );
+    logger.warn(
+      `[marketplace] Payload keys: ${Object.keys(payload).join(", ")}`,
+    );
+    res.status(400).json({ error: "Malformed marketplace payload" });
     return;
   }
 

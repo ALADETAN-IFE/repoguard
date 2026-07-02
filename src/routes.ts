@@ -109,6 +109,7 @@ const getScans = async (req: Request, res: Response): Promise<void> => {
     res.status(500).json({ error: "Internal server error" });
   }
 };
+
 router.get("/api/scans", authRateLimit, requireApiKey, (req, res) => {
   void getScans(req, res);
 });
@@ -126,6 +127,7 @@ const getScanFindings = async (req: Request, res: Response): Promise<void> => {
     res.status(500).json({ error: "Internal server error" });
   }
 };
+
 router.get(
   "/api/scans/:scanId/findings",
   authRateLimit,
