@@ -99,6 +99,24 @@ export function handleMarketplaceWebhook(req: Request, res: Response): void {
     return;
   }
 
+  if (!payload.marketplace_purchase) {
+    // Could be a ping event — respond OK and log
+    if ("zen" in (payload as object)) {
+      logger.info(`[marketplace] Ping received — webhook connection verified`);
+      res.status(200).json({ received: true });
+      return;
+    }
+
+    logger.warn(
+      `[marketplace] Malformed payload — missing marketplace_purchase`,
+    );
+    logger.warn(
+      `[marketplace] Payload keys: ${Object.keys(payload as object).join(", ")}`,
+    );
+    res.status(400).json({ error: "Malformed marketplace payload" });
+    return;
+  }
+
   // Guard against missing marketplace_purchase
   if (!payload.marketplace_purchase || !payload.sender) {
     logger.warn(
