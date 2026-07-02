@@ -83,6 +83,7 @@ export function handleMarketplaceWebhook(req: Request, res: Response): void {
         : JSON.stringify(req.body);
 
   const signature = req.headers["x-hub-signature-256"] as string | undefined;
+  console.log(signature);
 
   if (!verifySignature(rawBody, signature, secret)) {
     logger.warn(`[marketplace] Invalid signature from ${getClientIp(req)}`);
