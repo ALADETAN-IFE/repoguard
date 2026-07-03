@@ -66,6 +66,18 @@ function verifySignature(
   }
 }
 
+// ─── Safe installation ID helper ─────────────────────────────────────────────
+function toSafeInstallationId(value: unknown): number | null {
+  if (typeof value === "number" && Number.isFinite(value) && value > 0) {
+    return Math.floor(value);
+  }
+  if (typeof value === "string" && /^\d+$/.test(value)) {
+    const parsed = parseInt(value, 10);
+    return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
+  }
+  return null;
+}
+
 // ─── Route handler ────────────────────────────────────────────────────────────
 
 export function handleMarketplaceWebhook(req: Request, res: Response): void {
@@ -174,7 +186,7 @@ export function handleMarketplaceWebhook(req: Request, res: Response): void {
         onFreeTrial: marketplace_purchase.on_free_trial,
         freeTrialEndsOn: marketplace_purchase.free_trial_ends_on,
         effectiveDate: effective_date,
-        installationId: payload.installation?.id ?? null,
+        installationId: toSafeInstallationId(payload.installation?.id),
       });
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
