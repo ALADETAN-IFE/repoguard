@@ -28,6 +28,15 @@ async function start(): Promise<void> {
       ? `https://${process.env.RAILWAY_PUBLIC_DOMAIN}`
       : `http://localhost:${PORT}`;
 
+    setInterval(
+      () => {
+        void fetch(`${baseUrl}/health`)
+          .then(() => logger.info("[keepalive] ping sent"))
+          .catch(() => logger.warn("[keepalive] ping failed"));
+      },
+      14 * 60 * 1000,
+    );
+
     logger.info(`RepoGuard running on port ${PORT}`);
     logger.info(`Webhook endpoint: ${baseUrl}/api/webhook`);
 
