@@ -468,6 +468,10 @@ async function scanViaZipball(
   const findings: Finding[] = [];
 
   logger.info(`[scan] Downloading zipball for ${owner}/${repo}`);
+
+  // ✅ Check Content-Length before downloading
+  const MAX_ZIPBALL_SIZE = 50 * 1024 * 1024; // 50MB
+
   const response = await client.request(
     "GET /repos/{owner}/{repo}/zipball/{ref}",
     { owner, repo, ref: "HEAD" },
@@ -476,6 +480,15 @@ async function scanViaZipball(
   const buffer = Buffer.isBuffer(response.data)
     ? response.data
     : Buffer.from(response.data as ArrayBuffer);
+
+  // ✅ Check after buffer creation — if too large, free it and fall back
+  if (buffer.length > MAX_ZIPBALL_SIZE) {
+    const sizeMB = Math.round(buffer.length / 1024 / 1024);
+    logger.warn(
+      `[scan] Zipball for ${owner}/${repo} is ${sizeMB}MB — too large, falling back to file-by-file scan`,
+    );
+    throw new Error(`Zipball too large (${sizeMB}MB) — falling back`);
+  }
 
   const zip = new AdmZip(buffer);
   const entries = zip.getEntries();
