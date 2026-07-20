@@ -17,9 +17,9 @@ async function formatContent(
     const info = await prettier.getFileInfo(filePath);
     if (!info.inferredParser) return content;
     const formatted = await prettier.format(content, { filepath: filePath });
-    return formatted.trimEnd() + "\n"; // ✅ trim AFTER prettier too
+    return formatted.trimEnd() + "\n"; // trim AFTER prettier too
   } catch {
-    return content.trimEnd() + "\n"; // ✅ trim even on prettier failure
+    return content.trimEnd() + "\n"; // trim even on prettier failure
   }
 }
 
