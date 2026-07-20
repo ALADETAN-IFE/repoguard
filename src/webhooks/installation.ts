@@ -466,11 +466,27 @@ async function scanViaZipball(
   repo: string,
 ): Promise<Finding[]> {
   const findings: Finding[] = [];
+  logger.info(`[scan-size] Downloading zipball for ${owner}/${repo}`);
+
+  const MAX_ZIPBALL_SIZE = 50 * 1024 * 1024; // 50MB
+
+  // ✅ Check repo size BEFORE downloading zipball
+  const { data: repoData } = await client.request("GET /repos/{owner}/{repo}", {
+    owner,
+    repo,
+  });
+
+  // GitHub reports size in KB
+  const repoSizeBytes = (repoData.size ?? 0) * 1024;
+  if (repoSizeBytes > MAX_ZIPBALL_SIZE) {
+    const sizeMB = Math.round(repoSizeBytes / 1024 / 1024);
+    logger.warn(
+      `[scan] ${owner}/${repo} is ~${sizeMB}MB — too large for zipball, falling back`,
+    );
+    throw new Error(`Repo too large (${sizeMB}MB) — falling back`);
+  }
 
   logger.info(`[scan] Downloading zipball for ${owner}/${repo}`);
-
-  // ✅ Check Content-Length before downloading
-  const MAX_ZIPBALL_SIZE = 50 * 1024 * 1024; // 50MB
 
   const response = await client.request(
     "GET /repos/{owner}/{repo}/zipball/{ref}",
