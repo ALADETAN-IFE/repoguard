@@ -17,11 +17,6 @@ import { shouldSkipPath } from "../utils/skipPaths";
 import { isBinaryPath, looksLikeJavaScript } from "../utils/binaryPath";
 import AdmZip from "adm-zip";
 
-interface RepoFile {
-  path: string;
-  content: string;
-}
-
 // ─── Checkpoint helpers (MongoDB) ─────────────────────────────────────────────
 
 async function initCheckpoint(
@@ -309,7 +304,7 @@ export function handleInstallation(
 
       await sendAlert({
         owner,
-        repo: owner, // links to owner profile
+        repo: owner,
         ref: "N/A",
         pusher: owner,
         headSha: null,
@@ -424,7 +419,6 @@ export function handleInstallationRepositories(
       ...repositories_added.map((r) => r.full_name),
     ];
 
-    // ✅ Use initCheckpoint so installationId is always set on the checkpoint
     await initCheckpoint(installationKey, installation.id, owner, updatedTotal);
 
     // Update the installation record
@@ -557,39 +551,48 @@ async function scanViaTreeAndIndividualFiles(
     // No .repoguardignore — that's fine
   }
 
-  const files: RepoFile[] = [];
+  // ✅ Filter blobs upfront then fetch in batches of 10
+  const BATCH_SIZE = 10;
+  const blobs = tree.tree.filter(
+    (item) =>
+      item.type === "blob" &&
+      !!item.path &&
+      !shouldSkipPath(item.path) &&
+      !ignoredPaths.some((p) => item.path!.startsWith(p)),
+  );
 
-  for (const item of tree.tree) {
-    if (item.type !== "blob" || !item.path) continue;
-    if (shouldSkipPath(item.path)) continue;
-    if (ignoredPaths.some((p) => item.path!.startsWith(p))) continue;
+  for (let i = 0; i < blobs.length; i += BATCH_SIZE) {
+    const batch = blobs.slice(i, i + BATCH_SIZE);
 
-    const binary = isBinaryPath(item.path);
+    await Promise.all(
+      batch.map(async (item) => {
+        const binary = isBinaryPath(item.path!);
+        try {
+          const { data } = await client.request(
+            "GET /repos/{owner}/{repo}/contents/{path}",
+            { owner, repo, path: item.path! },
+          );
 
-    try {
-      const { data } = await client.request(
-        "GET /repos/{owner}/{repo}/contents/{path}",
-        { owner, repo, path: item.path },
-      );
+          if (
+            Array.isArray(data) ||
+            data.type !== "file" ||
+            !("content" in data)
+          )
+            return;
 
-      if (Array.isArray(data) || data.type !== "file" || !("content" in data))
-        continue;
+          const content = Buffer.from(data.content || "", "base64").toString(
+            "utf8",
+          );
 
-      const content = Buffer.from(data.content || "", "base64").toString(
-        "utf8",
-      );
+          if (binary && !looksLikeJavaScript(content)) return;
 
-      // Skip true binaries UNLESS they contain JS malware signatures
-      if (binary && !looksLikeJavaScript(content)) continue;
-
-      files.push({ path: item.path, content });
-    } catch {
-      // File deleted or inaccessible — skip
-    }
-  }
-
-  for (const file of files) {
-    findings.push(...scanFileContent(file.content, file.path));
+          // ✅ Scan immediately — no files array accumulation
+          findings.push(...scanFileContent(content, item.path));
+        } catch {
+          // File deleted or inaccessible — skip
+        }
+      }),
+    );
   }
 
   return findings;
