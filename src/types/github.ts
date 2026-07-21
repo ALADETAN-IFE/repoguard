@@ -17,6 +17,7 @@ export interface GitHubCommit {
   id: string;
   added?: string[];
   modified?: string[];
+  removed?: string[];
 }
 
 export interface PushEventPayload {
@@ -24,6 +25,7 @@ export interface PushEventPayload {
   commits: GitHubCommit[];
   pusher: { name: string };
   ref: string;
+  before?: string;
   after: string; // head SHA
   forced?: boolean;
 }
