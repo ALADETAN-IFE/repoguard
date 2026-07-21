@@ -1,6 +1,7 @@
 import type { Finding, ScanRule, ScanCommitOptions } from "../types";
 import logger from "../utils/logger";
 import { KNOWN_NPM_TYPOSQUATS, KNOWN_PYPI_TYPOSQUATS } from "./typosquat";
+import { hasMalwareArtifactInIgnoreFile } from "./malwareArtifacts";
 import { shouldSkipPath } from "../utils/skipPaths";
 import { isBinaryPath, looksLikeJavaScript } from "../utils/binaryPath";
 
@@ -150,6 +151,17 @@ const FILE_RULES: ScanRule[] = [
         name === ".env.staging" ||
         name === ".env.development"
       );
+    },
+  },
+  {
+    id: "suspicious-gitignore-entry",
+    severity: "high",
+    description:
+      "Known malware artifact listed in ignore file — possible attempt to hide malicious local files",
+    test: (content, filePath): boolean => {
+      const name = filePath?.split("/").pop()?.toLowerCase() ?? "";
+      if (name !== ".gitignore" && name !== ".repoguardignore") return false;
+      return hasMalwareArtifactInIgnoreFile(content);
     },
   },
   {

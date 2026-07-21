@@ -135,6 +135,39 @@ describe("additional scanFileContent rules", () => {
     const findings = scanFileContent(content, "server.ts");
     expect(findRule(findings, "env-exfiltration")).toBe(false);
   });
+
+  it("detects known malware artifacts listed in .gitignore", () => {
+    const content = [
+      "node_modules/",
+      "branch_structure.json",
+      "temp_auto_push.bat",
+      "temp_interactive_push.bat",
+    ].join("\n");
+    const findings = scanFileContent(content, ".gitignore");
+    expect(findRule(findings, "suspicious-gitignore-entry")).toBe(true);
+  });
+
+  it("detects known malware artifacts listed in .repoguardignore", () => {
+    const content = "temp_auto_push.bat\n";
+    const findings = scanFileContent(content, ".repoguardignore");
+    expect(findRule(findings, "suspicious-gitignore-entry")).toBe(true);
+  });
+
+  it("does not flag benign .gitignore entries", () => {
+    const content = ["node_modules/", "dist/", ".env.local"].join("\n");
+    const findings = scanFileContent(content, ".gitignore");
+    expect(findRule(findings, "suspicious-gitignore-entry")).toBe(false);
+  });
+
+  it("ignores commented and negated .gitignore lines", () => {
+    const content = [
+      "# temp_auto_push.bat",
+      "!branch_structure.json",
+      "build/",
+    ].join("\n");
+    const findings = scanFileContent(content, ".gitignore");
+    expect(findRule(findings, "suspicious-gitignore-entry")).toBe(false);
+  });
 });
 
 // ─── Workflow file dual-scan coverage ─────────────────────────────────────────
@@ -198,6 +231,28 @@ describe("scanCommit", () => {
     mockOctokit = {
       request: requestMock,
     };
+  });
+
+  it("detects suspicious entries when .gitignore is changed in a commit", async () => {
+    requestMock.mockResolvedValue({
+      data: {
+        type: "file",
+        content: Buffer.from(
+          "node_modules/\ntemp_auto_push.bat\nbranch_structure.json\n",
+        ).toString("base64"),
+      },
+    });
+
+    const findings = await scanCommit({
+      octokit: mockOctokit as never,
+      owner: "owner",
+      repo: "repo",
+      sha: "sha",
+      addedFiles: [],
+      modifiedFiles: [".gitignore"],
+    });
+
+    expect(findRule(findings, "suspicious-gitignore-entry")).toBe(true);
   });
 
   it("scans and detects findings in a regular file", async () => {

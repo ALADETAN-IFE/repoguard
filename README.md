@@ -36,6 +36,7 @@ RepoGuard is a GitHub App that scans your repositories for malicious code, obfus
 | `workflow-suspicious-trigger` | Medium | Overly broad workflow triggers |
 | `workflow-unpinned-action` | Medium | Third-party Actions not pinned to a commit SHA |
 | `suspicious-branch-create` | High | Branch creation by non-org members |
+| `suspicious-gitignore-entry` | High | Known malware artifacts listed in `.gitignore` or `.repoguardignore` |
 
 ---
 
