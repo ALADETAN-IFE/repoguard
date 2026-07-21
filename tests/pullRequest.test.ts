@@ -129,6 +129,41 @@ describe("pullRequest", () => {
       expect(patchedContent).toContain("# REMOVED BY REPOGUARD: crypto miner");
       expect(patchedFindings).toHaveLength(1);
     });
+
+    it("patches suspicious-gitignore-entry by removing malware artifact lines", async () => {
+      const original = [
+        "# dependencies",
+        "/node_modules",
+        "",
+        "# misc",
+        ".DS_Store",
+        "branch_structure.json",
+        "temp_auto_push.bat",
+        "temp_interactive_push.bat",
+      ].join("\n");
+      const findings: Finding[] = [
+        {
+          rule: "suspicious-gitignore-entry",
+          severity: "high",
+          message:
+            "Known malware artifact listed in ignore file — possible attempt to hide malicious local files",
+          file: ".gitignore",
+        },
+      ];
+
+      const { patchedContent, patchedFindings } = await applyPatches(
+        original,
+        findings,
+        ".gitignore",
+      );
+
+      expect(patchedContent).not.toContain("branch_structure.json");
+      expect(patchedContent).not.toContain("temp_auto_push.bat");
+      expect(patchedContent).not.toContain("temp_interactive_push.bat");
+      expect(patchedContent).toContain("/node_modules");
+      expect(patchedContent).toContain(".DS_Store");
+      expect(patchedFindings).toHaveLength(1);
+    });
   });
 
   describe("buildPRBody", () => {

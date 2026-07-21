@@ -1,6 +1,7 @@
 import type { Finding, OctokitClient } from "../types/index";
 import logger from "../utils/logger";
 import prettier from "prettier";
+import { removeMalwareArtifactIgnoreLines } from "../scanner/malwareArtifacts";
 
 interface OpenFixPROptions {
   owner: string;
@@ -422,6 +423,13 @@ export async function applyPatches(
           "# REMOVED BY REPOGUARD: crypto miner",
         );
         break;
+      case "suspicious-gitignore-entry": {
+        const name = filePath.split("/").pop()?.toLowerCase() ?? "";
+        if (name === ".gitignore" || name === ".repoguardignore") {
+          nextPatched = removeMalwareArtifactIgnoreLines(nextPatched);
+        }
+        break;
+      }
       default:
         break;
     }
@@ -491,6 +499,8 @@ export function buildPRBody(
     "suspicious-npm-postinstall":
       "Suspicious `postinstall` scripts in package.json neutralized",
     "crypto-miner-keywords": "Cryptocurrency miner indicators removed",
+    "suspicious-gitignore-entry":
+      "Known malware artifact entries removed from ignore file",
   };
 
   const uniquePatchedRules = [...new Set(patchedFindings.map((f) => f.rule))];
