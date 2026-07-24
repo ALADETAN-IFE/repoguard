@@ -24,6 +24,30 @@ async function formatContent(
   }
 }
 
+// ─── Check if file is effectively empty after patching ───────────────────────
+// Runs prettier first so formatting normalises whitespace, then strips
+// single-line comments (// … and # …) and block comments (/* … */) before
+// checking whether any meaningful words remain.
+async function isEffectivelyEmpty(
+  content: string,
+  filePath: string,
+): Promise<boolean> {
+  const formatted = await formatContent(content, filePath);
+
+  const stripped = formatted
+    // Remove block comments  /* … */
+    .replace(/\/\*[\s\S]*?\*\//g, "")
+    // Remove single-line // comments
+    .replace(/\/\/[^\n]*/g, "")
+    // Remove shell / Python # comments
+    .replace(/#[^\n]*/g, "")
+    // Collapse whitespace
+    .replace(/\s+/g, " ")
+    .trim();
+
+  return stripped.length === 0;
+}
+
 // ─── Permission error detection ───────────────────────────────────────────────
 
 function isPermissionError(err: unknown): boolean {
@@ -53,6 +77,7 @@ export async function openFixPR(
       fileSha: string;
       fileFindings: Finding[];
       patchedFindings: Finding[];
+      shouldDelete: boolean;
     }> = [];
 
     const allPatchedFindings: Finding[] = [];
@@ -76,11 +101,8 @@ export async function openFixPR(
         const fileSha: string = data.sha;
 
         const fileFindings = findings.filter((f) => f.file === filePath);
-        const { patchedContent, patchedFindings } = await applyPatches(
-          originalContent,
-          fileFindings,
-          filePath,
-        );
+        const { patchedContent, patchedFindings, shouldDelete } =
+          await applyPatches(originalContent, fileFindings, filePath);
 
         const fileUnpatched = fileFindings.filter(
           (f) => !patchedFindings.includes(f),
@@ -96,6 +118,7 @@ export async function openFixPR(
             fileSha,
             fileFindings,
             patchedFindings,
+            shouldDelete,
           });
         }
       } catch (err) {
@@ -165,8 +188,25 @@ export async function openFixPR(
 
     logger.info(`[pr] Created branch ${branch} in ${owner}/${repo}`);
 
-    // ── 5. Commit each modified file ─────────────────────────────────────────
+    // ── 5. Commit each modified file (or delete if patching empties it) ─────
     for (const file of filesToPatch) {
+      if (file.shouldDelete) {
+        // The file would be left with nothing but REPOGUARD comment tombstones
+        // after patching — delete it entirely instead.
+        await octokit.request("DELETE /repos/{owner}/{repo}/contents/{path}", {
+          owner,
+          repo,
+          path: file.filePath,
+          message: `fix(security): delete fully-malicious file ${file.filePath}\n\nDetected by RepoGuard:\n${file.patchedFindings.map((f) => `- ${f.rule}: ${f.message}`).join("\n")}`,
+          sha: file.fileSha,
+          branch,
+        });
+        logger.info(
+          `[pr] Deleted fully-malicious file ${file.filePath} (would have been empty after patching)`,
+        );
+        continue;
+      }
+
       // Only add a header comment block when there are findings that STILL need
       // manual review in this file. Fully auto-patched files don't get a header
       // — the inline replacement comments ("// REMOVED BY REPOGUARD: …") are
@@ -337,13 +377,15 @@ async function openSecurityIssue(
   }
 }
 
-// ─── Patch strategies per rule ────────────────────────────────────────────────
-
 export async function applyPatches(
   content: string,
   findings: Finding[],
   filePath: string,
-): Promise<{ patchedContent: string; patchedFindings: Finding[] }> {
+): Promise<{
+  patchedContent: string;
+  patchedFindings: Finding[];
+  shouldDelete: boolean;
+}> {
   let patched = content;
   const patchedFindings: Finding[] = [];
 
@@ -383,7 +425,7 @@ export async function applyPatches(
         break;
       case "obfuscated-malware-pattern":
         nextPatched = nextPatched.replace(
-          /\n?global\[['"]!['"]\][\s\S]*/g,
+          /\n?global\[['"]\.['"\]][\s\S]*/g,
           "\n// REMOVED BY REPOGUARD: obfuscated malware payload",
         );
         nextPatched = nextPatched.replace(
@@ -441,10 +483,23 @@ export async function applyPatches(
   }
 
   if (patchedFindings.length > 0) {
+    // ── Empty-file guard ────────────────────────────────────────────────────
+    // Run prettier on the candidate patched content, then check whether
+    // any meaningful (non-comment, non-whitespace) content remains.
+    // If the file would be left with only REPOGUARD comment tombstones,
+    // delete it entirely rather than committing a comment-only file.
+    const wouldBeEmpty = await isEffectivelyEmpty(patched, filePath);
+    if (wouldBeEmpty) {
+      logger.info(
+        `[pr] Patching ${filePath} would leave it empty — flagging for deletion`,
+      );
+      return { patchedContent: patched, patchedFindings, shouldDelete: true };
+    }
+
     patched = await formatContent(patched, filePath);
   }
 
-  return { patchedContent: patched, patchedFindings };
+  return { patchedContent: patched, patchedFindings, shouldDelete: false };
 }
 
 // ─── PR body builder ──────────────────────────────────────────────────────────
