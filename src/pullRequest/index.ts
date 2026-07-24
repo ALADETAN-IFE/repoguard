@@ -235,21 +235,31 @@ export async function openFixPR(
 
     // ── 6. Open the PR ──────────────────────────────────────────────────────
     const totalAllPatchedFindings = allPatchedFindings.length;
+    const deletedFiles = filesToPatch
+      .filter((f) => f.shouldDelete)
+      .map((f) => f.filePath);
     const { data: pr } = await octokit.request(
       "POST /repos/{owner}/{repo}/pulls",
       {
         owner,
         repo,
         title: `🔒 RepoGuard: Security fixes — ${totalAllPatchedFindings} issue${totalAllPatchedFindings > 1 ? "s" : ""} resolved`,
-        body: buildPRBody(findings, allPatchedFindings, allUnpatchedFindings),
+        body: buildPRBody(
+          findings,
+          allPatchedFindings,
+          allUnpatchedFindings,
+          deletedFiles,
+        ),
         head: branch,
         base: defaultBranch,
       },
     );
 
-    // ✅ Post inline review comments
+    // ✅ Post inline review comments (exclude deleted files)
     const patchedMap = new Map(
-      filesToPatch.map((f) => [f.filePath, f.patchedContent]),
+      filesToPatch
+        .filter((f) => !f.shouldDelete)
+        .map((f) => [f.filePath, f.patchedContent]),
     );
     await postReviewComments(
       octokit,
@@ -508,6 +518,7 @@ export function buildPRBody(
   findings: Finding[],
   patchedFindings: Finding[],
   unpatchedFindings: Finding[],
+  deletedFiles: string[] = [],
 ): string {
   const criticalCount = findings.filter(
     (f) => f.severity === "critical",
@@ -526,7 +537,12 @@ export function buildPRBody(
       const rows = fileFindings
         .map((f) => {
           const isPatched = patchedFindings.includes(f);
-          const status = isPatched ? "✅ Patched" : "⚠️ Requires Manual Review";
+          const isDeleted = deletedFiles.includes(file);
+          const status = isDeleted
+            ? "🗑️ Deleted"
+            : isPatched
+              ? "✅ Patched"
+              : "⚠️ Requires Manual Review";
           return `| ${severityEmoji(f.severity)} ${f.severity} | \`${f.rule}\` | ${f.message} | ${status} |`;
         })
         .join("\n");
@@ -559,9 +575,16 @@ export function buildPRBody(
   };
 
   const uniquePatchedRules = [...new Set(patchedFindings.map((f) => f.rule))];
-  const whatWasDone = uniquePatchedRules
-    .map((rule) => `- ${PATCH_SUMMARIES[rule] ?? `Rule \`${rule}\` patched`}`)
-    .join("\n");
+  const whatWasDoneList = uniquePatchedRules.map(
+    (rule) => `- ${PATCH_SUMMARIES[rule] ?? `Rule \`${rule}\` patched`}`,
+  );
+
+  if (deletedFiles.length > 0) {
+    whatWasDoneList.push(
+      `- Fully-malicious files deleted: ${deletedFiles.map((f) => `\`${f}\``).join(", ")}`,
+    );
+  }
+  const whatWasDone = whatWasDoneList.join("\n") || "_None_";
 
   // Dynamically build "What requires manual review"
   const MANUAL_REVIEW_SUMMARIES: Record<string, string> = {
@@ -900,6 +923,9 @@ export async function postReviewComments(
 
   for (const finding of findings) {
     if (!finding.file || !finding.line) continue;
+
+    // Skip if the file was deleted (not present in patchedContent map)
+    if (!patchedContent.has(finding.file)) continue;
 
     const patched = patchedContent.get(finding.file);
     const originalLine = patched
