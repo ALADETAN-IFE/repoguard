@@ -620,10 +620,17 @@ describe("pullRequest", () => {
         if (route === "GET /repos/{owner}/{repo}/labels") {
           return {
             data: [
-              { name: "repoguard" },
-              { name: "security" }
+              { name: "repoguard", color: "2080e8" },
+              { name: "security", color: "b60205" },
+              { name: "automated-fix", color: "0075ca" },
             ]
           };
+        }
+        if (route === "PATCH /repos/{owner}/{repo}/labels/{name}") {
+          return { data: {} };
+        }
+        if (route === "POST /repos/{owner}/{repo}/labels") {
+          return { data: {} };
         }
         if (route === "POST /repos/{owner}/{repo}/issues/{issue_number}/labels") {
           return { data: {} };
@@ -653,7 +660,7 @@ describe("pullRequest", () => {
 
       expect(requestMock).toHaveBeenCalledWith(
         "POST /repos/{owner}/{repo}/issues/{issue_number}/labels",
-        expect.objectContaining({ issue_number: 100, labels: ["repoguard", "security"] })
+        expect.objectContaining({ issue_number: 100, labels: ["repoguard", "security", "automated-fix"] })
       );
     });
 
