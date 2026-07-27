@@ -81,6 +81,45 @@ const FILE_RULES: ScanRule[] = [
       /exec\s*\(\s*__import__\s*\(/.test(content),
   },
   {
+    id: "js-obfuscated-charcode",
+    severity: "critical",
+    description: "JavaScript charCode arrays dynamically executing payload",
+    test: (content) =>
+      /String\.fromCharCode\s*\(\s*[^)]+\)/.test(content) &&
+      /(?:eval|exec|Function|constructor|setTimeout|setInterval)/.test(content),
+  },
+  {
+    id: "js-obfuscated-constructors",
+    severity: "critical",
+    description:
+      "JavaScript constructor/reflection abuse for dynamic execution",
+    test: (content) =>
+      /\[\s*['"]filter['"]\s*\]\s*\[\s*['"]constructor['"]\s*\]/.test(
+        content,
+      ) ||
+      /constructor\s*\(\s*['"]eval['"]\s*\)/.test(content) ||
+      /Reflect\.apply/.test(content),
+  },
+  {
+    id: "js-obfuscated-hex",
+    severity: "critical",
+    description: "JavaScript hex escape obfuscation sequence",
+    test: (content) => {
+      const matches = content.match(/\\x[0-9a-fA-F]{2}/g);
+      return matches !== null && matches.length >= 8;
+    },
+  },
+  {
+    id: "python-obfuscated-base64-exec",
+    severity: "critical",
+    description: "Python base64-decoded dynamic execution payload",
+    test: (content) =>
+      /exec\s*\(\s*base64\.b64decode/.test(content) ||
+      /exec\s*\(\s*__import__\s*\(\s*['"]base64['"]\s*\)\.b64decode/.test(
+        content,
+      ),
+  },
+  {
     id: "python-subprocess-network",
     severity: "critical",
     description:
@@ -202,7 +241,8 @@ const FILE_RULES: ScanRule[] = [
   {
     id: "high-entropy-secret",
     severity: "medium",
-    description: "High-entropy string detected — possible hardcoded credential or API key",
+    description:
+      "High-entropy string detected — possible hardcoded credential or API key",
     test: (content, filePath): boolean => {
       if (filePath) {
         const lower = filePath.toLowerCase();

