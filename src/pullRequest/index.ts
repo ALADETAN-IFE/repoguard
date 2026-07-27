@@ -284,8 +284,8 @@ export async function openFixPR(
       logger.info(`[pr] Requested review from: ${reviewers.join(", ")}`);
     }
 
-    // ── 8. Add labels only if they already exist in the repo ───────────────
-    await applyExistingLabels(octokit, owner, repo, pr.number, [
+    // ── 8. Ensure labels exist with brand colours, then apply them ──────────
+    await ensureAndApplyLabels(octokit, owner, repo, pr.number, [
       "repoguard",
       "security",
       "automated-fix",
@@ -694,9 +694,29 @@ async function getAdminLogins(
   }
 }
 
-// ─── Apply labels that already exist (never create) ──────────────────────────
+// ─── Label management: ensure brand-coloured labels exist, then apply ────────
 
-async function applyExistingLabels(
+// Label definitions: name → { color (hex, no #), description }
+const LABEL_DEFS: Record<string, { color: string; description: string }> = {
+  repoguard: {
+    color: "2080e8", // Brand blue — matches repoguard-site --color-blue-accent
+    description: "Opened or flagged by RepoGuard security bot",
+  },
+  security: {
+    color: "b60205", // Deep red — GitHub's standard security label colour
+    description: "Security vulnerability or finding",
+  },
+  "automated-fix": {
+    color: "0075ca", // GitHub's default "documentation" blue — neutral but readable
+    description: "Fix applied automatically by RepoGuard",
+  },
+};
+
+/**
+ * Ensures each desired label exists in the repo (creating it with brand colours
+ * if absent), then applies all of them to the given issue / PR.
+ */
+async function ensureAndApplyLabels(
   octokit: OctokitClient,
   owner: string,
   repo: string,
@@ -704,19 +724,48 @@ async function applyExistingLabels(
   desiredLabels: string[],
 ): Promise<void> {
   try {
+    // Fetch existing labels
     const { data: repoLabels } = await octokit.request(
       "GET /repos/{owner}/{repo}/labels",
       { owner, repo, per_page: 100 },
     );
-    const existing = new Set(
-      (repoLabels as Array<{ name: string }>).map((l) => l.name),
+    const existingMap = new Map(
+      (repoLabels as Array<{ name: string; color: string }>).map((l) => [
+        l.name,
+        l.color,
+      ]),
     );
-    const toApply = desiredLabels.filter((l) => existing.has(l));
-    if (toApply.length === 0) return;
 
+    // Create or update each desired label
+    for (const name of desiredLabels) {
+      const def = LABEL_DEFS[name];
+      if (!def) continue; // unknown label — skip
+
+      if (!existingMap.has(name)) {
+        // Create brand-new label
+        await octokit.request("POST /repos/{owner}/{repo}/labels", {
+          owner,
+          repo,
+          name,
+          color: def.color,
+          description: def.description,
+        });
+      } else if (existingMap.get(name) !== def.color) {
+        // Update colour if it drifted from the brand colour
+        await octokit.request("PATCH /repos/{owner}/{repo}/labels/{name}", {
+          owner,
+          repo,
+          name,
+          color: def.color,
+          description: def.description,
+        });
+      }
+    }
+
+    // Apply all labels to the issue / PR
     await octokit.request(
       "POST /repos/{owner}/{repo}/issues/{issue_number}/labels",
-      { owner, repo, issue_number: issueNumber, labels: toApply },
+      { owner, repo, issue_number: issueNumber, labels: desiredLabels },
     );
   } catch {
     // Labels are non-critical — skip silently
