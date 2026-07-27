@@ -319,6 +319,49 @@ const FILE_RULES: ScanRule[] = [
       return lines.some((pkg) => pkg in KNOWN_PYPI_TYPOSQUATS);
     },
   },
+  {
+    id: "dependency-wildcard-version",
+    severity: "medium",
+    description: "Insecure wildcard dependency version or direct HTTP tarball reference",
+    test: (content, filePath): boolean => {
+      if (!filePath?.endsWith("package.json")) return false;
+      try {
+        const pkg = JSON.parse(content) as {
+          dependencies?: Record<string, string>;
+          devDependencies?: Record<string, string>;
+        };
+        const allDeps = { ...pkg.dependencies, ...pkg.devDependencies };
+        return Object.values(allDeps).some(
+          (version) =>
+            version === "*" ||
+            version === "latest" ||
+            /^https?:\/\/.*\.tgz$/i.test(version),
+        );
+      } catch {
+        return false;
+      }
+    },
+  },
+  {
+    id: "dependency-insecure-git-protocol",
+    severity: "high",
+    description: "Insecure git:// protocol used for package dependency reference",
+    test: (content, filePath): boolean => {
+      if (!filePath?.endsWith("package.json")) return false;
+      try {
+        const pkg = JSON.parse(content) as {
+          dependencies?: Record<string, string>;
+          devDependencies?: Record<string, string>;
+        };
+        const allDeps = { ...pkg.dependencies, ...pkg.devDependencies };
+        return Object.values(allDeps).some((version) =>
+          /^git(\+http)?:\/\//i.test(version),
+        );
+      } catch {
+        return false;
+      }
+    },
+  },
 ];
 
 // ─── Workflow scan rules ──────────────────────────────────────────────────────
