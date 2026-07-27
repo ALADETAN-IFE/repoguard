@@ -168,6 +168,25 @@ describe("additional scanFileContent rules", () => {
     const findings = scanFileContent(content, ".gitignore");
     expect(findRule(findings, "suspicious-gitignore-entry")).toBe(false);
   });
+
+  it("detects high-entropy strings (possible secret API keys)", () => {
+    // High-entropy random-looking base64/hex string: 32 chars
+    const content = `const secret = "gA9xL3vM1zK5sQ8wY2tN6pP0rB7xJ4cT";`;
+    const findings = scanFileContent(content, "src/index.ts");
+    expect(findRule(findings, "high-entropy-secret")).toBe(true);
+  });
+
+  it("ignores low-entropy strings or strings in markdown files", () => {
+    // Low-entropy repeating string
+    const lowEntropy = `const label = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";`;
+    const findings1 = scanFileContent(lowEntropy, "src/index.ts");
+    expect(findRule(findings1, "high-entropy-secret")).toBe(false);
+
+    // High-entropy string in markdown file should be ignored
+    const highEntropy = `Here is a token: "gA9xL3vM1zK5sQ8wY2tN6pP0rB7xJ4cT"`;
+    const findings2 = scanFileContent(highEntropy, "README.md");
+    expect(findRule(findings2, "high-entropy-secret")).toBe(false);
+  });
 });
 
 // ─── Workflow file dual-scan coverage ─────────────────────────────────────────

@@ -13,6 +13,22 @@ function isWorkflowPath(filePath: string): boolean {
   );
 }
 
+function calculateEntropy(str: string): number {
+  const len = str.length;
+  if (len === 0) return 0;
+  const frequencies: Record<string, number> = {};
+  for (let i = 0; i < len; i++) {
+    const char = str[i];
+    frequencies[char] = (frequencies[char] || 0) + 1;
+  }
+  let entropy = 0;
+  for (const char in frequencies) {
+    const p = frequencies[char] / len;
+    entropy -= p * Math.log2(p);
+  }
+  return entropy;
+}
+
 // ─── File scan rules ─────────────────────────────────────────────────────────
 
 const FILE_RULES: ScanRule[] = [
@@ -182,6 +198,40 @@ const FILE_RULES: ScanRule[] = [
       /(?:password|passwd|secret|api_key|apikey|token)\s*=\s*["'][^"']{8,}["']/i.test(
         content,
       ),
+  },
+  {
+    id: "high-entropy-secret",
+    severity: "medium",
+    description: "High-entropy string detected — possible hardcoded credential or API key",
+    test: (content, filePath): boolean => {
+      if (filePath) {
+        const lower = filePath.toLowerCase();
+        if (
+          lower.endsWith(".json") ||
+          lower.endsWith(".lock") ||
+          lower.endsWith(".yaml") ||
+          lower.endsWith(".yml") ||
+          lower.endsWith(".md") ||
+          lower.endsWith(".html") ||
+          lower.includes("test")
+        ) {
+          return false;
+        }
+      }
+
+      // Match single/double quoted strings or backticks containing no spaces
+      const stringRegex = /(['"`])([A-Za-z0-9+/=_-]{20,100})\1/g;
+      let match;
+      while ((match = stringRegex.exec(content)) !== null) {
+        const value = match[2];
+        if (/^https?:\/\//i.test(value) || /^[0-9]+$/.test(value)) continue;
+        const entropy = calculateEntropy(value);
+        if (entropy >= 4.3) {
+          return true;
+        }
+      }
+      return false;
+    },
   },
   {
     id: "npm-typosquatted-package",
