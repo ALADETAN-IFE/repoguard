@@ -104,7 +104,7 @@ const FILE_RULES: ScanRule[] = [
     id: "js-obfuscated-hex",
     severity: "critical",
     description: "JavaScript hex escape obfuscation sequence",
-    test: (content) => {
+    test: (content): boolean => {
       const matches = content.match(/\\x[0-9a-fA-F]{2}/g);
       return matches !== null && matches.length >= 8;
     },
@@ -322,7 +322,8 @@ const FILE_RULES: ScanRule[] = [
   {
     id: "dependency-wildcard-version",
     severity: "medium",
-    description: "Insecure wildcard dependency version or direct HTTP tarball reference",
+    description:
+      "Insecure wildcard dependency version or direct HTTP tarball reference",
     test: (content, filePath): boolean => {
       if (!filePath?.endsWith("package.json")) return false;
       try {
@@ -345,7 +346,8 @@ const FILE_RULES: ScanRule[] = [
   {
     id: "dependency-insecure-git-protocol",
     severity: "high",
-    description: "Insecure git:// protocol used for package dependency reference",
+    description:
+      "Insecure git:// protocol used for package dependency reference",
     test: (content, filePath): boolean => {
       if (!filePath?.endsWith("package.json")) return false;
       try {
@@ -360,6 +362,72 @@ const FILE_RULES: ScanRule[] = [
       } catch {
         return false;
       }
+    },
+  },
+
+  // ─── Container security (Dockerfile) ────────────────────────────────────────
+  {
+    id: "docker-run-as-root",
+    severity: "critical",
+    description:
+      "Dockerfile explicitly sets USER root — container runs as root, widening blast radius",
+    test: (content, filePath): boolean => {
+      const name = filePath?.split("/").pop()?.toLowerCase() ?? "";
+      if (!name.startsWith("dockerfile") && !name.endsWith(".dockerfile"))
+        return false;
+      return /^\s*USER\s+root\b/im.test(content);
+    },
+  },
+  {
+    id: "docker-no-user-directive",
+    severity: "high",
+    description:
+      "Dockerfile has no USER directive — container will run as root by default",
+    test: (content, filePath): boolean => {
+      const name = filePath?.split("/").pop()?.toLowerCase() ?? "";
+      if (!name.startsWith("dockerfile") && !name.endsWith(".dockerfile"))
+        return false;
+      // Must have at least one FROM (so it's a real Dockerfile) but no USER line
+      return /^\s*FROM\s+/im.test(content) && !/^\s*USER\s+/im.test(content);
+    },
+  },
+  {
+    id: "docker-add-remote-url",
+    severity: "medium",
+    description:
+      "Dockerfile uses ADD with a remote URL — prefer COPY or curl with checksum verification",
+    test: (content, filePath): boolean => {
+      const name = filePath?.split("/").pop()?.toLowerCase() ?? "";
+      if (!name.startsWith("dockerfile") && !name.endsWith(".dockerfile"))
+        return false;
+      return /^\s*ADD\s+https?:\/\//im.test(content);
+    },
+  },
+  {
+    id: "docker-latest-tag",
+    severity: "medium",
+    description:
+      "Dockerfile pulls an image with :latest tag or no tag — pin to a specific digest for reproducibility",
+    test: (content, filePath): boolean => {
+      const name = filePath?.split("/").pop()?.toLowerCase() ?? "";
+      if (!name.startsWith("dockerfile") && !name.endsWith(".dockerfile"))
+        return false;
+      // FROM image:latest  OR  FROM image  (no colon at all, so no tag/digest)
+      return /^\s*FROM\s+(?!scratch\b)\S+:latest\b|^\s*FROM\s+(?!scratch\b)[^\s:@]+\s*$/im.test(
+        content,
+      );
+    },
+  },
+  {
+    id: "docker-curl-pipe-bash",
+    severity: "critical",
+    description:
+      "Dockerfile RUN step pipes curl output to bash — remote code execution during image build",
+    test: (content, filePath): boolean => {
+      const name = filePath?.split("/").pop()?.toLowerCase() ?? "";
+      if (!name.startsWith("dockerfile") && !name.endsWith(".dockerfile"))
+        return false;
+      return /^\s*RUN\s+.*curl\s.+\|\s*(ba)?sh/im.test(content);
     },
   },
 ];
