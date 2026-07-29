@@ -53,10 +53,26 @@ export async function updateCheckRun({
     .map(
       (f: Finding) =>
         `### ${severityEmoji(f.severity)} \`${f.rule}\` — ${f.severity.toUpperCase()}\n` +
-        `**File:** \`${f.file ?? "N/A"}\`\n` +
+        `**File:** \`${f.file ?? "N/A"}\`${f.line ? ` **Line:** ${f.line}` : ""}\n` +
         `${f.message}\n`,
     )
     .join("\n---\n");
+
+  // ── Build annotations for inline file+line markers on the diff ──────────
+  const annotations = findings
+    .filter(
+      (f): f is Finding & { file: string; line: number } =>
+        !!f.file && !!f.line,
+    )
+    .slice(0, 50) // GitHub allows max 50 annotations per request
+    .map((f) => ({
+      path: f.file,
+      start_line: f.line,
+      end_line: f.line,
+      annotation_level: annotationLevel(f.severity),
+      title: `${severityEmoji(f.severity)} ${f.rule} (${f.severity})`,
+      message: f.message,
+    }));
 
   try {
     await octokit.request(
@@ -72,6 +88,7 @@ export async function updateCheckRun({
           title: passed ? "RepoGuard: Clean" : "RepoGuard: Issues Found",
           summary: summary ?? defaultSummary,
           text: text || undefined,
+          ...(annotations.length > 0 ? { annotations } : {}),
         },
       },
     );
@@ -89,4 +106,10 @@ function severityEmoji(severity: string): string {
     low: "🟢",
   };
   return map[severity] ?? "⚪";
+}
+
+function annotationLevel(severity: string): "failure" | "warning" | "notice" {
+  if (severity === "critical" || severity === "high") return "failure";
+  if (severity === "medium") return "warning";
+  return "notice";
 }
