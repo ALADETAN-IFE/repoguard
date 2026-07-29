@@ -31,11 +31,12 @@ async function scanFullPRDiff(
 ): Promise<Finding[]> {
   const findings: Finding[] = [];
 
-  // Paginate through all PR files (GitHub returns max 30 per page)
+  // Paginate through all PR files (GitHub returns max 100 per page)
   let page = 1;
   const allFiles: Array<{ filename: string; status: string }> = [];
+  let lastPageCount = 0;
 
-  while (true) {
+  do {
     const { data: files } = await client.request(
       "GET /repos/{owner}/{repo}/pulls/{pull_number}/files",
       { owner, repo, pull_number: prNumber, per_page: 100, page },
@@ -43,9 +44,9 @@ async function scanFullPRDiff(
 
     if (files.length === 0) break;
     allFiles.push(...files);
-    if (files.length < 100) break;
+    lastPageCount = files.length;
     page++;
-  }
+  } while (lastPageCount === 100);
 
   const filesToScan = allFiles.filter(
     (f) => f.status !== "removed" && !shouldSkipPath(f.filename),
@@ -76,10 +77,7 @@ async function scanFullPRDiff(
           )
             return;
 
-          const content = Buffer.from(
-            data.content as string,
-            "base64",
-          ).toString("utf8");
+          const content = Buffer.from(data.content, "base64").toString("utf8");
 
           if (binary && !looksLikeJavaScript(content)) return;
 
