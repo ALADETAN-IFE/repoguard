@@ -81,6 +81,14 @@ export function handlePush(
       return;
     }
 
+    // Ignore no-op push events (0 commits and SHA unchanged)
+    if (before === headSha && totalCommits === 0) {
+      logger.info(
+        `[push] ${owner}/${repo} — no-op push event ignored (before === after)`,
+      );
+      return;
+    }
+
     const isForcePush = payload.forced === true;
     const isDefaultBranch =
       ref === `refs/heads/${repository.default_branch || "main"}`;

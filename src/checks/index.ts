@@ -28,7 +28,13 @@ export async function createCheckRun({
     return data.id;
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
-    logger.error(`Failed to create check run: ${message}`);
+    if (message.includes("rate limit exceeded")) {
+      logger.warn(
+        `[checks] GitHub API rate limit reached for installation — skipping check run creation until window resets.`,
+      );
+    } else {
+      logger.error(`Failed to create check run: ${message}`);
+    }
     return null;
   }
 }
