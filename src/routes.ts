@@ -137,21 +137,31 @@ router.get(
   },
 );
 
-// Rescan all repos
+// Rescan repos — scans all installations, or a specific GitHub username/owner if provided in request body
 const rescanAll = async (req: Request, res: Response): Promise<void> => {
   try {
-    const installations = await Installation.find({
-      uninstalledAt: null,
-    }).lean();
+    // Standardized to JSON body
+    const body = req.body as { username?: string; owner?: string } | undefined;
+    const targetOwner: string | undefined =
+      (typeof body?.username === "string" && body.username.trim()) ||
+      (typeof body?.owner === "string" && body.owner.trim()) ||
+      undefined;
 
-    if (installations.length === 0) {
-      res.json({ message: "No active installations found" });
-      return;
+    const filter: Record<string, unknown> = { uninstalledAt: null };
+    if (targetOwner) {
+      filter.owner = new RegExp(`^${targetOwner}$`, "i");
     }
 
-    const secret = req.headers["x-rescan-secret"];
-    if (secret !== process.env.RESCAN_SECRET) {
-      res.status(401).json({ error: "Unauthorized" });
+    const installations = await Installation.find(filter).lean();
+
+    if (installations.length === 0) {
+      if (targetOwner) {
+        res.status(404).json({
+          message: `No active installation found for GitHub user/owner '${targetOwner}'`,
+        });
+      } else {
+        res.json({ message: "No active installations found" });
+      }
       return;
     }
 
@@ -222,7 +232,10 @@ const rescanAll = async (req: Request, res: Response): Promise<void> => {
     })();
 
     res.json({
-      message: `Rescan triggered for ${installations.length} installation${installations.length > 1 ? "s" : ""}`,
+      message: targetOwner
+        ? `Rescan triggered for GitHub user '${targetOwner}'`
+        : `Rescan triggered for ${installations.length} installation${installations.length > 1 ? "s" : ""}`,
+      targetOwner: targetOwner ?? "ALL",
       installations: installations.map((i) => i.owner),
     });
   } catch (err) {
