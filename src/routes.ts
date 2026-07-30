@@ -138,7 +138,7 @@ router.get(
 );
 
 // Rescan repos — scans all installations, or a specific GitHub username/owner if provided in request body
-const rescanAll = async (req: Request, res: Response): Promise<void> => {
+export const rescanAll = async (req: Request, res: Response): Promise<void> => {
   try {
     // Standardized to JSON body
     const body = req.body as { username?: string; owner?: string } | undefined;
