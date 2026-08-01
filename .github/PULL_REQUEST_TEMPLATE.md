@@ -29,19 +29,23 @@
 
 <!--- What types of changes does your code introduce? Put an `x` in all the boxes that apply: -->
 
-- [] Bug fix (non-breaking change which fixes an issue)
-- [x] New feature (non-breaking change which adds functionality)
-- [] Chore (non-breaking change that does not add functionality or fix a bug)
-- [] Breaking change (fix or feature that would cause existing functionality to change)
+- [ ] Bug fix (non-breaking change which fixes an issue)
+- [ ] New feature (non-breaking change which adds functionality)
+- [ ] Chore (non-breaking change that does not add functionality or fix a bug)
+- [ ] Breaking change (fix or feature that would cause existing functionality to change)
+
+## Security Checklist (for scanner/rule changes)
+- [ ] New rule has been tested against both malicious and clean code samples
+- [ ] False positive cases have been considered and tested
 
 ## Checklist
 
 <!--- Go over all the following points, and put an `x` in all the boxes that apply. -->
 <!--- If you're unsure about any of these, don't hesitate to ask. We're here to help! -->
 
-- [x] My code follows the code style of this project.
-- [x] My change requires a change to the documentation.
-- [x] I have updated the documentation accordingly.
-- [x] I have read the **CONTRIBUTING** document.
-- [x] I have added tests to cover my changes.
-- [x] All new and existing tests passed.
+- [ ] My code follows the code style of this project.
+- [ ] Documentation has been updated (if applicable)
+- [ ] I have updated the documentation accordingly.
+- [ ] I have added tests to cover my changes.
+- [ ] All new and existing tests passed.
+- [ ] New detection rule added (maintainer will update `ALL_RULES` on the marketing site)
