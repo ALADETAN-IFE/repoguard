@@ -364,8 +364,12 @@ async function openSecurityIssue(
       "2. **Remove or fix the flagged code** manually in the files listed above",
       "3. **Audit recent commits** to understand how this code was introduced",
       "",
+      "## ⚡ Trigger Automated Fix PR",
+      "",
+      "Comment `/fix` or `@repoguard fix` on this issue to trigger an automated Fix PR attempt.",
+      "",
       "---",
-      "_Opened by RepoGuard · This issue will not auto-close — resolve it manually._",
+      "_Opened by RepoGuard · Reply with `/fix` to generate an automated PR fix._",
     ];
 
     const { data: issue } = await octokit.request(
