@@ -2,6 +2,10 @@ import type { Finding, OctokitClient } from "../types/index";
 import logger from "../utils/logger";
 import prettier from "prettier";
 import { removeMalwareArtifactIgnoreLines } from "../scanner/malwareArtifacts";
+import {
+  KNOWN_NPM_TYPOSQUATS,
+  KNOWN_PYPI_TYPOSQUATS,
+} from "../scanner/typosquat";
 
 interface OpenFixPROptions {
   owner: string;
@@ -513,6 +517,62 @@ export async function applyPatches(
         }
         break;
       }
+      case "npm-typosquatted-package":
+        if (filePath.endsWith("package.json")) {
+          try {
+            const pkg = JSON.parse(nextPatched) as Record<string, unknown>;
+            let changed = false;
+            for (const section of [
+              "dependencies",
+              "devDependencies",
+            ] as const) {
+              const deps = pkg[section] as Record<string, string> | undefined;
+              if (!deps) continue;
+              for (const [name, version] of Object.entries(deps)) {
+                const legitimate = KNOWN_NPM_TYPOSQUATS[name];
+                if (legitimate) {
+                  // eslint-disable-next-line @typescript-eslint/no-dynamic-delete
+                  delete deps[name];
+                  deps[legitimate] = version;
+                  changed = true;
+                  logger.info(
+                    `[pr] Replaced typosquatted npm package '${name}' → '${legitimate}'`,
+                  );
+                }
+              }
+            }
+            if (changed) nextPatched = JSON.stringify(pkg, null, 2);
+          } catch {
+            /* leave as-is */
+          }
+        }
+        break;
+      case "pypi-typosquatted-package":
+        if (
+          filePath.endsWith("requirements.txt") ||
+          filePath.endsWith("requirements-dev.txt") ||
+          filePath.endsWith("requirements-test.txt")
+        ) {
+          const lines = nextPatched.split("\n");
+          const replaced = lines.map((line) => {
+            const stripped = line
+              .trim()
+              .toLowerCase()
+              .split(/[=><!@[]/)[0]
+              .trim();
+            const legitimate = KNOWN_PYPI_TYPOSQUATS[stripped];
+            if (legitimate) {
+              const suffix = line.trim().slice(stripped.length);
+              logger.info(
+                `[pr] Replaced typosquatted PyPI package '${stripped}' → '${legitimate}'`,
+              );
+              return legitimate + suffix;
+            }
+            return line;
+          });
+          nextPatched = replaced.join("\n");
+        }
+        break;
       default:
         break;
     }
@@ -605,6 +665,10 @@ export function buildPRBody(
       "Known malware artifact entries removed from ignore file",
     "committed-env-file":
       "Committed environment configuration file(s) (`.env`) auto-deleted from repository",
+    "npm-typosquatted-package":
+      "Typosquatted npm package name(s) replaced with legitimate counterparts in `package.json`",
+    "pypi-typosquatted-package":
+      "Typosquatted PyPI package name(s) replaced with legitimate counterparts in `requirements.txt`",
   };
 
   const uniquePatchedRules = [...new Set(patchedFindings.map((f) => f.rule))];

@@ -239,6 +239,45 @@ describe("pullRequest", () => {
       const { shouldDelete } = await applyPatches(original, findings, ".env.example");
       expect(shouldDelete).toBe(false);
     });
+
+    it("replaces typosquatted npm package with legitimate counterpart in package.json", async () => {
+      const original = JSON.stringify({
+        name: "my-app",
+        dependencies: { axois: "^1.0.0", lodash: "^4.0.0" },
+      }, null, 2);
+      const findings: Finding[] = [
+        {
+          rule: "npm-typosquatted-package",
+          severity: "high",
+          message: "Typosquatted npm package detected: axois",
+          file: "package.json",
+        },
+      ];
+      const { patchedContent, patchedFindings } = await applyPatches(original, findings, "package.json");
+      const parsed = JSON.parse(patchedContent) as { dependencies: Record<string, string> };
+      expect(parsed.dependencies["axois"]).toBeUndefined();
+      expect(parsed.dependencies["axios"]).toBe("^1.0.0");
+      expect(parsed.dependencies["lodash"]).toBe("^4.0.0");
+      expect(patchedFindings).toHaveLength(1);
+    });
+
+    it("replaces typosquatted PyPI package with legitimate counterpart in requirements.txt", async () => {
+      const original = "reqeusts==2.28.0\nnumpy>=1.23.0\npanda==1.5.0";
+      const findings: Finding[] = [
+        {
+          rule: "pypi-typosquatted-package",
+          severity: "high",
+          message: "Typosquatted PyPI package detected",
+          file: "requirements.txt",
+        },
+      ];
+      const { patchedContent, patchedFindings } = await applyPatches(original, findings, "requirements.txt");
+      expect(patchedContent).toContain("requests==2.28.0");
+      expect(patchedContent).not.toContain("reqeusts");
+      expect(patchedContent).toContain("pandas==1.5.0");
+      expect(patchedContent).not.toContain("panda==");
+      expect(patchedFindings).toHaveLength(1);
+    });
   });
 
   describe("buildPRBody", () => {
