@@ -400,6 +400,37 @@ export async function applyPatches(
   patchedFindings: Finding[];
   shouldDelete: boolean;
 }> {
+  const baseName = filePath.split("/").pop()?.toLowerCase() ?? "";
+
+  // Safe template/example env files that should never be auto-deleted
+  const SAFE_ENV_SUFFIXES = [".example", ".sample", ".template", ".test"];
+  const isSafeEnvFile = SAFE_ENV_SUFFIXES.some((suffix) =>
+    baseName.endsWith(suffix),
+  );
+
+  const isEnvFile =
+    !isSafeEnvFile &&
+    (baseName === ".env" ||
+      baseName.startsWith(".env.") ||
+      findings.some((f) => f.rule === "committed-env-file"));
+
+  if (isEnvFile) {
+    logger.info(
+      `[pr] Committed env file ${filePath} detected — flagging for auto-deletion`,
+    );
+    const envFindings = findings.filter(
+      (f) =>
+        f.rule === "committed-env-file" ||
+        baseName === ".env" ||
+        baseName.startsWith(".env."),
+    );
+    return {
+      patchedContent: "",
+      patchedFindings: envFindings.length > 0 ? envFindings : findings,
+      shouldDelete: true,
+    };
+  }
+
   let patched = content;
   const patchedFindings: Finding[] = [];
 

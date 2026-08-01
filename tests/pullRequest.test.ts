@@ -195,6 +195,51 @@ describe("pullRequest", () => {
       expect(patchedFindings).toHaveLength(1);
     });
 
+    it("flags committed .env files for auto-deletion", async () => {
+      const original = "DATABASE_URL=postgres://user:pass@localhost:5432/db\nAPI_KEY=secret123";
+      const findings: Finding[] = [
+        {
+          rule: "committed-env-file",
+          severity: "high",
+          message: "Committed .env file detected",
+          file: ".env",
+        },
+      ];
+      const { shouldDelete, patchedFindings } = await applyPatches(original, findings, ".env");
+      expect(shouldDelete).toBe(true);
+      expect(patchedFindings).toHaveLength(1);
+      expect(patchedFindings[0].rule).toBe("committed-env-file");
+    });
+
+    it("flags .env.local files for auto-deletion based on filename", async () => {
+      const original = "SECRET_TOKEN=abc123xyz";
+      const findings: Finding[] = [
+        {
+          rule: "hardcoded-secret",
+          severity: "medium",
+          message: "Hardcoded secret detected",
+          file: ".env.local",
+        },
+      ];
+      const { shouldDelete, patchedFindings } = await applyPatches(original, findings, ".env.local");
+      expect(shouldDelete).toBe(true);
+      expect(patchedFindings).toHaveLength(1);
+    });
+
+    it("does NOT flag .env.example or .env.sample for auto-deletion", async () => {
+      const original = "DATABASE_URL=your-db-url-here\nAPI_KEY=your-api-key-here";
+      const findings: Finding[] = [
+        {
+          rule: "committed-env-file",
+          severity: "high",
+          message: "Committed env file detected",
+          file: ".env.example",
+        },
+      ];
+      const { shouldDelete } = await applyPatches(original, findings, ".env.example");
+      expect(shouldDelete).toBe(false);
+    });
+
     it("replaces typosquatted npm package with legitimate counterpart in package.json", async () => {
       const original = JSON.stringify({
         name: "my-app",
