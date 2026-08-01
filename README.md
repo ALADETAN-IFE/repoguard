@@ -112,6 +112,14 @@ WEBHOOK_SECRET=
 GITHUB_CLIENT_ID=
 GITHUB_CLIENT_SECRET=
 
+# Redis
+REDIS_URL=
+
+# Slack (optional)
+SLACK_WEBHOOK_URL=
+SLACK_BOT_TOKEN=
+SLACK_CHANNEL_ID=
+
 # MongoDB
 MONGODB_URI=
 
@@ -166,6 +174,16 @@ npx smee-client --url https://smee.io/your-channel --target http://localhost:300
 - **Database:** MongoDB via Mongoose
 - **Logging:** Winston
 - **Deployment:** Railway
+
+---
+
+## Contributing
+
+RepoGuard is currently in active development and not accepting external contributions at this time. 
+
+If you've found a bug or have a feature request, please [open an issue](https://github.com/ALADETAN-IFE/repoguard/issues).
+
+If you've found a security vulnerability, please see [SECURITY.md](./SECURITY.md).
 
 ---
 
