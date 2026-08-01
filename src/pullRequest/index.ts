@@ -106,7 +106,7 @@ export async function openFixPR(
 
         const fileFindings = findings.filter((f) => f.file === filePath);
         const { patchedContent, patchedFindings, shouldDelete } =
-          await applyPatches(originalContent, fileFindings, filePath);
+          await applyPatches(originalContent, fileFindings, filePath, octokit);
 
         const fileUnpatched = fileFindings.filter(
           (f) => !patchedFindings.includes(f),
@@ -395,6 +395,7 @@ export async function applyPatches(
   content: string,
   findings: Finding[],
   filePath: string,
+  octokit?: OctokitClient,
 ): Promise<{
   patchedContent: string;
   patchedFindings: Finding[];
@@ -573,6 +574,51 @@ export async function applyPatches(
           nextPatched = replaced.join("\n");
         }
         break;
+      case "workflow-unpinned-action":
+        if (
+          filePath.startsWith(".github/workflows/") &&
+          (filePath.endsWith(".yml") || filePath.endsWith(".yaml"))
+        ) {
+          const unpinnedRegex =
+            /uses:\s+([a-zA-Z0-9_-]+\/[a-zA-Z0-9_.-]+)@(?![\da-f]{40})([^\s#]+)/g;
+          let match: RegExpExecArray | null;
+          let updated = nextPatched;
+          while ((match = unpinnedRegex.exec(nextPatched)) !== null) {
+            const fullMatch = match[0];
+            const actionRepo = match[1];
+            const tag = match[2];
+            let resolvedSha: string | null = null;
+
+            if (octokit) {
+              try {
+                const [actionOwner, actionName] = actionRepo.split("/");
+                const { data: commitData } = await octokit.request(
+                  "GET /repos/{owner}/{repo}/commits/{ref}",
+                  { owner: actionOwner, repo: actionName, ref: tag },
+                );
+                if (commitData?.sha && typeof commitData.sha === "string") {
+                  resolvedSha = commitData.sha;
+                }
+              } catch {
+                /* fallback if tag resolution fails */
+              }
+            }
+
+            if (resolvedSha) {
+              updated = updated.replace(
+                fullMatch,
+                `uses: ${actionRepo}@${resolvedSha} # ${tag}`,
+              );
+            } else {
+              updated = updated.replace(
+                fullMatch,
+                `uses: ${actionRepo}@${tag} # REPOGUARD: PIN TO COMMIT SHA`,
+              );
+            }
+          }
+          nextPatched = updated;
+        }
+        break;
       default:
         break;
     }
@@ -669,6 +715,8 @@ export function buildPRBody(
       "Typosquatted npm package name(s) replaced with legitimate counterparts in `package.json`",
     "pypi-typosquatted-package":
       "Typosquatted PyPI package name(s) replaced with legitimate counterparts in `requirements.txt`",
+    "workflow-unpinned-action":
+      "Unpinned GitHub Action(s) resolved and pinned to immutable commit SHA with version tag comment",
   };
 
   const uniquePatchedRules = [...new Set(patchedFindings.map((f) => f.rule))];
