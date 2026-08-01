@@ -25,14 +25,25 @@ RepoGuard is a GitHub App that scans your repositories for malicious code, obfus
 |------|----------|-------------|
 | `obfuscated-malware-pattern` | Critical | Obfuscated string array payloads and createRequire bypasses |
 | `obfuscated-base64` | Critical | Base64-encoded eval payloads |
+| `python-exec-compile` | Critical | Python exec or compile-based code execution payloads |
+| `python-subprocess-network` | Critical | Python subprocess calls that reach out over the network |
+| `powershell-encoded-command` | Critical | Encoded PowerShell command execution |
+| `js-obfuscated-charcode` | Critical | JavaScript charCode-based obfuscation patterns |
 | `reverse-shell` | Critical | Bash and netcat reverse shell patterns |
 | `curl-pipe-bash` | Critical | Remote code execution via curl/wget piped to shell |
 | `hardcoded-secret` | High | API keys, tokens, and passwords hardcoded in source |
 | `env-exfiltration` | High | Environment variables sent to external endpoints |
+| `js-obfuscated-constructors` | High | JavaScript constructor-based obfuscation chains |
+| `python-dynamic-import` | High | Python dynamic import usage in suspicious contexts |
+| `dotenv-file-committed` | High | Committed `.env` or dotenv files with secrets |
 | `suspicious-npm-postinstall` | High | Malicious postinstall scripts in package.json |
+| `npm-typosquatted-package` | High | Typosquatted npm package dependencies |
+| `pypi-typosquatted-package` | High | Typosquatted PyPI package dependencies |
 | `suspicious-registry-url` | High | Non-standard npm registry references |
 | `crypto-miner-keywords` | High | Cryptocurrency miner indicators |
 | `workflow-exfiltrate-secrets` | High | GitHub Actions workflows leaking secrets externally |
+| `workflow-curl-pipe-bash` | Critical | GitHub Actions workflows that pipe curl or wget into a shell |
+| `workflow-pull-request-target-checkout` | Critical | GitHub Actions pull_request_target workflows that checkout untrusted code |
 | `workflow-suspicious-trigger` | Medium | Overly broad workflow triggers |
 | `workflow-unpinned-action` | Medium | Third-party Actions not pinned to a commit SHA |
 | `suspicious-branch-create` | High | Branch creation by non-org members |
