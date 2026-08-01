@@ -278,6 +278,53 @@ describe("pullRequest", () => {
       expect(patchedContent).not.toContain("panda==");
       expect(patchedFindings).toHaveLength(1);
     });
+
+    it("pins unpinned GitHub action tag to full commit SHA when octokit resolves the tag", async () => {
+      const original = "steps:\n  - uses: docker/build-push-action@v3";
+      const findings: Finding[] = [
+        {
+          rule: "workflow-unpinned-action",
+          severity: "medium",
+          message: "Unpinned action",
+          file: ".github/workflows/deploy.yml",
+        },
+      ];
+      const mockOctokit = {
+        request: jest.fn().mockImplementation((endpoint: string) => {
+          if (endpoint.includes("/commits/")) {
+            return Promise.resolve({ data: { sha: "e1b701e65c52c6f1122a07c336ef1cfd21c322b6" } });
+          }
+          return Promise.resolve({ data: {} });
+        }),
+      };
+      const { patchedContent, patchedFindings } = await applyPatches(
+        original,
+        findings,
+        ".github/workflows/deploy.yml",
+        mockOctokit as any,
+      );
+      expect(patchedContent).toContain("uses: docker/build-push-action@e1b701e65c52c6f1122a07c336ef1cfd21c322b6 # v3");
+      expect(patchedFindings).toHaveLength(1);
+    });
+
+    it("adds a warning comment if octokit is omitted or tag resolution fails", async () => {
+      const original = "steps:\n  - uses: third-party/some-action@v1.2";
+      const findings: Finding[] = [
+        {
+          rule: "workflow-unpinned-action",
+          severity: "medium",
+          message: "Unpinned action",
+          file: ".github/workflows/ci.yml",
+        },
+      ];
+      const { patchedContent, patchedFindings } = await applyPatches(
+        original,
+        findings,
+        ".github/workflows/ci.yml",
+      );
+      expect(patchedContent).toContain("uses: third-party/some-action@v1.2 # REPOGUARD: PIN TO COMMIT SHA");
+      expect(patchedFindings).toHaveLength(1);
+    });
   });
 
   describe("buildPRBody", () => {
