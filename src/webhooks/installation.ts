@@ -1,5 +1,5 @@
 import type { App } from "@octokit/app";
-import { scanFileContent } from "../scanner";
+import { scanFileContent } from "@repoguard/scanner";
 import { openFixPR } from "../pullRequest";
 import { Installation, Checkpoint, Scan } from "../models";
 import logger from "../utils/logger";
@@ -13,8 +13,11 @@ import type {
 import { Types } from "mongoose";
 import { sendAlert } from "../alerts";
 import { normaliseOctokit } from "../utils/normaliseOctokit";
-import { shouldSkipPath } from "../utils/skipPaths";
-import { isBinaryPath, looksLikeJavaScript } from "../utils/binaryPath";
+import {
+  shouldSkipPath,
+  isBinaryPath,
+  looksLikeJavaScript,
+} from "@repoguard/scanner";
 import AdmZip from "adm-zip";
 
 // ─── Checkpoint helpers (MongoDB) ─────────────────────────────────────────────

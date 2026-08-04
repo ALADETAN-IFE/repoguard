@@ -1,11 +1,11 @@
 import type { Finding, OctokitClient } from "../types/index";
 import logger from "../utils/logger";
 import prettier from "prettier";
-import { removeMalwareArtifactIgnoreLines } from "../scanner/malwareArtifacts";
 import {
+  removeMalwareArtifactIgnoreLines,
   KNOWN_NPM_TYPOSQUATS,
   KNOWN_PYPI_TYPOSQUATS,
-} from "../scanner/typosquat";
+} from "@repoguard/scanner";
 
 interface OpenFixPROptions {
   owner: string;

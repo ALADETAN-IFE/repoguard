@@ -1,5 +1,5 @@
 import type { App } from "@octokit/app";
-import { scanWorkflowContent } from "../scanner";
+import { scanWorkflowContent } from "@repoguard/scanner";
 import { sendAlert } from "../alerts";
 import logger from "../utils/logger";
 import type { WebhookEvent, WorkflowRunEventPayload } from "../types/index";

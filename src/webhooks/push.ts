@@ -1,5 +1,5 @@
 import type { App } from "@octokit/app";
-import { scanCommit } from "../scanner";
+import { scanCommit } from "@repoguard/scanner";
 import { createCheckRun, updateCheckRun } from "../checks";
 import { sendAlert } from "../alerts";
 import {

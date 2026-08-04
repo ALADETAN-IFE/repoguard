@@ -1,9 +1,13 @@
 import type { App } from "@octokit/app";
-import { scanFileContent, scanWorkflowContent } from "../scanner";
+import {
+  scanFileContent,
+  scanWorkflowContent,
+  shouldSkipPath,
+  isBinaryPath,
+  looksLikeJavaScript,
+} from "@repoguard/scanner";
 import { postReviewComments } from "../pullRequest";
 import { normaliseOctokit } from "../utils/normaliseOctokit";
-import { shouldSkipPath } from "../utils/skipPaths";
-import { isBinaryPath, looksLikeJavaScript } from "../utils/binaryPath";
 import logger from "../utils/logger";
 import type { WebhookEvent, Finding, OctokitClient } from "../types/index";
 
