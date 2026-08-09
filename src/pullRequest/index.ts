@@ -754,18 +754,17 @@ export function buildPRBody(
   const uniqueUnpatchedRules = [
     ...new Set(unpatchedFindings.map((f) => f.rule)),
   ];
-  const whatRequiresManualReview =
-    uniqueUnpatchedRules
-      .map(
-        (rule) =>
-          `- ${MANUAL_REVIEW_SUMMARIES[rule] ?? `Rule \`${rule}\` requires manual verification`}`,
-      )
-      .join("\n") || "_None! All detected issues were automatically patched._";
+  const whatRequiresManualReview = uniqueUnpatchedRules
+    .map(
+      (rule) =>
+        `- ${MANUAL_REVIEW_SUMMARIES[rule] ?? `Rule \`${rule}\` requires manual verification`}`,
+    )
+    .join("\n");
 
   const totalPatchedFindings = patchedFindings.length;
   const totalUnpatchedFindings = unpatchedFindings.length;
 
-  return [
+  const bodyParts = [
     "## 🔒 RepoGuard Security Report",
     "",
     "> This PR was opened automatically by RepoGuard after scanning your codebase.",
@@ -786,10 +785,18 @@ export function buildPRBody(
     "## What was done",
     "",
     whatWasDone,
-    "",
-    "## What requires manual review",
-    "",
-    whatRequiresManualReview,
+  ];
+
+  if (totalUnpatchedFindings > 0) {
+    bodyParts.push(
+      "",
+      "## What requires manual review",
+      "",
+      whatRequiresManualReview,
+    );
+  }
+
+  bodyParts.push(
     "",
     "## How the malware likely re-infected your repo",
     "",
@@ -799,7 +806,9 @@ export function buildPRBody(
     "",
     "---",
     "_Opened by RepoGuard · Do not ignore this PR_",
-  ].join("\n");
+  );
+
+  return bodyParts.join("\n");
 }
 
 function buildFileHeader(findings: Finding[], filePath: string): string {
