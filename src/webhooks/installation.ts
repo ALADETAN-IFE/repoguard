@@ -189,43 +189,6 @@ export async function scanRepoList(
 
       if (findings.length === 0) {
         logger.info(`[installation] CLEAN — ${repo.full_name}`);
-
-        try {
-          const { data: issue } = await client.request(
-            "POST /repos/{owner}/{repo}/issues",
-            {
-              owner,
-              repo: repo.name,
-              title: "✅ RepoGuard: Initial scan complete — no issues found",
-              body: [
-                "## RepoGuard Initial Scan",
-                "",
-                "RepoGuard scanned your entire codebase on installation and found **no security issues**.",
-                "",
-                "From this point on, every push will be automatically scanned.",
-                "",
-                "---",
-                "_Closed automatically — no action required._",
-              ].join("\n"),
-            },
-          );
-
-          await client.request(
-            "PATCH /repos/{owner}/{repo}/issues/{issue_number}",
-            {
-              owner,
-              repo: repo.name,
-              issue_number: issue.number,
-              state: "closed",
-            },
-          );
-        } catch (issueErr) {
-          const msg =
-            issueErr instanceof Error ? issueErr.message : String(issueErr);
-          logger.warn(
-            `[installation] Could not post clean scan issue for ${repo.full_name}: ${msg.split(" - ")[0]}`,
-          );
-        }
       } else {
         logger.warn(
           `[installation] ${findings.length} finding${findings.length > 1 ? "s" : ""} in ${repo.full_name} — opening fix PR`,
@@ -331,10 +294,50 @@ export function handleInstallation(
     if (action !== "created") return;
 
     const { installation, repositories } = payload;
+    const selection = (payload as { repository_selection?: string })
+      .repository_selection;
     const owner =
       installation.account.login ?? installation.account.name ?? "unknown";
     const installationKey = `${owner}-${installation.id}`;
-    const allRepos = repositories ?? [];
+    const client = normaliseOctokit(octokit);
+
+    let allRepos = repositories ?? [];
+
+    if (selection === "all" || !repositories) {
+      try {
+        logger.info(
+          `[installation] Fetching all repositories for installation ${installation.id}`,
+        );
+        const reposFromGitHub: Array<{ full_name: string; name: string }> = [];
+        let page = 1;
+        let hasMore = true;
+
+        while (hasMore) {
+          const { data } = await client.request(
+            "GET /installation/repositories",
+            { per_page: 100, page },
+          );
+          reposFromGitHub.push(
+            ...(data.repositories as Array<{
+              full_name: string;
+              name: string;
+            }>),
+          );
+          hasMore =
+            reposFromGitHub.length < data.total_count &&
+            data.repositories.length === 100;
+          page++;
+        }
+        if (reposFromGitHub.length > 0) {
+          allRepos = reposFromGitHub;
+        }
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        logger.error(
+          `[installation] Failed to fetch repositories from GitHub: ${message}`,
+        );
+      }
+    }
 
     const email = installation.account?.email ?? null;
 
@@ -373,8 +376,6 @@ export function handleInstallation(
     logger.info(
       `[installation] App installed by ${owner} on ${allRepos.length} ${allRepos.length > 1 ? "repos" : "repo"}`,
     );
-
-    const client = normaliseOctokit(octokit);
 
     await initCheckpoint(
       installationKey,
