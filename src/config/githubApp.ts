@@ -11,6 +11,7 @@ import {
 } from "../webhooks/installation";
 import { handlePullRequestOpened } from "../webhooks/pullRequest";
 import { handleIssueComment } from "../webhooks/issueComment";
+import { handleIssuesOpened } from "../webhooks/issues";
 
 // ─── Validate required env vars ───────────────────────────────────────────────
 
@@ -104,6 +105,11 @@ githubApp.webhooks.on(
 githubApp.webhooks.on(
   "issue_comment.created",
   handleIssueComment(githubApp) as unknown as (event: unknown) => Promise<void>,
+);
+
+githubApp.webhooks.on(
+  "issues.opened",
+  handleIssuesOpened(githubApp) as unknown as (event: unknown) => Promise<void>,
 );
 
 githubApp.webhooks.onError((error) => {

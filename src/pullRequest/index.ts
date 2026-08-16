@@ -13,6 +13,11 @@ interface OpenFixPROptions {
   findings: Finding[];
 }
 
+export interface OpenFixPRResult {
+  pr?: { number: number; html_url: string };
+  issue?: { number: number; html_url: string };
+}
+
 // ─── Format content with Prettier ──────────────────────────────────────────────
 async function formatContent(
   content: string,
@@ -67,7 +72,7 @@ function isPermissionError(err: unknown): boolean {
 export async function openFixPR(
   octokit: OctokitClient,
   { owner, repo, findings }: OpenFixPROptions,
-): Promise<void> {
+): Promise<OpenFixPRResult | undefined> {
   try {
     // ── 1. Fetch each affected file and see if there are actual patches ──────────
     const affectedFiles = [
@@ -144,12 +149,12 @@ export async function openFixPR(
       logger.info(
         `[pr] No auto-patchable findings in ${owner}/${repo} — opening manual review security issue`,
       );
-      await openSecurityIssue(
+      const issue = await openSecurityIssue(
         octokit,
         { owner, repo, findings },
         "manual_review_required",
       );
-      return;
+      return { issue };
     }
 
     // ── 3. Get default branch & base SHA for branch creation ────────────────────
@@ -180,12 +185,12 @@ export async function openFixPR(
         logger.warn(
           `[pr] No write access to ${owner}/${repo} — falling back to security issue`,
         );
-        await openSecurityIssue(
+        const issue = await openSecurityIssue(
           octokit,
           { owner, repo, findings },
           "no_write_permission",
         );
-        return;
+        return { issue };
       }
       throw err;
     }
@@ -294,6 +299,8 @@ export async function openFixPR(
       "security",
       "automated-fix",
     ]);
+
+    return { pr: { number: pr.number, html_url: pr.html_url } };
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     logger.error(`[pr] Failed to open fix PR in ${owner}/${repo}: ${message}`);
@@ -313,7 +320,7 @@ async function openSecurityIssue(
   reason:
     | "no_write_permission"
     | "manual_review_required" = "no_write_permission",
-): Promise<void> {
+): Promise<{ number: number; html_url: string } | undefined> {
   try {
     const criticalCount = findings.filter(
       (f) => f.severity === "critical",
@@ -385,6 +392,8 @@ async function openSecurityIssue(
     logger.info(
       `[pr] Opened security issue #${issue.number} in ${owner}/${repo} (${reason === "no_write_permission" ? "no write access" : "manual review"})`,
     );
+
+    return { number: issue.number, html_url: issue.html_url };
   } catch (issueErr) {
     const message =
       issueErr instanceof Error ? issueErr.message : String(issueErr);
