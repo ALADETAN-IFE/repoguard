@@ -275,7 +275,7 @@ export async function openFixPR(
       owner,
       repo,
       pr.number,
-      baseSha,
+      pr.head?.sha || baseSha,
       findings,
       patchedMap,
     );
@@ -1324,7 +1324,25 @@ export async function postReviewComments(
     );
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
-    logger.error(`[pr] Failed to post review comments: ${message}`);
+    logger.error(`[pr] Failed to post inline review comments: ${message}. Falling back to PR comment...`);
+    try {
+      const summaryText = comments
+        .map((c) => `### 📄 \`${c.path}\` (line ${c.line})\n\n${c.body}`)
+        .join("\n\n---\n\n");
+      await octokit.request(
+        "POST /repos/{owner}/{repo}/issues/{issue_number}/comments",
+        {
+          owner,
+          repo,
+          issue_number: prNumber,
+          body: `## 🛡️ RepoGuard Security Findings & Remediation\n\n${summaryText}`,
+        },
+      );
+      logger.info(`[pr] Fallback: Posted security findings comment on PR #${prNumber}`);
+    } catch (fallbackErr) {
+      const fallbackMsg = fallbackErr instanceof Error ? fallbackErr.message : String(fallbackErr);
+      logger.error(`[pr] Failed fallback comment on PR #${prNumber}: ${fallbackMsg}`);
+    }
   }
 }
 
