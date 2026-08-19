@@ -33,6 +33,7 @@ export function handleIssueComment(
   _app: App,
 ): (event: WebhookEvent<IssueCommentPayload>) => Promise<void> {
   return async ({ octokit: rawOctokit, payload }) => {
+    logger.info("[issue-command] Issue webhook received")
     const octokit = normaliseOctokit(rawOctokit);
     if (payload.action !== "created") return;
 

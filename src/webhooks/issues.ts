@@ -30,6 +30,7 @@ export function handleIssuesOpened(
   _app: App,
 ): (event: WebhookEvent<IssuesOpenedPayload>) => Promise<void> {
   return async ({ octokit: rawOctokit, payload }) => {
+    logger.info("[issue-scan] Issue webhook received")
     if (payload.action !== "opened") return;
 
     const title = payload.issue.title.trim().toLowerCase();
