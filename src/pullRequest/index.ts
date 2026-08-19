@@ -970,10 +970,24 @@ export async function hasOpenRepoGuardFixPR(
     { owner, repo, state: "open", per_page: 100 },
   );
 
-  return (pulls as GitHubPullRequest[]).some(
+  const hasPR = (pulls as GitHubPullRequest[]).some(
     (pr) =>
       pr.head.ref.startsWith("repoguard/fixes-") ||
       pr.title.includes("RepoGuard:"),
+  );
+
+  if (hasPR) return true;
+
+  const { data: issues } = await octokit.request(
+    "GET /repos/{owner}/{repo}/issues",
+    { owner, repo, state: "open", per_page: 100 },
+  );
+
+  return (issues as GitHubIssue[]).some(
+    (issue) =>
+      !issue.pull_request &&
+      (issue.title.toLowerCase().includes("repoguard:") ||
+        (issue.labels || []).some((l) => l.name === "repoguard")),
   );
 }
 
