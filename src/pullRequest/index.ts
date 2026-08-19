@@ -775,16 +775,14 @@ export function buildPRBody(
       "Obfuscated charCode array dynamic execution payloads removed",
     "js-obfuscated-constructors":
       "Obfuscated constructor dynamic execution payloads removed",
-    "js-obfuscated-hex":
-      "Obfuscated hex escape payload strings removed",
+    "js-obfuscated-hex": "Obfuscated hex escape payload strings removed",
     "python-exec-compile":
       "Python `exec(compile())` dynamic execution payloads removed",
     "python-obfuscated-base64-exec":
       "Python base64-decoded dynamic execution payloads removed",
     "python-subprocess-network":
       "Python subprocess remote execution calls removed",
-    "powershell-encoded-command":
-      "Encoded PowerShell commands removed",
+    "powershell-encoded-command": "Encoded PowerShell commands removed",
     "suspicious-npm-postinstall":
       "Suspicious `postinstall` scripts in package.json neutralized",
     "crypto-miner-keywords": "Cryptocurrency miner indicators removed",
