@@ -9,7 +9,10 @@ import {
   handleInstallation,
   handleInstallationRepositories,
 } from "../webhooks/installation";
-import { handlePullRequestOpened } from "../webhooks/pullRequest";
+import {
+  handlePullRequestOpened,
+  handlePullRequestClosed,
+} from "../webhooks/pullRequest";
 import { handleIssueComment } from "../webhooks/issueComment";
 import { handleIssuesOpened } from "../webhooks/issues";
 
@@ -98,6 +101,13 @@ githubApp.webhooks.on(
 githubApp.webhooks.on(
   "pull_request.synchronize",
   handlePullRequestOpened(githubApp) as unknown as (
+    event: unknown,
+  ) => Promise<void>,
+);
+
+githubApp.webhooks.on(
+  "pull_request.closed",
+  handlePullRequestClosed(githubApp) as unknown as (
     event: unknown,
   ) => Promise<void>,
 );

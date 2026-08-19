@@ -290,7 +290,18 @@ export function handlePush(
           });
 
           if (isDefaultBranch) {
-            await closeRepoGuardPRsAndIssues(client, owner, repo);
+            const fullRepoFindings = await scanFullRepoForPush(
+              client,
+              owner,
+              repo,
+            );
+            if (fullRepoFindings.length === 0) {
+              await closeRepoGuardPRsAndIssues(client, owner, repo);
+            } else {
+              logger.info(
+                `[push] Default branch still has ${fullRepoFindings.length} finding(s) requiring manual review — keeping open security issues active`,
+              );
+            }
           }
         }
       }

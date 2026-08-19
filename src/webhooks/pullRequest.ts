@@ -233,3 +233,48 @@ export function handlePullRequestOpened(
     }
   };
 }
+
+export interface PullRequestClosedPayload {
+  action: string;
+  pull_request: {
+    number: number;
+    merged: boolean;
+    head: { sha: string; ref: string };
+  };
+  repository: {
+    name: string;
+    owner: { login: string };
+  };
+}
+
+export function handlePullRequestClosed(
+  _app: App,
+): (event: WebhookEvent<PullRequestClosedPayload>) => Promise<void> {
+  return async ({ octokit, payload }) => {
+    const { pull_request, repository, action } = payload;
+    if (action !== "closed") return;
+
+    const owner = repository.owner.login;
+    const repo = repository.name;
+    const branchRef = pull_request.head.ref;
+    const client = normaliseOctokit(octokit);
+
+    if (branchRef.startsWith("repoguard/fixes-")) {
+      try {
+        await client.request("DELETE /repos/{owner}/{repo}/git/refs/{ref}", {
+          owner,
+          repo,
+          ref: `heads/${branchRef}`,
+        });
+        logger.info(
+          `[pr] Deleted branch ${branchRef} in ${owner}/${repo} after PR #${pull_request.number} was ${pull_request.merged ? "merged" : "closed"}`,
+        );
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        logger.warn(
+          `[pr] Could not delete branch ${branchRef} in ${owner}/${repo}: ${message}`,
+        );
+      }
+    }
+  };
+}
