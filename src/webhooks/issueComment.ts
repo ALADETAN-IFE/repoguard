@@ -26,7 +26,7 @@ export interface IssueCommentPayload {
 
 /**
  * Factory — returns a webhook handler for issue_comment.created events.
- * If a user comments `/fix` or `@repoguard fix` on a RepoGuard security issue,
+ * If a user comments `/fix` or `/repoguard fix` on a RepoGuard security issue,
  * RepoGuard automatically rescans the repo and attempts to generate a Fix PR.
  */
 export function handleIssueComment(
@@ -40,7 +40,7 @@ export function handleIssueComment(
     const isFixCommand =
       commentText === "/fix" ||
       commentText.startsWith("/fix ") ||
-      commentText.includes("@repoguard fix");
+      commentText.includes("/repoguard fix");
 
     if (!isFixCommand) return;
 

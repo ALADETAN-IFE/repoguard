@@ -50,7 +50,7 @@ describe("handleIssuesOpened", () => {
     await innerHandler(
       makeEvent({
         action: "edited",
-        issue: { number: 1, title: "Repoguard", body: "@repoguard scan" },
+        issue: { number: 1, title: "Repoguard", body: "/repoguard scan" },
         repository: { owner: { login: "owner" }, name: "repo" },
       }),
     );
@@ -61,14 +61,14 @@ describe("handleIssuesOpened", () => {
     await innerHandler(
       makeEvent({
         action: "opened",
-        issue: { number: 1, title: "Random Title", body: "@repoguard scan" },
+        issue: { number: 1, title: "Random Title", body: "/repoguard scan" },
         repository: { owner: { login: "owner" }, name: "repo" },
       }),
     );
     expect(scanFullRepoForPush).not.toHaveBeenCalled();
   });
 
-  it("returns early if body does not match @repoguard scan", async () => {
+  it("returns early if body does not match /repoguard scan", async () => {
     await innerHandler(
       makeEvent({
         action: "opened",
@@ -91,7 +91,7 @@ describe("handleIssuesOpened", () => {
     await innerHandler(
       makeEvent({
         action: "opened",
-        issue: { number: 12, title: "Repoguard", body: "@repoguard scan" },
+        issue: { number: 12, title: "Repoguard", body: "/repoguard scan" },
         repository: { owner: { login: "owner" }, name: "repo" },
       }),
     );
@@ -134,7 +134,7 @@ describe("handleIssuesOpened", () => {
     await innerHandler(
       makeEvent({
         action: "opened",
-        issue: { number: 15, title: "Repoguard", body: "@repoguard scan" },
+        issue: { number: 15, title: "Repoguard", body: "/repoguard scan" },
         repository: { owner: { login: "owner" }, name: "repo" },
       }),
     );
@@ -156,7 +156,7 @@ describe("handleIssuesOpened", () => {
     await innerHandler(
       makeEvent({
         action: "opened",
-        issue: { number: 20, title: "Repoguard", body: "@repoguard scan" },
+        issue: { number: 20, title: "Repoguard", body: "/repoguard scan" },
         repository: { owner: { login: "owner" }, name: "repo" },
       }),
     );

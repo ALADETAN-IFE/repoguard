@@ -128,7 +128,7 @@ describe("handleIssueComment", () => {
       makeEvent({
         action: "created",
         issue: { number: 42, title: "⚠️ RepoGuard: Security findings" },
-        comment: { id: 101, body: "@repoguard fix", user: { login: "admin" } },
+        comment: { id: 101, body: "/repoguard fix", user: { login: "admin" } },
         repository: { owner: { login: "test-owner" }, name: "test-repo" },
       }),
     );

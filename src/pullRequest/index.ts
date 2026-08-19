@@ -373,7 +373,7 @@ async function openSecurityIssue(
       "",
       "## ⚡ Trigger Automated Fix PR",
       "",
-      "Comment `/fix` or `@repoguard fix` on this issue to trigger an automated Fix PR attempt.",
+      "Comment `/fix` or `/repoguard fix` on this issue to trigger an automated Fix PR attempt.",
       "",
       "---",
       "_Opened by RepoGuard · Reply with `/fix` to generate an automated PR fix._",

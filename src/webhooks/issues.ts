@@ -22,7 +22,7 @@ export interface IssuesOpenedPayload {
 
 /**
  * Factory — returns a webhook handler for issues.opened events.
- * If a user creates an issue with title "Repoguard" and body "@repoguard scan",
+ * If a user creates an issue with title "Repoguard" and body "/repoguard scan",
  * RepoGuard automatically scans the repo and replies with a status comment,
  * followed by a comment containing a markdown link to the created PR or issue if findings exist.
  */
@@ -35,7 +35,7 @@ export function handleIssuesOpened(
     const title = payload.issue.title.trim();
     const body = payload.issue.body?.trim() ?? "";
 
-    const isTargetIssue = title === "Repoguard" && body === "@repoguard scan";
+    const isTargetIssue = title === "Repoguard" && body === "/repoguard scan";
     if (!isTargetIssue) return;
 
     const owner = payload.repository.owner.login;

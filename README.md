@@ -10,7 +10,7 @@ RepoGuard is a GitHub App that scans your repositories for malicious code, obfus
 
 - **Full codebase scan on install** — scans every file immediately after installation
 - **Push scanning** — every commit to your default branch is automatically scanned
-- **On-demand issue scanning** — create an issue titled `Repoguard` with body `@repoguard scan` to trigger an instant scan
+- **On-demand issue scanning** — create an issue titled `Repoguard` with body `/repoguard scan` to trigger an instant scan
 - **Automated fix PRs** — malicious code is patched and a PR is opened with full findings documentation
 - **Security issues** — falls back to a GitHub issue when write access is unavailable
 - **Workflow protection** — detects suspicious GitHub Actions triggers and secret exfiltration
@@ -80,7 +80,7 @@ Scans all changed files
 
 You can manually trigger a full repository scan at any time by opening a GitHub Issue:
 - **Title:** `Repoguard`
-- **Body:** `@repoguard scan`
+- **Body:** `/repoguard scan`
 
 RepoGuard will reply with an initial comment while scanning, and upon completion post a follow-up comment with markdown links to any created Fix PR or Security Issue (e.g., `A pr was created [PR4](https://github.com/owner/repo/pull/4)`).
 
