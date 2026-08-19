@@ -45,8 +45,8 @@ export function handleIssueComment(
     if (!isFixCommand) return;
 
     const isRepoGuardIssue =
-      payload.issue.title.includes("RepoGuard") ||
-      (payload.issue.body?.includes("RepoGuard") ?? false);
+      payload.issue.title.toLowerCase().includes("repoguard") ||
+      (payload.issue.body?.toLowerCase().includes("repoguard") ?? false);
 
     if (!isRepoGuardIssue) return;
 

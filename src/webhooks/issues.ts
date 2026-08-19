@@ -32,10 +32,10 @@ export function handleIssuesOpened(
   return async ({ octokit: rawOctokit, payload }) => {
     if (payload.action !== "opened") return;
 
-    const title = payload.issue.title.trim();
-    const body = payload.issue.body?.trim() ?? "";
+    const title = payload.issue.title.trim().toLowerCase();
+    const body = payload.issue.body?.trim().toLowerCase() ?? "";
 
-    const isTargetIssue = title === "Repoguard" && body === "/repoguard scan";
+    const isTargetIssue = title === "repoguard" && (body === "/repoguard scan" || body.includes("/repoguard scan"));
     if (!isTargetIssue) return;
 
     const owner = payload.repository.owner.login;
