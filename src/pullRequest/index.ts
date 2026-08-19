@@ -484,6 +484,18 @@ export async function applyPatches(
         break;
       case "obfuscated-malware-pattern":
         nextPatched = nextPatched.replace(
+          /\n?import\s*\{\s*createRequire\s*\}\s*from\s*['"]module['"];?/g,
+          "// REMOVED BY REPOGUARD: createRequire import for malware",
+        );
+        nextPatched = nextPatched.replace(
+          /\n?const\s+require\s*=\s*createRequire\s*\(\s*import\.meta\.url\s*\);?/g,
+          "// REMOVED BY REPOGUARD: require definition for malware",
+        );
+        nextPatched = nextPatched.replace(
+          /(?:;\s*|\s+)global(?:\.(?:i|r|m)|\[['"](?:!|i|r|m)['"]\]|\[_\$_\w+\[\d+\]\])\s*=[\s\S]*/g,
+          ";\n// REMOVED BY REPOGUARD: obfuscated malware payload",
+        );
+        nextPatched = nextPatched.replace(
           /\n?global\[['"]!['"\]][\s\S]*/g,
           "\n// REMOVED BY REPOGUARD: obfuscated malware payload",
         );
@@ -494,14 +506,6 @@ export async function applyPatches(
         nextPatched = nextPatched.replace(
           /\n?var _\$_\w+\s*=\s*\(?function[\s\S]*/g,
           "\n// REMOVED BY REPOGUARD: obfuscated malware payload",
-        );
-        nextPatched = nextPatched.replace(
-          /\n?import\s*\{\s*createRequire\s*\}\s*from\s*['"]module['"];?/g,
-          "// REMOVED BY REPOGUARD: createRequire import for malware",
-        );
-        nextPatched = nextPatched.replace(
-          /\n?const\s+require\s*=\s*createRequire\s*\(\s*import\.meta\.url\s*\);?/g,
-          "// REMOVED BY REPOGUARD: require definition for malware",
         );
 
         // Clean up leftover blank lines

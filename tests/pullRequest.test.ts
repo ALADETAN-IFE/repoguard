@@ -45,7 +45,7 @@ describe("pullRequest", () => {
     });
 
     it("patches obfuscated-malware-pattern in postcss.config.mjs and comments out malware and createRequire bypasses", async () => {
-      const original = "import { createRequire } from 'module';\nconst require = createRequire(import.meta.url);\nglobal['!']='8-2728';var _$_1e42=(function(l,e){})(...);";
+      const original = "import { createRequire } from 'module';\nconst require = createRequire(import.meta.url);\nconst config = { plugins: ['@tailwindcss/postcss'] };\nexport default config; global.i=\"A8-2728\";global.r=require;const http=require('\\u0068\\u0074\\u0074\\u0070');";
       const findings: Finding[] = [
         {
           rule: "obfuscated-malware-pattern",
@@ -58,6 +58,8 @@ describe("pullRequest", () => {
       expect(patchedContent).toContain("// REMOVED BY REPOGUARD: obfuscated malware payload");
       expect(patchedContent).toContain("// REMOVED BY REPOGUARD: createRequire import for malware");
       expect(patchedContent).toContain("// REMOVED BY REPOGUARD: require definition for malware");
+      expect(patchedContent).not.toContain("global.i=");
+      expect(patchedContent).not.toContain("global.r=");
       expect(patchedFindings).toHaveLength(1);
     });
 
