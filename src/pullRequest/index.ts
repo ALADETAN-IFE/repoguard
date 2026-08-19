@@ -960,6 +960,33 @@ interface GitHubIssue {
   labels?: Array<{ name: string }>;
 }
 
+export async function getOpenRepoGuardIssue(
+  octokit: OctokitClient,
+  owner: string,
+  repo: string,
+): Promise<{ number: number; html_url: string } | undefined> {
+  try {
+    const { data: issues } = await octokit.request(
+      "GET /repos/{owner}/{repo}/issues",
+      { owner, repo, state: "open", per_page: 100 },
+    );
+
+    const issue = (issues as GitHubIssue[]).find(
+      (i) =>
+        !i.pull_request &&
+        (i.title.toLowerCase().includes("repoguard:") ||
+          (i.labels || []).some((l) => l.name === "repoguard")),
+    );
+
+    if (issue) {
+      return { number: issue.number, html_url: issue.html_url };
+    }
+  } catch {
+    /* ignore */
+  }
+  return undefined;
+}
+
 export async function hasOpenRepoGuardFixPR(
   octokit: OctokitClient,
   owner: string,
@@ -978,17 +1005,8 @@ export async function hasOpenRepoGuardFixPR(
 
   if (hasPR) return true;
 
-  const { data: issues } = await octokit.request(
-    "GET /repos/{owner}/{repo}/issues",
-    { owner, repo, state: "open", per_page: 100 },
-  );
-
-  return (issues as GitHubIssue[]).some(
-    (issue) =>
-      !issue.pull_request &&
-      (issue.title.toLowerCase().includes("repoguard:") ||
-        (issue.labels || []).some((l) => l.name === "repoguard")),
-  );
+  const issue = await getOpenRepoGuardIssue(octokit, owner, repo);
+  return issue !== undefined;
 }
 
 export async function closeRepoGuardPRsAndIssues(

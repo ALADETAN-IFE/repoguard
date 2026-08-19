@@ -4,6 +4,7 @@ import { createCheckRun, updateCheckRun } from "../checks";
 import { sendAlert } from "../alerts";
 import {
   closeRepoGuardPRsAndIssues,
+  getOpenRepoGuardIssue,
   hasOpenRepoGuardFixPR,
   openFixPR,
   postReviewComments,
@@ -191,16 +192,49 @@ export function handlePush(
         });
 
         if (isDefaultBranch) {
-          const hasFixPR = await hasOpenRepoGuardFixPR(client, owner, repo);
-          if (hasFixPR) {
-            logger.info(
-              `[push] Open RepoGuard fix PR already exists for ${owner}/${repo} — skipping`,
-            );
+          const openIssue = await getOpenRepoGuardIssue(client, owner, repo);
+          if (openIssue) {
+            const newFindingsList = findings
+              .map(
+                (f) =>
+                  `- **[${f.severity.toUpperCase()}]** \`${f.rule}\` in \`${f.file ?? "unknown"}\`: ${f.message}`,
+              )
+              .join("\n");
+
+            try {
+              await client.request(
+                "POST /repos/{owner}/{repo}/issues/{issue_number}/comments",
+                {
+                  owner,
+                  repo,
+                  issue_number: openIssue.number,
+                  body: [
+                    `⚠️ **RepoGuard Alert:** Additional security findings detected in commit \`${headSha.slice(0, 7)}\` by ${pusher.name}:`,
+                    "",
+                    newFindingsList,
+                  ].join("\n"),
+                },
+              );
+              logger.info(
+                `[push] Posted new findings comment on existing open issue #${openIssue.number}`,
+              );
+            } catch (err) {
+              logger.warn(
+                `[push] Could not comment on open issue #${openIssue.number}: ${String(err)}`,
+              );
+            }
           } else {
-            logger.warn(
-              `[push] ${findings.length} finding${findings.length > 1 ? "s" : ""} on default branch — opening fix PR`,
-            );
-            await openFixPR(client, { owner, repo, findings });
+            const hasFixPR = await hasOpenRepoGuardFixPR(client, owner, repo);
+            if (hasFixPR) {
+              logger.info(
+                `[push] Open RepoGuard fix PR already exists for ${owner}/${repo} — skipping`,
+              );
+            } else {
+              logger.warn(
+                `[push] ${findings.length} finding${findings.length > 1 ? "s" : ""} on default branch — opening fix PR`,
+              );
+              await openFixPR(client, { owner, repo, findings });
+            }
           }
         }
 
