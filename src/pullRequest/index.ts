@@ -948,6 +948,7 @@ function severityEmoji(severity: string): string {
 interface GitHubPullRequest {
   number: number;
   title: string;
+  html_url?: string;
   head: {
     ref: string;
   };
@@ -956,6 +957,7 @@ interface GitHubPullRequest {
 interface GitHubIssue {
   number: number;
   title: string;
+  html_url?: string;
   pull_request?: unknown;
   labels?: Array<{ name: string }>;
 }
@@ -979,7 +981,12 @@ export async function getOpenRepoGuardIssue(
     );
 
     if (issue) {
-      return { number: issue.number, html_url: issue.html_url };
+      return {
+        number: issue.number,
+        html_url:
+          issue.html_url ||
+          `https://github.com/${owner}/${repo}/issues/${issue.number}`,
+      };
     }
   } catch {
     /* ignore */
