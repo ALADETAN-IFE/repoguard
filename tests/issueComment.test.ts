@@ -88,12 +88,12 @@ describe("handleIssueComment", () => {
     expect(scanFullRepoForPush).not.toHaveBeenCalled();
   });
 
-  it("reacts with rocket emoji, rescans, calls openFixPR, and comments success message", async () => {
+  it("reacts with rocket emoji, rescans, calls openFixPR, and comments success message when PR created", async () => {
     const findings = [
       { rule: "curl-pipe-bash", severity: "critical" as const, message: "curl pipe bash", file: "test.sh" },
     ];
     (scanFullRepoForPush as jest.Mock).mockResolvedValue(findings);
-    (openFixPR as jest.Mock).mockResolvedValue(undefined);
+    (openFixPR as jest.Mock).mockResolvedValue({ pr: { number: 99, html_url: "https://github.com/test-owner/test-repo/pull/99" } });
 
     await innerHandler(
       makeEvent({
@@ -117,6 +117,33 @@ describe("handleIssueComment", () => {
         repo: "test-repo",
         issue_number: 42,
         body: expect.stringContaining("Fix Triggered"),
+      }),
+    );
+  });
+
+  it("comments manual review message when openFixPR returns an issue instead of a PR", async () => {
+    const findings = [
+      { rule: "hardcoded-secret", severity: "medium" as const, message: "hardcoded secret", file: "config.js" },
+    ];
+    (scanFullRepoForPush as jest.Mock).mockResolvedValue(findings);
+    (openFixPR as jest.Mock).mockResolvedValue({ issue: { number: 50, html_url: "https://github.com/test-owner/test-repo/issues/50" } });
+
+    await innerHandler(
+      makeEvent({
+        action: "created",
+        issue: { number: 42, title: "⚠️ RepoGuard: Security findings" },
+        comment: { id: 105, body: "/fix", user: { login: "admin" } },
+        repository: { owner: { login: "test-owner" }, name: "test-repo" },
+      }),
+    );
+
+    expect(mockOctokit.request).toHaveBeenCalledWith(
+      "POST /repos/{owner}/{repo}/issues/{issue_number}/comments",
+      expect.objectContaining({
+        owner: "test-owner",
+        repo: "test-repo",
+        issue_number: 42,
+        body: expect.stringContaining("Could not generate an automated Fix PR"),
       }),
     );
   });

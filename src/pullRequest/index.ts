@@ -484,7 +484,11 @@ export async function applyPatches(
         break;
       case "obfuscated-malware-pattern":
         nextPatched = nextPatched.replace(
-          /\n?global\[['"]\.['"\]][\s\S]*/g,
+          /\n?global\[['"]!['"\]][\s\S]*/g,
+          "\n// REMOVED BY REPOGUARD: obfuscated malware payload",
+        );
+        nextPatched = nextPatched.replace(
+          /\n?global\[_\$_\w+\[\d+\]\]\s*=\s*require[\s\S]*/g,
           "\n// REMOVED BY REPOGUARD: obfuscated malware payload",
         );
         nextPatched = nextPatched.replace(
@@ -502,6 +506,56 @@ export async function applyPatches(
 
         // Clean up leftover blank lines
         nextPatched = nextPatched.replace(/\n{3,}/g, "\n\n").trimEnd() + "\n";
+        break;
+      case "js-obfuscated-charcode":
+        nextPatched = nextPatched.replace(
+          /String\.fromCharCode\s*\([^)]+\)/g,
+          "/* REMOVED BY REPOGUARD: obfuscated charCode payload */ ''",
+        );
+        break;
+      case "js-obfuscated-constructors":
+        nextPatched = nextPatched.replace(
+          /\[\s*['"]filter['"]\s*\]\s*\[\s*['"]constructor['"]\s*\]/g,
+          "/* REMOVED BY REPOGUARD: obfuscated constructor payload */",
+        );
+        nextPatched = nextPatched.replace(
+          /constructor\s*\(\s*['"]eval['"]\s*\)/g,
+          "/* REMOVED BY REPOGUARD: obfuscated constructor payload */",
+        );
+        nextPatched = nextPatched.replace(
+          /Reflect\.apply[^\n]*/g,
+          "// REMOVED BY REPOGUARD: Reflect.apply abuse",
+        );
+        break;
+      case "js-obfuscated-hex":
+        nextPatched = nextPatched.replace(
+          /(\\x[0-9a-fA-F]{2}){8,}/g,
+          "/* REMOVED BY REPOGUARD: obfuscated hex payload */ ''",
+        );
+        break;
+      case "python-exec-compile":
+        nextPatched = nextPatched.replace(
+          /exec\s*\(\s*(compile|__import__)\s*\([^\n]*/g,
+          "# REMOVED BY REPOGUARD: python exec compile payload",
+        );
+        break;
+      case "python-obfuscated-base64-exec":
+        nextPatched = nextPatched.replace(
+          /exec\s*\(\s*(base64\.b64decode|__import__\s*\(\s*['"]base64['"]\s*\)\.b64decode)[^\n]*/g,
+          "# REMOVED BY REPOGUARD: python base64 exec payload",
+        );
+        break;
+      case "python-subprocess-network":
+        nextPatched = nextPatched.replace(
+          /subprocess\.(run|call|Popen|check_output)\s*\([^)]*(curl|wget)[^)]*\)/g,
+          "# REMOVED BY REPOGUARD: python subprocess remote execution",
+        );
+        break;
+      case "powershell-encoded-command":
+        nextPatched = nextPatched.replace(
+          /powershell.*-[Ee](nc(odedCommand)?)?\s+[A-Za-z0-9+/=]+/g,
+          "# REMOVED BY REPOGUARD: powershell encoded command",
+        );
         break;
       case "suspicious-npm-postinstall":
         if (filePath.endsWith("package.json")) {
@@ -717,6 +771,20 @@ export function buildPRBody(
     "obfuscated-base64": "Obfuscated `eval` payloads removed",
     "obfuscated-malware-pattern":
       "Obfuscated string array malware payloads and createRequire bypasses commented out",
+    "js-obfuscated-charcode":
+      "Obfuscated charCode array dynamic execution payloads removed",
+    "js-obfuscated-constructors":
+      "Obfuscated constructor dynamic execution payloads removed",
+    "js-obfuscated-hex":
+      "Obfuscated hex escape payload strings removed",
+    "python-exec-compile":
+      "Python `exec(compile())` dynamic execution payloads removed",
+    "python-obfuscated-base64-exec":
+      "Python base64-decoded dynamic execution payloads removed",
+    "python-subprocess-network":
+      "Python subprocess remote execution calls removed",
+    "powershell-encoded-command":
+      "Encoded PowerShell commands removed",
     "suspicious-npm-postinstall":
       "Suspicious `postinstall` scripts in package.json neutralized",
     "crypto-miner-keywords": "Cryptocurrency miner indicators removed",

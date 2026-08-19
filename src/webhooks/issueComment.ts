@@ -92,17 +92,39 @@ export function handleIssueComment(
       }
 
       // 3. Attempt Fix PR creation
-      await openFixPR(octokit, { owner, repo, findings });
+      const result = await openFixPR(octokit, { owner, repo, findings });
 
-      await octokit.request(
-        "POST /repos/{owner}/{repo}/issues/{issue_number}/comments",
-        {
-          owner,
-          repo,
-          issue_number: issueNumber,
-          body: `🚀 **RepoGuard Fix Triggered!** An automated Fix PR or updated remediation branch has been generated. Check your repository's Pull Requests!`,
-        },
-      );
+      if (result?.pr) {
+        await octokit.request(
+          "POST /repos/{owner}/{repo}/issues/{issue_number}/comments",
+          {
+            owner,
+            repo,
+            issue_number: issueNumber,
+            body: `🚀 **RepoGuard Fix Triggered!** An automated Fix PR [#${result.pr.number}](${result.pr.html_url}) has been generated. Check your repository's Pull Requests!`,
+          },
+        );
+      } else if (result?.issue) {
+        await octokit.request(
+          "POST /repos/{owner}/{repo}/issues/{issue_number}/comments",
+          {
+            owner,
+            repo,
+            issue_number: issueNumber,
+            body: `⚠️ **RepoGuard Update:** Could not generate an automated Fix PR because findings require manual review. Details logged in [#${result.issue.number}](${result.issue.html_url}).`,
+          },
+        );
+      } else {
+        await octokit.request(
+          "POST /repos/{owner}/{repo}/issues/{issue_number}/comments",
+          {
+            owner,
+            repo,
+            issue_number: issueNumber,
+            body: `⚠️ **RepoGuard Update:** Could not generate an automated Fix PR because findings require manual review.`,
+          },
+        );
+      }
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       logger.error(

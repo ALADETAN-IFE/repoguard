@@ -44,21 +44,43 @@ describe("pullRequest", () => {
       expect(patchedFindings).toHaveLength(0);
     });
 
-    it("patches obfuscated-malware-pattern and comments out malware and createRequire bypasses", async () => {
+    it("patches obfuscated-malware-pattern in postcss.config.mjs and comments out malware and createRequire bypasses", async () => {
       const original = "import { createRequire } from 'module';\nconst require = createRequire(import.meta.url);\nglobal['!']='8-2728';var _$_1e42=(function(l,e){})(...);";
       const findings: Finding[] = [
         {
           rule: "obfuscated-malware-pattern",
           severity: "critical",
           message: "malware pattern detected",
-          file: "test.js",
+          file: "postcss.config.mjs",
         },
       ];
-      const { patchedContent, patchedFindings } = await applyPatches(original, findings, "test.js");
+      const { patchedContent, patchedFindings } = await applyPatches(original, findings, "postcss.config.mjs");
       expect(patchedContent).toContain("// REMOVED BY REPOGUARD: obfuscated malware payload");
       expect(patchedContent).toContain("// REMOVED BY REPOGUARD: createRequire import for malware");
       expect(patchedContent).toContain("// REMOVED BY REPOGUARD: require definition for malware");
       expect(patchedFindings).toHaveLength(1);
+    });
+
+    it("patches js-obfuscated-charcode and js-obfuscated-constructors", async () => {
+      const original = "const code = String.fromCharCode(97, 98, 99); const f = []['filter']['constructor'];";
+      const findings: Finding[] = [
+        {
+          rule: "js-obfuscated-charcode",
+          severity: "critical",
+          message: "charcode obfuscation",
+          file: "postcss.config.mjs",
+        },
+        {
+          rule: "js-obfuscated-constructors",
+          severity: "critical",
+          message: "constructor obfuscation",
+          file: "postcss.config.mjs",
+        },
+      ];
+      const { patchedContent, patchedFindings } = await applyPatches(original, findings, "postcss.config.mjs");
+      expect(patchedContent).toContain("/* REMOVED BY REPOGUARD: obfuscated charCode payload */");
+      expect(patchedContent).toContain("/* REMOVED BY REPOGUARD: obfuscated constructor payload */");
+      expect(patchedFindings).toHaveLength(2);
     });
 
     it("patches reverse-shell", async () => {

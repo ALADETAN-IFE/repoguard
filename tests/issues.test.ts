@@ -117,7 +117,7 @@ describe("handleIssuesOpened", () => {
         owner: "owner",
         repo: "repo",
         issue_number: 12,
-        body: "A pr was created [PR4](https://github.com/owner/repo/pull/4)",
+        body: "A PR was created [#4](https://github.com/owner/repo/pull/4)",
       }),
     );
   });
@@ -145,7 +145,7 @@ describe("handleIssuesOpened", () => {
         owner: "owner",
         repo: "repo",
         issue_number: 15,
-        body: "An issue was created [PR4](https://github.com/owner/repo/issues/4)",
+        body: "An issue was created [#4](https://github.com/owner/repo/issues/4)",
       }),
     );
   });

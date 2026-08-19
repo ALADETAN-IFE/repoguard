@@ -93,7 +93,7 @@ export function handleIssuesOpened(
             owner,
             repo,
             issue_number: issueNumber,
-            body: `A pr was created [PR${result.pr.number}](${result.pr.html_url})`,
+            body: `A PR was created [#${result.pr.number}](${result.pr.html_url})`,
           },
         );
       } else if (result?.issue) {
@@ -103,7 +103,7 @@ export function handleIssuesOpened(
             owner,
             repo,
             issue_number: issueNumber,
-            body: `An issue was created [PR${result.issue.number}](${result.issue.html_url})`,
+            body: `An issue was created [#${result.issue.number}](${result.issue.html_url})`,
           },
         );
       }
