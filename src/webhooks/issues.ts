@@ -35,7 +35,9 @@ export function handleIssuesOpened(
     const title = payload.issue.title.trim().toLowerCase();
     const body = payload.issue.body?.trim().toLowerCase() ?? "";
 
-    const isTargetIssue = title === "repoguard" && (body === "/repoguard scan" || body.includes("/repoguard scan"));
+    const isTargetIssue =
+      title === "repoguard" &&
+      (body === "/repoguard scan" || body.includes("/repoguard scan"));
     if (!isTargetIssue) return;
 
     const owner = payload.repository.owner.login;
