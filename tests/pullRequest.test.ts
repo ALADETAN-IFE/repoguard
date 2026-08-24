@@ -63,6 +63,22 @@ describe("pullRequest", () => {
       expect(patchedFindings).toHaveLength(1);
     });
 
+    it("patches js-obfuscated-hex with unicode escape sequences and marks overlapping line findings as patched", async () => {
+      const original = "const http=require('\\u0068\\u0074\\u0074\\u0070\\u0073');";
+      const findings: Finding[] = [
+        {
+          rule: "js-obfuscated-hex",
+          severity: "critical",
+          message: "hex/unicode obfuscation",
+          file: "postcss.config.mjs",
+          line: 1,
+        },
+      ];
+      const { patchedContent, patchedFindings } = await applyPatches(original, findings, "postcss.config.mjs");
+      expect(patchedContent).toContain("/* REMOVED BY REPOGUARD: obfuscated hex payload */");
+      expect(patchedFindings).toHaveLength(1);
+    });
+
     it("patches js-obfuscated-charcode and js-obfuscated-constructors", async () => {
       const original = "const code = String.fromCharCode(97, 98, 99); const f = []['filter']['constructor'];";
       const findings: Finding[] = [

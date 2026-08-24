@@ -278,6 +278,7 @@ export async function openFixPR(
       pr.head?.sha || baseSha,
       findings,
       patchedMap,
+      allPatchedFindings,
     );
 
     logger.info(`[pr] Opened PR #${pr.number} in ${owner}/${repo}`);
@@ -533,7 +534,7 @@ export async function applyPatches(
         break;
       case "js-obfuscated-hex":
         nextPatched = nextPatched.replace(
-          /(\\x[0-9a-fA-F]{2}){8,}/g,
+          /(\\(x[0-9a-fA-F]{2}|u[0-9a-fA-F]{4})){4,}/g,
           "/* REMOVED BY REPOGUARD: obfuscated hex payload */ ''",
         );
         break;
@@ -697,6 +698,12 @@ export async function applyPatches(
     if (nextPatched !== patched) {
       patched = nextPatched;
       patchedFindings.push(finding);
+    } else if (finding.line) {
+      const origLines = content.split("\n");
+      const origLineText = origLines[finding.line - 1];
+      if (origLineText && !patched.includes(origLineText.trim())) {
+        patchedFindings.push(finding);
+      }
     }
   }
 
@@ -890,16 +897,44 @@ export function buildPRBody(
   return bodyParts.join("\n");
 }
 
+function getCommentPrefix(filePath: string): string {
+  const ext = filePath.split(".").pop()?.toLowerCase() ?? "";
+  const slashSlashExts = new Set([
+    "js",
+    "mjs",
+    "cjs",
+    "jsx",
+    "ts",
+    "tsx",
+    "mts",
+    "cts",
+    "java",
+    "c",
+    "cpp",
+    "h",
+    "hpp",
+    "cs",
+    "go",
+    "rs",
+    "swift",
+    "kt",
+    "scala",
+    "php",
+  ]);
+  return slashSlashExts.has(ext) ? "//" : "#";
+}
+
 function buildFileHeader(findings: Finding[], filePath: string): string {
+  const c = getCommentPrefix(filePath);
   return [
-    `# ============================================================`,
-    `# REPOGUARD — MANUAL REVIEW REQUIRED: ${filePath}`,
-    `# Scanned: ${new Date().toISOString()}`,
-    `# The following findings could NOT be automatically patched:`,
+    `${c} ============================================================`,
+    `${c} REPOGUARD — MANUAL REVIEW REQUIRED: ${filePath}`,
+    `${c} Scanned: ${new Date().toISOString()}`,
+    `${c} The following findings could NOT be automatically patched:`,
     ...findings.map(
-      (f) => `#   [${f.severity.toUpperCase()}] ${f.rule}: ${f.message}`,
+      (f) => `${c}   [${f.severity.toUpperCase()}] ${f.rule}: ${f.message}`,
     ),
-    `# ============================================================`,
+    `${c} ============================================================`,
     ``,
     ``,
   ].join("\n");
@@ -1202,39 +1237,6 @@ interface ReviewComment {
   body: string;
 }
 
-// ─── Rule-based fix suggestions ──────────────────────────────────────────────
-const RULE_SUGGESTIONS: Record<string, (line: string) => string> = {
-  "obfuscated-malware-pattern": () =>
-    "// REMOVED BY REPOGUARD: obfuscated malware payload",
-  "curl-pipe-bash": (line) =>
-    line.replace(
-      /curl\s.+\|\s*(ba)?sh/g,
-      "# REMOVED BY REPOGUARD: curl|bash remote execution",
-    ),
-  "wget-pipe-shell": (line) =>
-    line.replace(
-      /wget\s.+\|\s*(ba)?sh/g,
-      "# REMOVED BY REPOGUARD: wget|shell remote execution",
-    ),
-  "reverse-shell": (line) =>
-    line
-      .replace(
-        /bash\s+-i\s+>&\s+\/dev\/tcp[^\n]*/g,
-        "# REMOVED BY REPOGUARD: reverse shell",
-      )
-      .replace(
-        /nc\s+-e\s+\/bin\/(ba)?sh[^\n]*/g,
-        "# REMOVED BY REPOGUARD: netcat reverse shell",
-      ),
-  "crypto-miner-keywords": (line) =>
-    line.replace(/xmrig[^\n]*/g, "# REMOVED BY REPOGUARD: crypto miner"),
-  "obfuscated-base64": (line) =>
-    line.replace(
-      /eval\s*\([^)]*fromCharCode[^)]*\)/g,
-      "// REMOVED BY REPOGUARD: obfuscated eval",
-    ),
-};
-
 export async function postReviewComments(
   octokit: OctokitClient,
   owner: string,
@@ -1243,6 +1245,7 @@ export async function postReviewComments(
   headSha: string,
   findings: Finding[],
   patchedContent: Map<string, string>, // filePath → patched content
+  allPatchedFindings: Finding[] = [],
 ): Promise<void> {
   const comments: ReviewComment[] = [];
 
@@ -1252,50 +1255,29 @@ export async function postReviewComments(
     // Skip if the file was deleted (not present in patchedContent map)
     if (!patchedContent.has(finding.file)) continue;
 
-    const patched = patchedContent.get(finding.file);
-    const originalLine = patched
-      ? (patched.split("\n")[finding.line - 1] ?? "")
-      : "";
+    const isPatched =
+      allPatchedFindings.includes(finding) ||
+      allPatchedFindings.some(
+        (pf) =>
+          pf.rule === finding.rule &&
+          pf.file === finding.file &&
+          pf.line === finding.line,
+      );
 
-    // Try rule-based suggestion first, then patched content, then manual review
-    const suggestionFn = RULE_SUGGESTIONS[finding.rule];
-    const suggestedLine = suggestionFn
-      ? suggestionFn(originalLine)
-      : patched
-        ? getFixedLine(patched, finding.line)
-        : null;
+    // Patched findings don't need a comment — the code diff already shows the fix.
+    // Only post a comment when the finding still requires manual remediation.
+    if (isPatched) continue;
 
-    const body = suggestedLine
-      ? [
-          `**RepoGuard** detected \`${finding.rule}\` (${finding.severity})`,
-          `> ${finding.message}`,
-          ``,
-          `<details>`,
-          `<summary>📋 Committable suggestion</summary>`,
-          ``,
-          `> ‼️ [!IMPORTANT]`,
-          `> Carefully review the code before committing. Ensure that it accurately replaces the highlighted code, contains no missing lines, and has no issues with indentation. Thoroughly test & benchmark the code to ensure it meets the requirements.`,
-          ``,
-          `\`\`\`suggestion`,
-          suggestedLine,
-          `\`\`\``,
-          `</details>`,
-          `<details>`,
-          `<summary>💡 Suggested commit message:</summary>`,
-          ``,
-          `>  \`fix(security): remove ${finding.rule} from ${finding.file ?? "file"}\``,
-          `</details>`,
-        ].join("\n")
-      : [
-          `**RepoGuard** detected \`${finding.rule}\` (${finding.severity})`,
-          `> ${finding.message}`,
-          ``,
-          `<details>`,
-          `<summary>⚠️ Manual review required</summary>`,
-          ``,
-          `This finding cannot be automatically fixed. Please review and remediate manually.`,
-          `</details>`,
-        ].join("\n");
+    const body = [
+      `**RepoGuard** detected \`${finding.rule}\` (${finding.severity})`,
+      `> ${finding.message}`,
+      ``,
+      `<details>`,
+      `<summary>⚠️ Manual review required</summary>`,
+      ``,
+      `This finding cannot be automatically fixed. Please review and remediate manually.`,
+      `</details>`,
+    ].join("\n");
 
     comments.push({
       path: finding.file,
@@ -1353,9 +1335,4 @@ export async function postReviewComments(
       );
     }
   }
-}
-
-function getFixedLine(patchedContent: string, lineNumber: number): string {
-  const lines = patchedContent.split("\n");
-  return lines[lineNumber - 1] ?? "";
 }
