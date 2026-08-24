@@ -109,7 +109,7 @@ describe("handleIssueComment", () => {
       { owner: "test-owner", repo: "test-repo", comment_id: 100, content: "rocket" },
     );
     expect(scanFullRepoForPush).toHaveBeenCalledWith(mockOctokit, "test-owner", "test-repo");
-    expect(openFixPR).toHaveBeenCalledWith(mockOctokit, { owner: "test-owner", repo: "test-repo", findings });
+    expect(openFixPR).toHaveBeenCalledWith(mockOctokit, { owner: "test-owner", repo: "test-repo", findings, issueNumber: 42 });
     expect(mockOctokit.request).toHaveBeenCalledWith(
       "POST /repos/{owner}/{repo}/issues/{issue_number}/comments",
       expect.objectContaining({
