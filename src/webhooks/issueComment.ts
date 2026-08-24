@@ -92,7 +92,12 @@ export function handleIssueComment(
       }
 
       // 3. Attempt Fix PR creation
-      const result = await openFixPR(octokit, { owner, repo, findings });
+      const result = await openFixPR(octokit, {
+        owner,
+        repo,
+        findings,
+        issueNumber,
+      });
 
       if (result?.pr) {
         await octokit.request(

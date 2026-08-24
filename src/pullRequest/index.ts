@@ -11,6 +11,7 @@ interface OpenFixPROptions {
   owner: string;
   repo: string;
   findings: Finding[];
+  issueNumber?: number;
 }
 
 export interface OpenFixPRResult {
@@ -71,7 +72,7 @@ function isPermissionError(err: unknown): boolean {
 
 export async function openFixPR(
   octokit: OctokitClient,
-  { owner, repo, findings }: OpenFixPROptions,
+  { owner, repo, findings, issueNumber }: OpenFixPROptions,
 ): Promise<OpenFixPRResult | undefined> {
   try {
     // ── 1. Fetch each affected file and see if there are actual patches ──────────
@@ -258,6 +259,7 @@ export async function openFixPR(
           allPatchedFindings,
           allUnpatchedFindings,
           deletedFiles,
+          issueNumber,
         ),
         head: branch,
         base: defaultBranch,
@@ -734,6 +736,7 @@ export function buildPRBody(
   patchedFindings: Finding[],
   unpatchedFindings: Finding[],
   deletedFiles: string[] = [],
+  issueNumber?: number,
 ): string {
   const criticalCount = findings.filter(
     (f) => f.severity === "critical",
@@ -851,6 +854,7 @@ export function buildPRBody(
   const totalUnpatchedFindings = unpatchedFindings.length;
 
   const bodyParts = [
+    ...(issueNumber ? [`Fixes #${issueNumber}`, ""] : []),
     "## 🔒 RepoGuard Security Report",
     "",
     "> This PR was opened automatically by RepoGuard after scanning your codebase.",

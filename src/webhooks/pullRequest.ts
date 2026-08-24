@@ -6,7 +6,7 @@ import {
   isBinaryPath,
   looksLikeJavaScript,
 } from "@repoguard/scanner";
-import { postReviewComments } from "../pullRequest";
+import { postReviewComments, getOpenRepoGuardIssue } from "../pullRequest";
 import { normaliseOctokit } from "../utils/normaliseOctokit";
 import logger from "../utils/logger";
 import type { WebhookEvent, Finding, OctokitClient } from "../types/index";
@@ -239,6 +239,8 @@ export interface PullRequestClosedPayload {
   pull_request: {
     number: number;
     merged: boolean;
+    body?: string;
+    html_url?: string;
     head: { sha: string; ref: string };
   };
   repository: {
@@ -273,6 +275,56 @@ export function handlePullRequestClosed(
         const message = err instanceof Error ? err.message : String(err);
         logger.warn(
           `[pr] Could not delete branch ${branchRef} in ${owner}/${repo}: ${message}`,
+        );
+      }
+    }
+
+    // If PR was merged, close any associated issues with a remark
+    if (pull_request.merged) {
+      try {
+        const bodyText = pull_request.body || "";
+        const issueMatches = [
+          ...bodyText.matchAll(
+            /(?:Fixes|Closes|Resolves|Fix|Close|Resolve|Issue)\s+#(\d+)/gi,
+          ),
+        ].map((m) => parseInt(m[1], 10));
+
+        const targetIssueNumbers = new Set(issueMatches);
+
+        // Check if there is an open RepoGuard security issue for this repo
+        const openIssue = await getOpenRepoGuardIssue(client, owner, repo);
+        if (openIssue) {
+          targetIssueNumbers.add(openIssue.number);
+        }
+
+        for (const issueNum of targetIssueNumbers) {
+          logger.info(
+            `[pr] PR #${pull_request.number} merged — closing linked issue #${issueNum} with remark`,
+          );
+          await client.request(
+            "POST /repos/{owner}/{repo}/issues/{issue_number}/comments",
+            {
+              owner,
+              repo,
+              issue_number: issueNum,
+              body: `🎉 **RepoGuard Update:** Fix PR [#${pull_request.number}](${pull_request.html_url || `https://github.com/${owner}/${repo}/pull/${pull_request.number}`}) has been merged into the default branch. Closing this security issue as resolved.`,
+            },
+          );
+          await client.request(
+            "PATCH /repos/{owner}/{repo}/issues/{issue_number}",
+            {
+              owner,
+              repo,
+              issue_number: issueNum,
+              state: "closed",
+              state_reason: "completed",
+            },
+          );
+        }
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        logger.warn(
+          `[pr] Could not close linked issue for merged PR #${pull_request.number}: ${message}`,
         );
       }
     }
