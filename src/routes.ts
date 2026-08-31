@@ -14,6 +14,20 @@ import { normaliseOctokit } from "./utils/normaliseOctokit";
 import logger from "./utils/logger";
 import { getHealthReport, getHealthStatusCode } from "./utils/health";
 import { handleMarketplaceWebhook } from "./webhooks/marketplace";
+import {
+  getDashboardStats,
+  getInstallations,
+  getInstallationRepos,
+  scanSingleRepository,
+  getRepoFixPRs,
+  approveFixPR,
+  mergeFixPR,
+} from "./controllers/dashboard";
+import {
+  initiateGitHubOAuth,
+  handleGitHubOAuthCallback,
+  getCurrentUser,
+} from "./controllers/auth";
 
 const router = express.Router();
 
@@ -50,6 +64,7 @@ router.get("/health", (_req: Request, res: Response) => {
   })();
 });
 
+// GitHub App post-install redirect
 router.get("/auth/callback", (req: Request, res: Response) => {
   const { installation_id, setup_action } = req.query;
   res.json({
@@ -57,6 +72,19 @@ router.get("/auth/callback", (req: Request, res: Response) => {
     installation_id,
     setup_action,
   });
+});
+
+// GitHub OAuth Sign-In & Session Routes
+router.get("/auth/github", authRateLimit, (req: Request, res: Response) => {
+  initiateGitHubOAuth(req, res);
+});
+
+router.get("/auth/github/callback", authRateLimit, (req: Request, res: Response) => {
+  void handleGitHubOAuthCallback(req, res);
+});
+
+router.get("/auth/me", (req: Request, res: Response) => {
+  void getCurrentUser(req, res);
 });
 
 // Marketplace billing webhook — receives purchase/change/cancel events from GitHub
@@ -134,6 +162,66 @@ router.get(
   requireApiKey,
   (req, res) => {
     void getScanFindings(req, res);
+  },
+);
+
+// Dashboard Statistics & Overview
+router.get("/api/stats", authRateLimit, requireApiKey, (req, res) => {
+  void getDashboardStats(req, res);
+});
+
+// Installations List
+router.get("/api/installations", authRateLimit, requireApiKey, (req, res) => {
+  void getInstallations(req, res);
+});
+
+// Installation Repositories with Security Status
+router.get(
+  "/api/installations/:owner/repos",
+  authRateLimit,
+  requireApiKey,
+  (req, res) => {
+    void getInstallationRepos(req, res);
+  },
+);
+
+// On-Demand Single Repository Scan
+router.post(
+  "/api/repos/:owner/:repo/scan",
+  authRateLimit,
+  requireApiKey,
+  (req, res) => {
+    void scanSingleRepository(req, res);
+  },
+);
+
+// Repository Fix PRs
+router.get(
+  "/api/repos/:owner/:repo/pulls",
+  authRateLimit,
+  requireApiKey,
+  (req, res) => {
+    void getRepoFixPRs(req, res);
+  },
+);
+
+// Approve Fix PR
+router.post(
+  "/api/repos/:owner/:repo/pulls/:pull_number/approve",
+  authRateLimit,
+  requireApiKey,
+  (req, res) => {
+    void approveFixPR(req, res);
+  },
+);
+
+// Merge Fix PR
+router.post(
+  "/api/repos/:owner/:repo/pulls/:pull_number/merge",
+  authRateLimit,
+  requireApiKey,
+  (req, res) => {
+    void mergeFixPR(req, res);
   },
 );
 
