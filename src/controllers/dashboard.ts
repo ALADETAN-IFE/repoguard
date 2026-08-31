@@ -294,7 +294,8 @@ export const scanSingleRepository = async (
 
 /**
  * GET /api/repos/:owner/:repo/pulls
- * Lists open Fix PRs created by RepoGuard for a repository
+ * Lists open Fix PRs created by RepoGuard for a repository,
+ * normalized to the FixPRRecord shape the frontend expects.
  */
 export const getRepoFixPRs = async (
   req: Request,
@@ -339,10 +340,93 @@ export const getRepoFixPRs = async (
         pr.title.includes("RepoGuard") || pr.head.ref.startsWith("repoguard/"),
     );
 
-    logger.info(
-      `[api/repos/pulls] Success: Found ${repoGuardPulls.length} active RepoGuard Fix PR(s) in ${owner}/${repo}`,
+    // Derive severity from PR labels or title keywords
+    const deriveSeverity = (pr: {
+      labels: { name: string }[];
+      title: string;
+    }): string => {
+      const labelNames = pr.labels.map((l) => l.name.toLowerCase());
+      if (
+        labelNames.includes("critical") ||
+        pr.title.toLowerCase().includes("critical")
+      )
+        return "critical";
+      if (
+        labelNames.includes("high") ||
+        pr.title.toLowerCase().includes("high")
+      )
+        return "high";
+      if (
+        labelNames.includes("medium") ||
+        pr.title.toLowerCase().includes("medium")
+      )
+        return "medium";
+      return "low";
+    };
+
+    // Fetch unified diff for each PR (accepts vnd.github.diff)
+    const normalizedPulls = await Promise.all(
+      repoGuardPulls.map(
+        async (pr: {
+          id: number;
+          number: number;
+          title: string;
+          head: { ref: string };
+          base: { repo: { name: string } };
+          html_url: string;
+          created_at: string;
+          user: { login: string } | null;
+          labels: { name: string }[];
+        }) => {
+          let diff: string | undefined;
+          try {
+            const diffRes = await client.request(
+              "GET /repos/{owner}/{repo}/pulls/{pull_number}",
+              {
+                owner,
+                repo,
+                pull_number: pr.number,
+                headers: { accept: "application/vnd.github.diff" },
+              },
+            );
+            // Octokit types this endpoint as a PR object; the diff media type
+            // returns raw text, so narrow from unknown instead of the typed body.
+            const diffText: unknown = diffRes.data;
+            if (typeof diffText === "string" && diffText.length > 0) {
+              diff = diffText;
+            }
+          } catch (diffErr) {
+            const diffMsg =
+              diffErr instanceof Error ? diffErr.message : String(diffErr);
+            logger.warn(
+              `[api/repos/pulls] Could not fetch diff for PR #${pr.number}: ${diffMsg}`,
+            );
+          }
+
+          return {
+            id: pr.id,
+            number: pr.number,
+            title: pr.title,
+            owner,
+            repo: pr.base?.repo?.name || repo,
+            branch: pr.head.ref,
+            url: pr.html_url,
+            findingsCount: 1,
+            severity: deriveSeverity(pr),
+            rule: "security-fix",
+            status: "open",
+            createdAt: pr.created_at,
+            author: pr.user?.login || "repoguard[bot]",
+            diff,
+          };
+        },
+      ),
     );
-    res.json({ pulls: repoGuardPulls });
+
+    logger.info(
+      `[api/repos/pulls] Success: Returning ${normalizedPulls.length} normalized Fix PR(s) for ${owner}/${repo}`,
+    );
+    res.json({ pulls: normalizedPulls });
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     logger.error(
