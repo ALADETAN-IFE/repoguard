@@ -126,22 +126,87 @@ function safeCompare(input: string, secret: string): boolean {
 
 // ─── Route Guards ─────────────────────────────────────────────────────────────
 
+import { verifySessionToken, type SessionPayload } from "./controllers/auth";
+
+export interface AuthenticatedRequest extends Request {
+  userSession?: SessionPayload;
+}
+
+export function requireAuthOrApiKey(
+  req: Request,
+  res: Response,
+  next: NextFunction,
+): void {
+  // 1. Check for Bearer token from authenticated user session
+  const authHeader = req.headers.authorization;
+  if (authHeader?.startsWith("Bearer ")) {
+    const token = authHeader.substring(7);
+    const session = verifySessionToken(token);
+    if (session) {
+      (req as AuthenticatedRequest).userSession = session;
+      next();
+      return;
+    }
+  }
+
+  // 2. Check for machine-to-machine x-api-key fallback
+  const apiKey = req.headers["x-api-key"];
+  if (
+    apiKey &&
+    typeof apiKey === "string" &&
+    process.env.API_SECRET &&
+    safeCompare(apiKey, process.env.API_SECRET)
+  ) {
+    next();
+    return;
+  }
+
+  res.status(401).json({
+    error:
+      "Authentication required. Please provide a valid user session token or API key.",
+  });
+}
+
+export function requireAdminUserOrSecret(
+  req: Request,
+  res: Response,
+  next: NextFunction,
+): void {
+  // 1. Check for Bearer token with isSystemAdmin privilege
+  const authHeader = req.headers.authorization;
+  if (authHeader?.startsWith("Bearer ")) {
+    const token = authHeader.substring(7);
+    const session = verifySessionToken(token);
+    if (session && session.user.isSystemAdmin) {
+      (req as AuthenticatedRequest).userSession = session;
+      next();
+      return;
+    }
+  }
+
+  // 2. Check for machine-to-machine x-rescan-secret fallback
+  const secret = req.headers["x-rescan-secret"];
+  if (
+    secret &&
+    typeof secret === "string" &&
+    process.env.RESCAN_SECRET &&
+    safeCompare(secret, process.env.RESCAN_SECRET)
+  ) {
+    next();
+    return;
+  }
+
+  res.status(403).json({
+    error: "Access denied. System administrator privileges required.",
+  });
+}
+
 export function requireApiKey(
   req: Request,
   res: Response,
   next: NextFunction,
 ): void {
-  const apiKey = req.headers["x-api-key"];
-  if (!apiKey || typeof apiKey !== "string" || !process.env.API_SECRET) {
-    res.status(401).json({ error: "Unauthorized" });
-    return;
-  }
-
-  if (!safeCompare(apiKey, process.env.API_SECRET)) {
-    res.status(401).json({ error: "Unauthorized" });
-    return;
-  }
-  next();
+  requireAuthOrApiKey(req, res, next);
 }
 
 export function requireRescanSecret(
@@ -149,15 +214,5 @@ export function requireRescanSecret(
   res: Response,
   next: NextFunction,
 ): void {
-  const secret = req.headers["x-rescan-secret"];
-  if (!secret || typeof secret !== "string" || !process.env.RESCAN_SECRET) {
-    res.status(401).json({ error: "Unauthorized" });
-    return;
-  }
-
-  if (!safeCompare(secret, process.env.RESCAN_SECRET)) {
-    res.status(401).json({ error: "Unauthorized" });
-    return;
-  }
-  next();
+  requireAdminUserOrSecret(req, res, next);
 }
