@@ -13,14 +13,14 @@ export const getDashboardStats = async (
   req: Request,
   res: Response,
 ): Promise<void> => {
-  const { owner } = req.query;
+  const owner = typeof req.query.owner === "string" ? req.query.owner : "";
   logger.info(
     `[api/stats] Fetching security stats (filter owner: ${owner || "ALL"})`,
   );
 
   try {
     const filter: Record<string, unknown> = {};
-    if (owner && typeof owner === "string") {
+    if (owner) {
       filter.owner = new RegExp(`^${owner}$`, "i");
     }
 
@@ -105,14 +105,14 @@ export const getInstallations = async (
   req: Request,
   res: Response,
 ): Promise<void> => {
-  const { owner } = req.query;
+  const owner = typeof req.query.owner === "string" ? req.query.owner : "";
   logger.info(
     `[api/installations] Listing installations (owner: ${owner || "ALL"})`,
   );
 
   try {
     const filter: Record<string, unknown> = { uninstalledAt: null };
-    if (owner && typeof owner === "string") {
+    if (owner) {
       filter.owner = new RegExp(`^${owner}$`, "i");
     }
 

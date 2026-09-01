@@ -157,11 +157,14 @@ export const handleGitHubOAuthCallback = async (
   try {
     const { code, error, error_description } = req.query;
     if (error) {
+      const errStr = typeof error === "string" ? error : JSON.stringify(error);
+      const descStr =
+        typeof error_description === "string" ? error_description : "";
       logger.error(
-        `[auth/github/callback] GitHub OAuth error: ${error} - ${error_description}`,
+        `[auth/github/callback] GitHub OAuth error: ${errStr} - ${descStr}`,
       );
       res.redirect(
-        `${FRONTEND_URL}/auth/login?error=${encodeURIComponent(String(error))}`,
+        `${FRONTEND_URL}/auth/login?error=${encodeURIComponent(errStr)}`,
       );
       return;
     }
