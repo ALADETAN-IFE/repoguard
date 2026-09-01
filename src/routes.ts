@@ -79,12 +79,16 @@ router.get("/auth/github", authRateLimit, (req: Request, res: Response) => {
   initiateGitHubOAuth(req, res);
 });
 
-router.get("/auth/github/callback", authRateLimit, (req: Request, res: Response) => {
-  void handleGitHubOAuthCallback(req, res);
-});
+router.get(
+  "/auth/github/callback",
+  authRateLimit,
+  (req: Request, res: Response) => {
+    void handleGitHubOAuthCallback(req, res);
+  },
+);
 
 router.get("/auth/me", (req: Request, res: Response) => {
-  void getCurrentUser(req, res);
+  getCurrentUser(req, res);
 });
 
 // Marketplace billing webhook — receives purchase/change/cancel events from GitHub

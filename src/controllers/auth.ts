@@ -90,7 +90,9 @@ export function verifySessionToken(token: string): SessionPayload | null {
 
     if (signature !== expectedSig) return null;
 
-    const payload = JSON.parse(Buffer.from(dataB64, "base64url").toString("utf8")) as SessionPayload;
+    const payload = JSON.parse(
+      Buffer.from(dataB64, "base64url").toString("utf8"),
+    ) as SessionPayload;
     if (payload.exp && payload.exp < Math.floor(Date.now() / 1000)) {
       return null; // Expired
     }
@@ -108,7 +110,9 @@ export function verifySessionToken(token: string): SessionPayload | null {
 export const initiateGitHubOAuth = (req: Request, res: Response): void => {
   const clientId = process.env.GITHUB_CLIENT_ID;
   if (!clientId) {
-    logger.warn("[auth] GITHUB_CLIENT_ID not configured, redirecting to frontend demo");
+    logger.warn(
+      "[auth] GITHUB_CLIENT_ID not configured, redirecting to frontend demo",
+    );
     res.redirect(`${FRONTEND_URL}/dashboard`);
     return;
   }
@@ -118,7 +122,7 @@ export const initiateGitHubOAuth = (req: Request, res: Response): void => {
   const state = crypto.randomBytes(16).toString("hex");
 
   const authUrl = `https://github.com/login/oauth/authorize?client_id=${clientId}&redirect_uri=${encodeURIComponent(
-    redirectUri
+    redirectUri,
   )}&scope=${encodeURIComponent(scope)}&state=${state}`;
 
   res.redirect(authUrl);
@@ -128,7 +132,10 @@ export const initiateGitHubOAuth = (req: Request, res: Response): void => {
  * GET /auth/github/callback
  * Handles OAuth callback from GitHub, fetches user profile & installs, signs session token
  */
-export const handleGitHubOAuthCallback = async (req: Request, res: Response): Promise<void> => {
+export const handleGitHubOAuthCallback = async (
+  req: Request,
+  res: Response,
+): Promise<void> => {
   try {
     const { code } = req.query;
     if (!code || typeof code !== "string") {
@@ -146,20 +153,26 @@ export const handleGitHubOAuthCallback = async (req: Request, res: Response): Pr
     }
 
     // 1. Exchange code for access token
-    const tokenRes = await fetch("https://github.com/login/oauth/access_token", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Accept: "application/json",
+    const tokenRes = await fetch(
+      "https://github.com/login/oauth/access_token",
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Accept: "application/json",
+        },
+        body: JSON.stringify({
+          client_id: clientId,
+          client_secret: clientSecret,
+          code,
+        }),
       },
-      body: JSON.stringify({
-        client_id: clientId,
-        client_secret: clientSecret,
-        code,
-      }),
-    });
+    );
 
-    const tokenData = (await tokenRes.json()) as { access_token?: string; error?: string };
+    const tokenData = (await tokenRes.json()) as {
+      access_token?: string;
+      error?: string;
+    };
     if (!tokenData.access_token) {
       logger.error(`[auth] Token exchange failed: ${tokenData.error}`);
       res.redirect(`${FRONTEND_URL}/auth/login?error=token_exchange_failed`);
@@ -188,7 +201,10 @@ export const handleGitHubOAuthCallback = async (req: Request, res: Response): Pr
       });
       const emails = (await emailsRes.json()) as GitHubUserEmail[];
       if (Array.isArray(emails)) {
-        const primaryEmail = emails.find((e) => e.primary && e.verified) || emails.find((e) => e.verified) || emails[0];
+        const primaryEmail =
+          emails.find((e) => e.primary && e.verified) ||
+          emails.find((e) => e.verified) ||
+          emails[0];
         if (primaryEmail?.email) {
           userEmail = primaryEmail.email;
         }
@@ -200,12 +216,15 @@ export const handleGitHubOAuthCallback = async (req: Request, res: Response): Pr
     // 3. Fetch user's organizations and active memberships (with admin/member role per org)
     let orgMemberships: GitHubOrgMembership[] = [];
     try {
-      const membershipsRes = await fetch("https://api.github.com/user/memberships/orgs?state=active", {
-        headers: {
-          Authorization: `Bearer ${accessToken}`,
-          "User-Agent": "RepoGuard-App",
+      const membershipsRes = await fetch(
+        "https://api.github.com/user/memberships/orgs?state=active",
+        {
+          headers: {
+            Authorization: `Bearer ${accessToken}`,
+            "User-Agent": "RepoGuard-App",
+          },
         },
-      });
+      );
       const data = (await membershipsRes.json()) as GitHubOrgMembership[];
       if (Array.isArray(data)) {
         orgMemberships = data;
@@ -233,15 +252,18 @@ export const handleGitHubOAuthCallback = async (req: Request, res: Response): Pr
       }
     }
 
-    const orgLogins = orgMemberships.length > 0
-      ? orgMemberships.map((m) => m.organization.login)
-      : fallbackOrgs.map((o) => o.login);
+    const orgLogins =
+      orgMemberships.length > 0
+        ? orgMemberships.map((m) => m.organization.login)
+        : fallbackOrgs.map((o) => o.login);
 
     const allAccountLogins = [ghUser.login, ...orgLogins];
 
     // 4. Query active installations from MongoDB
     const installations = await Installation.find({
-      owner: { $in: allAccountLogins.map((login) => new RegExp(`^${login}$`, "i")) },
+      owner: {
+        $in: allAccountLogins.map((login) => new RegExp(`^${login}$`, "i")),
+      },
       uninstalledAt: null,
     }).lean();
 
@@ -250,12 +272,16 @@ export const handleGitHubOAuthCallback = async (req: Request, res: Response): Pr
     // 5. Build per-account context with accurate role resolution
     const accounts: AccountContext[] = allAccountLogins.map((login) => {
       const isPersonal = login.toLowerCase() === ghUser.login.toLowerCase();
-      const inst = installations.find((i) => i.owner.toLowerCase() === login.toLowerCase());
+      const inst = installations.find(
+        (i) => i.owner.toLowerCase() === login.toLowerCase(),
+      );
 
       const membership = orgMemberships.find(
-        (m) => m.organization.login.toLowerCase() === login.toLowerCase()
+        (m) => m.organization.login.toLowerCase() === login.toLowerCase(),
       );
-      const fallbackOrg = fallbackOrgs.find((o) => o.login.toLowerCase() === login.toLowerCase());
+      const fallbackOrg = fallbackOrgs.find(
+        (o) => o.login.toLowerCase() === login.toLowerCase(),
+      );
 
       let accountRole: "system_admin" | "org_admin" | "member" = "member";
       if (isSystemAdmin) {
@@ -285,8 +311,8 @@ export const handleGitHubOAuthCallback = async (req: Request, res: Response): Pr
     const defaultRole: "system_admin" | "org_admin" | "member" = isSystemAdmin
       ? "system_admin"
       : accounts.some((a) => a.role === "org_admin" && a.hasInstallation)
-      ? "org_admin"
-      : "member";
+        ? "org_admin"
+        : "member";
 
     // 6. Sign Session Token
     const sessionToken = signSessionToken({
@@ -302,7 +328,9 @@ export const handleGitHubOAuthCallback = async (req: Request, res: Response): Pr
       accounts,
     });
 
-    logger.info(`[auth] User @${ghUser.login} authenticated (Default Role: ${defaultRole}, Accounts: ${accounts.length})`);
+    logger.info(
+      `[auth] User @${ghUser.login} authenticated (Default Role: ${defaultRole}, Accounts: ${accounts.length})`,
+    );
 
     // Redirect to frontend dashboard with session token
     res.redirect(`${FRONTEND_URL}/dashboard?token=${sessionToken}`);
@@ -317,11 +345,12 @@ export const handleGitHubOAuthCallback = async (req: Request, res: Response): Pr
  * GET /auth/me
  * Returns current authenticated user profile, role, and connected installations
  */
-export const getCurrentUser = async (req: Request, res: Response): Promise<void> => {
+export const getCurrentUser = (req: Request, res: Response): void => {
   try {
     const authHeader = req.headers.authorization;
-    const token =
-      authHeader?.startsWith("Bearer ") ? authHeader.substring(7) : (req.query.token as string) || null;
+    const token = authHeader?.startsWith("Bearer ")
+      ? authHeader.substring(7)
+      : (req.query.token as string) || null;
 
     if (!token) {
       res.status(401).json({ error: "No session token provided" });
