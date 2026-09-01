@@ -13,8 +13,12 @@ export const getDashboardStats = async (
   req: Request,
   res: Response,
 ): Promise<void> => {
+  const { owner } = req.query;
+  logger.info(
+    `[api/stats] Fetching security stats (filter owner: ${owner || "ALL"})`,
+  );
+
   try {
-    const { owner } = req.query;
     const filter: Record<string, unknown> = {};
     if (owner && typeof owner === "string") {
       filter.owner = new RegExp(`^${owner}$`, "i");
@@ -67,6 +71,10 @@ export const getDashboardStats = async (
     else if (score < 80) grade = "C";
     else if (score < 90) grade = "B";
 
+    logger.info(
+      `[api/stats] Success: Score ${score} (${grade}), Scans: ${totalScans}, Threats: ${totalOpenThreats}`,
+    );
+
     res.json({
       score,
       grade,
@@ -84,7 +92,7 @@ export const getDashboardStats = async (
     });
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
-    logger.error(`[dashboard] Failed to get stats: ${message}`);
+    logger.error(`[api/stats] ERROR: Failed to get stats: ${message}`);
     res.status(500).json({ error: "Internal server error" });
   }
 };
@@ -97,8 +105,12 @@ export const getInstallations = async (
   req: Request,
   res: Response,
 ): Promise<void> => {
+  const { owner } = req.query;
+  logger.info(
+    `[api/installations] Listing installations (owner: ${owner || "ALL"})`,
+  );
+
   try {
-    const { owner } = req.query;
     const filter: Record<string, unknown> = { uninstalledAt: null };
     if (owner && typeof owner === "string") {
       filter.owner = new RegExp(`^${owner}$`, "i");
@@ -108,10 +120,15 @@ export const getInstallations = async (
       .sort({ installedAt: -1 })
       .lean();
 
+    logger.info(
+      `[api/installations] Success: Found ${installations.length} active installation(s)`,
+    );
     res.json({ installations });
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
-    logger.error(`[dashboard] Failed to get installations: ${message}`);
+    logger.error(
+      `[api/installations] ERROR: Failed to get installations: ${message}`,
+    );
     res.status(500).json({ error: "Internal server error" });
   }
 };
@@ -124,19 +141,28 @@ export const getInstallationRepos = async (
   req: Request,
   res: Response,
 ): Promise<void> => {
+  const { owner } = req.params;
+  logger.info(`[api/installations/repos] Fetching repos for owner: '${owner}'`);
+
   try {
-    const { owner } = req.params;
     const installation = await Installation.findOne({
       owner: new RegExp(`^${owner}$`, "i"),
       uninstalledAt: null,
     }).lean();
 
     if (!installation) {
+      logger.warn(
+        `[api/installations/repos] Installation not found for owner '${owner}'`,
+      );
       res
         .status(404)
         .json({ error: `Installation not found for owner '${owner}'` });
       return;
     }
+
+    logger.info(
+      `[api/installations/repos] Found installation #${installation.installationId}, requesting GitHub API repositories`,
+    );
 
     const octokit = await githubApp.getInstallationOctokit(
       installation.installationId,
@@ -148,6 +174,10 @@ export const getInstallationRepos = async (
       {
         per_page: 100,
       },
+    );
+
+    logger.info(
+      `[api/installations/repos] Retrieved ${reposData.repositories.length} repos from GitHub for installation #${installation.installationId}`,
     );
 
     const reposWithStats = await Promise.all(
@@ -190,11 +220,14 @@ export const getInstallationRepos = async (
       ),
     );
 
+    logger.info(
+      `[api/installations/repos] Success: Returning ${reposWithStats.length} repository status records for '${owner}'`,
+    );
     res.json({ repositories: reposWithStats });
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     logger.error(
-      `[dashboard] Failed to get installation repos for ${req.params.owner}: ${message}`,
+      `[api/installations/repos] ERROR: Failed to get repos for '${req.params.owner}': ${message}`,
     );
     res.status(500).json({ error: "Internal server error" });
   }
@@ -208,14 +241,21 @@ export const scanSingleRepository = async (
   req: Request,
   res: Response,
 ): Promise<void> => {
+  const { owner, repo } = req.params;
+  logger.info(
+    `[api/repos/scan] On-demand scan requested for '${owner}/${repo}'`,
+  );
+
   try {
-    const { owner, repo } = req.params;
     const installation = await Installation.findOne({
       owner: new RegExp(`^${owner}$`, "i"),
       uninstalledAt: null,
     }).lean();
 
     if (!installation) {
+      logger.warn(
+        `[api/repos/scan] Active installation not found for owner '${owner}'`,
+      );
       res
         .status(404)
         .json({ error: `Active installation not found for owner '${owner}'` });
@@ -230,6 +270,10 @@ export const scanSingleRepository = async (
     const installationKey = `${installation.owner}-${installation.installationId}`;
     const repoList = [{ full_name: `${owner}/${repo}`, name: repo }];
 
+    logger.info(
+      `[api/repos/scan] Dispatched background scan worker for ${owner}/${repo} (inst #${installation.installationId})`,
+    );
+
     // Fire scan
     void scanRepoList(client, installationKey, installation.owner, repoList);
 
@@ -242,7 +286,7 @@ export const scanSingleRepository = async (
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     logger.error(
-      `[dashboard] Failed to trigger scan for ${req.params.owner}/${req.params.repo}: ${message}`,
+      `[api/repos/scan] ERROR: Failed to trigger scan for ${req.params.owner}/${req.params.repo}: ${message}`,
     );
     res.status(500).json({ error: "Internal server error" });
   }
@@ -256,14 +300,19 @@ export const getRepoFixPRs = async (
   req: Request,
   res: Response,
 ): Promise<void> => {
+  const { owner, repo } = req.params;
+  logger.info(`[api/repos/pulls] Fetching open Fix PRs for '${owner}/${repo}'`);
+
   try {
-    const { owner, repo } = req.params;
     const installation = await Installation.findOne({
       owner: new RegExp(`^${owner}$`, "i"),
       uninstalledAt: null,
     }).lean();
 
     if (!installation) {
+      logger.warn(
+        `[api/repos/pulls] Installation not found for owner '${owner}'`,
+      );
       res
         .status(404)
         .json({ error: `Installation not found for owner '${owner}'` });
@@ -290,11 +339,14 @@ export const getRepoFixPRs = async (
         pr.title.includes("RepoGuard") || pr.head.ref.startsWith("repoguard/"),
     );
 
+    logger.info(
+      `[api/repos/pulls] Success: Found ${repoGuardPulls.length} active RepoGuard Fix PR(s) in ${owner}/${repo}`,
+    );
     res.json({ pulls: repoGuardPulls });
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     logger.error(
-      `[dashboard] Failed to fetch PRs for ${req.params.owner}/${req.params.repo}: ${message}`,
+      `[api/repos/pulls] ERROR: Failed to fetch PRs for ${req.params.owner}/${req.params.repo}: ${message}`,
     );
     res.status(500).json({ error: "Internal server error" });
   }
@@ -308,16 +360,22 @@ export const approveFixPR = async (
   req: Request,
   res: Response,
 ): Promise<void> => {
-  try {
-    const { owner, repo, pull_number } = req.params;
-    const pullNumber = parseInt(pull_number, 10);
+  const { owner, repo, pull_number } = req.params;
+  const pullNumber = parseInt(pull_number, 10);
+  logger.info(
+    `[api/repos/pulls/approve] Approving Fix PR #${pullNumber} in '${owner}/${repo}'`,
+  );
 
+  try {
     const installation = await Installation.findOne({
       owner: new RegExp(`^${owner}$`, "i"),
       uninstalledAt: null,
     }).lean();
 
     if (!installation) {
+      logger.warn(
+        `[api/repos/pulls/approve] Installation not found for owner '${owner}'`,
+      );
       res
         .status(404)
         .json({ error: `Installation not found for owner '${owner}'` });
@@ -340,12 +398,14 @@ export const approveFixPR = async (
       },
     );
 
-    logger.info(`[dashboard] Approved PR #${pullNumber} in ${owner}/${repo}`);
+    logger.info(
+      `[api/repos/pulls/approve] SUCCESS: Approved PR #${pullNumber} in ${owner}/${repo}`,
+    );
     res.json({ message: `Pull Request #${pullNumber} approved successfully` });
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     logger.error(
-      `[dashboard] Failed to approve PR #${req.params.pull_number}: ${message}`,
+      `[api/repos/pulls/approve] ERROR: Failed to approve PR #${req.params.pull_number}: ${message}`,
     );
     res.status(500).json({ error: message });
   }
@@ -359,16 +419,22 @@ export const mergeFixPR = async (
   req: Request,
   res: Response,
 ): Promise<void> => {
-  try {
-    const { owner, repo, pull_number } = req.params;
-    const pullNumber = parseInt(pull_number, 10);
+  const { owner, repo, pull_number } = req.params;
+  const pullNumber = parseInt(pull_number, 10);
+  logger.info(
+    `[api/repos/pulls/merge] Squashing & merging Fix PR #${pullNumber} in '${owner}/${repo}'`,
+  );
 
+  try {
     const installation = await Installation.findOne({
       owner: new RegExp(`^${owner}$`, "i"),
       uninstalledAt: null,
     }).lean();
 
     if (!installation) {
+      logger.warn(
+        `[api/repos/pulls/merge] Installation not found for owner '${owner}'`,
+      );
       res
         .status(404)
         .json({ error: `Installation not found for owner '${owner}'` });
@@ -392,12 +458,14 @@ export const mergeFixPR = async (
     );
 
     // Mark open findings for this repo as resolved
-    await Finding.updateMany(
+    const updateRes = await Finding.updateMany(
       { installationId: installation.installationId, repo, resolvedAt: null },
       { $set: { resolvedAt: new Date() } },
     );
 
-    logger.info(`[dashboard] Merged PR #${pullNumber} in ${owner}/${repo}`);
+    logger.info(
+      `[api/repos/pulls/merge] SUCCESS: Merged PR #${pullNumber} in ${owner}/${repo}, marked ${updateRes.modifiedCount} findings as resolved`,
+    );
     res.json({
       message: `Pull Request #${pullNumber} merged successfully!`,
       mergeResult,
@@ -405,7 +473,7 @@ export const mergeFixPR = async (
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     logger.error(
-      `[dashboard] Failed to merge PR #${req.params.pull_number}: ${message}`,
+      `[api/repos/pulls/merge] ERROR: Failed to merge PR #${req.params.pull_number}: ${message}`,
     );
     res.status(500).json({ error: message });
   }

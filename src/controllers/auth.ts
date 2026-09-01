@@ -4,8 +4,10 @@ import { Installation } from "../models";
 import logger from "../utils/logger";
 
 const JWT_SECRET = process.env.SESSION_SECRET!;
-const FRONTEND_URL = process.env.FRONTEND_URL || "http://localhost:3000";
-const ADMIN_LOGINS = process.env.ADMIN_GITHUB_LOGINS!;
+const FRONTEND_URL = (
+  process.env.FRONTEND_URL || "http://localhost:3000"
+).replace(/\/$/, "");
+const ADMIN_LOGINS = (process.env.ADMIN_GITHUB_LOGINS || "").toLowerCase();
 
 interface GitHubUserResponse {
   id: number;
@@ -108,23 +110,37 @@ export function verifySessionToken(token: string): SessionPayload | null {
  * Initiates GitHub OAuth sign-in flow
  */
 export const initiateGitHubOAuth = (req: Request, res: Response): void => {
+  logger.info("[auth/github] Initiating GitHub OAuth sign-in flow");
+
   const clientId = process.env.GITHUB_CLIENT_ID;
   if (!clientId) {
     logger.warn(
-      "[auth] GITHUB_CLIENT_ID not configured, redirecting to frontend demo",
+      "[auth/github] GITHUB_CLIENT_ID not configured, redirecting to frontend",
     );
     res.redirect(`${FRONTEND_URL}/dashboard`);
     return;
   }
 
-  const redirectUri = `${req.protocol}://${req.get("host")}/auth/github/callback`;
+  // Determine redirect URI: use configured GITHUB_CALLBACK_URL or fallback to current host
+  const callbackUrl =
+    process.env.GITHUB_CALLBACK_URL ||
+    `${req.protocol}://${req.get("host")}/auth/github/callback`;
+
   const scope = "read:user user:email read:org";
   const state = crypto.randomBytes(16).toString("hex");
 
-  const authUrl = `https://github.com/login/oauth/authorize?client_id=${clientId}&redirect_uri=${encodeURIComponent(
-    redirectUri,
-  )}&scope=${encodeURIComponent(scope)}&state=${state}`;
+  let authUrl = `https://github.com/login/oauth/authorize?client_id=${clientId}&scope=${encodeURIComponent(
+    scope,
+  )}&state=${state}`;
 
+  // If callbackUrl is not explicitly set to 'default' or 'none', include it
+  if (callbackUrl && callbackUrl !== "none" && callbackUrl !== "default") {
+    authUrl += `&redirect_uri=${encodeURIComponent(callbackUrl)}`;
+  }
+
+  logger.info(
+    `[auth/github] Redirecting to GitHub OAuth (callback: ${callbackUrl})`,
+  );
   res.redirect(authUrl);
 };
 
@@ -136,9 +152,22 @@ export const handleGitHubOAuthCallback = async (
   req: Request,
   res: Response,
 ): Promise<void> => {
+  logger.info("[auth/github/callback] Received OAuth callback from GitHub");
+
   try {
-    const { code } = req.query;
+    const { code, error, error_description } = req.query;
+    if (error) {
+      logger.error(
+        `[auth/github/callback] GitHub OAuth error: ${error} - ${error_description}`,
+      );
+      res.redirect(
+        `${FRONTEND_URL}/auth/login?error=${encodeURIComponent(String(error))}`,
+      );
+      return;
+    }
+
     if (!code || typeof code !== "string") {
+      logger.warn("[auth/github/callback] Missing authorization code");
       res.redirect(`${FRONTEND_URL}/auth/login?error=missing_code`);
       return;
     }
@@ -147,12 +176,17 @@ export const handleGitHubOAuthCallback = async (
     const clientSecret = process.env.GITHUB_CLIENT_SECRET;
 
     if (!clientId || !clientSecret) {
-      logger.error("[auth] Missing GITHUB_CLIENT_ID or GITHUB_CLIENT_SECRET");
+      logger.error(
+        "[auth/github/callback] Missing GITHUB_CLIENT_ID or GITHUB_CLIENT_SECRET",
+      );
       res.redirect(`${FRONTEND_URL}/dashboard`);
       return;
     }
 
     // 1. Exchange code for access token
+    logger.info(
+      "[auth/github/callback] Exchanging authorization code for GitHub access token",
+    );
     const tokenRes = await fetch(
       "https://github.com/login/oauth/access_token",
       {
@@ -172,9 +206,12 @@ export const handleGitHubOAuthCallback = async (
     const tokenData = (await tokenRes.json()) as {
       access_token?: string;
       error?: string;
+      error_description?: string;
     };
     if (!tokenData.access_token) {
-      logger.error(`[auth] Token exchange failed: ${tokenData.error}`);
+      logger.error(
+        `[auth/github/callback] Token exchange failed: ${tokenData.error} - ${tokenData.error_description}`,
+      );
       res.redirect(`${FRONTEND_URL}/auth/login?error=token_exchange_failed`);
       return;
     }
@@ -182,6 +219,7 @@ export const handleGitHubOAuthCallback = async (
     const accessToken = tokenData.access_token;
 
     // 2. Fetch user profile
+    logger.info("[auth/github/callback] Fetching GitHub user profile");
     const userRes = await fetch("https://api.github.com/user", {
       headers: {
         Authorization: `Bearer ${accessToken}`,
@@ -209,11 +247,16 @@ export const handleGitHubOAuthCallback = async (
           userEmail = primaryEmail.email;
         }
       }
-    } catch {
-      // Fall back to ghUser.email if emails endpoint fails
+    } catch (e) {
+      logger.warn(
+        `[auth/github/callback] Could not fetch primary email: ${String(e)}`,
+      );
     }
 
-    // 3. Fetch user's organizations and active memberships (with admin/member role per org)
+    // 3. Fetch user's organizations and active memberships
+    logger.info(
+      `[auth/github/callback] Fetching organization memberships for @${ghUser.login}`,
+    );
     let orgMemberships: GitHubOrgMembership[] = [];
     try {
       const membershipsRes = await fetch(
@@ -229,8 +272,10 @@ export const handleGitHubOAuthCallback = async (
       if (Array.isArray(data)) {
         orgMemberships = data;
       }
-    } catch {
-      // Fallback
+    } catch (e) {
+      logger.warn(
+        `[auth/github/callback] Could not fetch org memberships: ${String(e)}`,
+      );
     }
 
     // If memberships endpoint was empty, fallback to /user/orgs
@@ -247,8 +292,10 @@ export const handleGitHubOAuthCallback = async (
         if (Array.isArray(data)) {
           fallbackOrgs = data;
         }
-      } catch {
-        // Ignore fallback error
+      } catch (e) {
+        logger.warn(
+          `[auth/github/callback] Fallback orgs query error: ${String(e)}`,
+        );
       }
     }
 
@@ -329,14 +376,16 @@ export const handleGitHubOAuthCallback = async (
     });
 
     logger.info(
-      `[auth] User @${ghUser.login} authenticated (Default Role: ${defaultRole}, Accounts: ${accounts.length})`,
+      `[auth/github/callback] SUCCESS: Authenticated @${ghUser.login} (SystemAdmin: ${isSystemAdmin}, Role: ${defaultRole}, Accounts: ${accounts.length})`,
     );
 
     // Redirect to frontend dashboard with session token
     res.redirect(`${FRONTEND_URL}/dashboard?token=${sessionToken}`);
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
-    logger.error(`[auth] OAuth callback exception: ${message}`);
+    logger.error(
+      `[auth/github/callback] ERROR: OAuth callback exception: ${message}`,
+    );
     res.redirect(`${FRONTEND_URL}/auth/login?error=internal_auth_error`);
   }
 };
@@ -353,20 +402,27 @@ export const getCurrentUser = (req: Request, res: Response): void => {
       : (req.query.token as string) || null;
 
     if (!token) {
+      logger.warn(
+        "[auth/me] Rejected: No session token provided in header or query",
+      );
       res.status(401).json({ error: "No session token provided" });
       return;
     }
 
     const session = verifySessionToken(token);
     if (!session) {
+      logger.warn("[auth/me] Rejected: Invalid or expired session token");
       res.status(401).json({ error: "Invalid or expired session token" });
       return;
     }
 
+    logger.info(
+      `[auth/me] Validated session for @${session.user.login} (${session.user.role})`,
+    );
     res.json(session);
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
-    logger.error(`[auth] /auth/me error: ${message}`);
+    logger.error(`[auth/me] ERROR: ${message}`);
     res.status(500).json({ error: "Internal server error" });
   }
 };
