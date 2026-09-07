@@ -1,4 +1,5 @@
 import type { App } from "@octokit/app";
+import { Types } from "mongoose";
 import { scanCommit } from "@repoguard/scanner";
 import { createCheckRun, updateCheckRun } from "../checks";
 import { sendAlert } from "../alerts";
@@ -11,7 +12,9 @@ import {
 } from "../pullRequest";
 import { normaliseOctokit } from "../utils/normaliseOctokit";
 import { getPushChangedFiles } from "../utils/pushChangedFiles";
-import { scanFullRepoForPush } from "./installation";
+import { scanFullRepoForPush, scanFullRepoWithDetails } from "./installation";
+import { safeWrite } from "../utils/writeQueue";
+import { Scan, Installation } from "../models";
 import logger from "../utils/logger";
 import type {
   WebhookEvent,
@@ -100,6 +103,36 @@ export function handlePush(
       `[push] ${owner}/${repo} — ${totalCommits} commit${totalCommits > 1 ? "s" : ""} by ${pusher.name}${isForcePush ? " (force push)" : ""}`,
     );
 
+    const startTime = Date.now();
+    const scanId = new Types.ObjectId();
+    let installationId = (payload as { installation?: { id: number } }).installation?.id;
+    if (!installationId) {
+      try {
+        const inst = await Installation.findOne({
+          owner: new RegExp(`^${owner}$`, "i"),
+          uninstalledAt: null,
+        }).lean();
+        installationId = inst?.installationId;
+      } catch {
+        // ignore
+      }
+    }
+
+    await safeWrite(`Scan.create:${owner}/${repo}:${headSha.slice(0, 7)}`, {
+      type: "CREATE_SCAN",
+      data: {
+        scanId: scanId.toHexString(),
+        installationId,
+        owner,
+        repo,
+        branch,
+        commitSha: headSha,
+        status: "in_progress",
+        trigger: "push",
+        startedAt: new Date(startTime).toISOString(),
+      },
+    });
+
     const checkRunId = await createCheckRun({
       octokit: client,
       owner,
@@ -113,13 +146,16 @@ export function handlePush(
 
     try {
       let findings: Finding[] = [];
+      let filesScannedCount = 0;
 
       if (isForcePush && isDefaultBranch) {
         // Force push on default branch — scan entire repo, not just diff
         logger.warn(
           `[push] Force push detected on ${owner}/${repo} — running full repo scan`,
         );
-        findings = await scanFullRepoForPush(client, owner, repo);
+        const result = await scanFullRepoWithDetails(client, owner, repo);
+        findings = result.findings;
+        filesScannedCount = result.filesScanned;
       } else {
         const { added, modified, removed } = await getPushChangedFiles(
           client,
@@ -129,6 +165,8 @@ export function handlePush(
           headSha,
           commits,
         );
+
+        filesScannedCount = added.length + modified.length;
 
         findings = await scanCommit({
           octokit: client,
@@ -140,6 +178,38 @@ export function handlePush(
           removedFiles: removed,
         });
       }
+
+      // Persist findings to MongoDB
+      if (findings.length > 0) {
+        await safeWrite(`FindingModel.insertMany:${owner}/${repo}:${headSha.slice(0, 7)}`, {
+          type: "INSERT_FINDINGS",
+          data: {
+            findings: findings.map((f) => ({
+              scanId: scanId.toHexString(),
+              installationId,
+              owner,
+              repo,
+              rule: f.rule,
+              severity: f.severity,
+              message: f.message,
+              file: f.file,
+              detectedAt: new Date().toISOString(),
+            })),
+          },
+        });
+      }
+
+      // Mark scan complete
+      await safeWrite(`Scan.complete:${owner}/${repo}:${headSha.slice(0, 7)}`, {
+        type: "COMPLETE_SCAN",
+        data: {
+          scanId: scanId.toHexString(),
+          findingsCount: findings.length,
+          filesScanned: filesScannedCount,
+          durationMs: Date.now() - startTime,
+          completedAt: new Date().toISOString(),
+        },
+      });
 
       const passed = findings.length === 0;
 
@@ -340,8 +410,15 @@ export function handlePush(
         }
       }
     } catch (err) {
+      const durationMs = Date.now() - startTime;
       const message = err instanceof Error ? err.message : String(err);
       logger.error(`[push] Error scanning ${owner}/${repo}: ${message}`);
+
+      await Scan.updateOne(
+        { _id: scanId },
+        { $set: { status: "failed", completedAt: new Date(), durationMs } },
+      ).catch(() => {});
+
       await updateCheckRun({
         octokit: client,
         owner,

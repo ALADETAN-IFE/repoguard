@@ -18,6 +18,8 @@ export type QueuedWrite =
         installationId: number | undefined;
         owner: string;
         repo: string;
+        branch?: string;
+        commitSha?: string;
         status: string;
         trigger: string;
         startedAt: string;
@@ -44,6 +46,8 @@ export type QueuedWrite =
       data: {
         scanId: string;
         findingsCount: number;
+        filesScanned?: number;
+        durationMs?: number;
         completedAt: string;
       };
     };
@@ -78,6 +82,8 @@ async function executeWrite(write: QueuedWrite): Promise<void> {
         installationId: write.data.installationId,
         owner: write.data.owner,
         repo: write.data.repo,
+        branch: write.data.branch || "main",
+        commitSha: write.data.commitSha || "",
         status: write.data.status,
         trigger: write.data.trigger,
         startedAt: new Date(write.data.startedAt),
@@ -108,6 +114,8 @@ async function executeWrite(write: QueuedWrite): Promise<void> {
             status: "complete",
             completedAt: new Date(write.data.completedAt),
             findingsCount: write.data.findingsCount,
+            filesScanned: write.data.filesScanned ?? 0,
+            durationMs: write.data.durationMs ?? 0,
           },
         },
       );

@@ -330,6 +330,8 @@ describe("writeQueue executeWrite routing", () => {
           status: "complete",
           completedAt: new Date(completedAt),
           findingsCount: 5,
+          filesScanned: 0,
+          durationMs: 0,
         },
       }
     );

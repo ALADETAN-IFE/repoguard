@@ -18,6 +18,7 @@ import {
   getDashboardStats,
   getInstallations,
   getInstallationRepos,
+  getInstallationFixPRs,
   scanSingleRepository,
   getRepoFixPRs,
   approveFixPR,
@@ -124,8 +125,29 @@ const getScans = async (req: Request, res: Response): Promise<void> => {
 
     const totalPages = Math.ceil(total / limitNum);
 
+    const formattedScans = scans.map((s) => ({
+      id: s._id.toString(),
+      _id: s._id.toString(),
+      installationId: s.installationId,
+      owner: s.owner,
+      repo: s.repo,
+      branch: s.branch || "main",
+      commitSha: s.commitSha ? s.commitSha.slice(0, 7) : "-",
+      status: s.status,
+      trigger: s.trigger || "installation",
+      startedAt: s.startedAt,
+      completedAt: s.completedAt,
+      durationMs:
+        s.durationMs ??
+        (s.completedAt && s.startedAt
+          ? Math.max(0, new Date(s.completedAt).getTime() - new Date(s.startedAt).getTime())
+          : 0),
+      findingsCount: s.findingsCount || 0,
+      filesScanned: s.filesScanned ?? 0,
+    }));
+
     res.json({
-      scans,
+      scans: formattedScans,
       pagination: {
         total,
         totalPages,
@@ -186,6 +208,16 @@ router.get(
   requireApiKey,
   (req, res) => {
     void getInstallationRepos(req, res);
+  },
+);
+
+// Installation-wide Fix PRs (All repos under an installation in 1 request)
+router.get(
+  "/api/installations/:owner/pulls",
+  authRateLimit,
+  requireApiKey,
+  (req, res) => {
+    void getInstallationFixPRs(req, res);
   },
 );
 

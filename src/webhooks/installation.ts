@@ -121,6 +121,7 @@ export async function scanRepoList(
   installationKey: string,
   owner: string,
   repos: Array<{ full_name: string; name: string }>,
+  trigger: "installation" | "manual" = "installation",
 ): Promise<void> {
   const checkpoint = await Checkpoint.findOne({ installationKey }).lean();
   const alreadyScanned = checkpoint?.scanned ?? [];
@@ -137,8 +138,21 @@ export async function scanRepoList(
   for (const repo of pending) {
     logger.info(`[installation] Scanning: ${repo.full_name}`);
 
+    const startTime = Date.now();
     // Pre-generate the scan ID using Types.ObjectId to avoid race conditions
     const scanId = new Types.ObjectId();
+
+    let branch = "main";
+    let commitSha = "";
+    try {
+      const { data: repoData } = await client.request("GET /repos/{owner}/{repo}", {
+        owner,
+        repo: repo.name,
+      });
+      branch = repoData.default_branch || "main";
+    } catch {
+      // default to main
+    }
 
     // Create a scan record (queued on failure so loop continues)
     await safeWrite(`Scan.create:${repo.full_name}`, {
@@ -148,14 +162,27 @@ export async function scanRepoList(
         installationId: checkpoint?.installationId,
         owner,
         repo: repo.name,
+        branch,
+        commitSha,
         status: "in_progress",
-        trigger: "installation",
-        startedAt: new Date().toISOString(),
+        trigger,
+        startedAt: new Date(startTime).toISOString(),
       },
     });
 
     try {
-      const findings = await scanFullRepoForPush(client, owner, repo.name);
+      const scanResult = await scanFullRepoWithDetails(client, owner, repo.name);
+      const findings = scanResult.findings;
+      const filesScanned = scanResult.filesScanned;
+      const finalSha = scanResult.commitSha || commitSha;
+      const durationMs = Date.now() - startTime;
+
+      if (finalSha) {
+        await Scan.updateOne(
+          { _id: scanId },
+          { $set: { commitSha: finalSha, branch } },
+        ).catch(() => {});
+      }
 
       // Persist findings
       if (findings.length > 0) {
@@ -183,6 +210,8 @@ export async function scanRepoList(
         data: {
           scanId: scanId.toHexString(),
           findingsCount: findings.length,
+          filesScanned,
+          durationMs,
           completedAt: new Date().toISOString(),
         },
       });
@@ -199,6 +228,7 @@ export async function scanRepoList(
       await markScanned(installationKey, repo.full_name);
       logger.info(`[installation] ✓ ${repo.full_name} checkpointed`);
     } catch (err) {
+      const durationMs = Date.now() - startTime;
       const message = err instanceof Error ? err.message : String(err);
       logger.error(
         `[installation] Error scanning ${repo.full_name}: ${message}`,
@@ -206,7 +236,7 @@ export async function scanRepoList(
 
       await Scan.updateOne(
         { _id: scanId },
-        { $set: { status: "failed", completedAt: new Date() } },
+        { $set: { status: "failed", completedAt: new Date(), durationMs } },
       ).catch((dbErr: unknown) => {
         const msg = dbErr instanceof Error ? dbErr.message : String(dbErr);
         logger.warn(
@@ -464,11 +494,18 @@ export function handleInstallationRepositories(
 
 // ─── Zipball-based scanning with Tree fallback ───────────────────────────────
 
+export interface FullRepoScanResult {
+  findings: Finding[];
+  filesScanned: number;
+  commitSha?: string;
+  branch?: string;
+}
+
 async function scanViaZipball(
   client: OctokitClient,
   owner: string,
   repo: string,
-): Promise<Finding[]> {
+): Promise<FullRepoScanResult> {
   const findings: Finding[] = [];
   logger.info(`[scan-size] Downloading zipball for ${owner}/${repo}`);
 
@@ -479,6 +516,8 @@ async function scanViaZipball(
     owner,
     repo,
   });
+
+  const branch = repoData.default_branch || "main";
 
   // GitHub reports size in KB
   const repoSizeBytes = (repoData.size ?? 0) * 1024;
@@ -513,6 +552,17 @@ async function scanViaZipball(
   const zip = new AdmZip(buffer);
   const entries = zip.getEntries();
 
+  // Extract commit SHA from root directory name if present (format: owner-repo-sha)
+  let commitSha = "";
+  const firstEntry = entries[0];
+  if (firstEntry) {
+    const rootName = firstEntry.entryName.split("/")[0];
+    const parts = rootName ? rootName.split("-") : [];
+    if (parts.length > 2) {
+      commitSha = parts[parts.length - 1];
+    }
+  }
+
   // ── Fetch .repoguardignore if present in zip ───────────────────────────────
   let ignoredPaths: string[] = [];
   const ignoreEntry = entries.find((entry) => {
@@ -528,6 +578,8 @@ async function scanViaZipball(
       .filter((l) => l && !l.startsWith("#"));
   }
 
+  let filesScanned = 0;
+
   // ── Iterate and scan entries ───────────────────────────────────────────────
   for (const entry of entries) {
     if (entry.isDirectory) continue;
@@ -542,6 +594,8 @@ async function scanViaZipball(
     if (shouldSkipPath(filePath)) continue;
     if (ignoredPaths.some((p) => filePath.startsWith(p))) continue;
 
+    filesScanned++;
+
     const content = entry.getData().toString("utf8");
     const binary = isBinaryPath(filePath);
 
@@ -551,19 +605,46 @@ async function scanViaZipball(
     findings.push(...scanFileContent(content, filePath));
   }
 
-  return findings;
+  return { findings, filesScanned, commitSha, branch };
 }
 
 async function scanViaTreeAndIndividualFiles(
   client: OctokitClient,
   owner: string,
   repo: string,
-): Promise<Finding[]> {
+): Promise<FullRepoScanResult> {
   const findings: Finding[] = [];
+
+  let treeSha = "HEAD";
+  let commitSha = "";
+  let branch = "main";
+
+  try {
+    const { data: commitData } = await client.request(
+      "GET /repos/{owner}/{repo}/commits/{ref}",
+      { owner, repo, ref: "HEAD" },
+    );
+    if (commitData) {
+      commitSha = commitData.sha || "";
+      treeSha = commitData.commit?.tree?.sha || commitData.sha || "HEAD";
+    }
+  } catch {
+    // If commit lookup fails, try HEAD directly
+  }
+
+  try {
+    const { data: repoData } = await client.request("GET /repos/{owner}/{repo}", {
+      owner,
+      repo,
+    });
+    branch = repoData.default_branch || "main";
+  } catch {
+    // ignore
+  }
 
   const { data: tree } = await client.request(
     "GET /repos/{owner}/{repo}/git/trees/{tree_sha}",
-    { owner, repo, tree_sha: "HEAD", recursive: "1" },
+    { owner, repo, tree_sha: treeSha, recursive: "1" },
   );
 
   // ── Fetch .repoguardignore if present ──────────────────────────────────────
@@ -586,19 +667,21 @@ async function scanViaTreeAndIndividualFiles(
 
   // ✅ Filter blobs upfront then fetch in batches of 10
   const BATCH_SIZE = 10;
-  const blobs = tree.tree.filter(
-    (item) =>
+  const blobs = (tree?.tree || []).filter(
+    (item: { type?: string; path?: string }) =>
       item.type === "blob" &&
       !!item.path &&
       !shouldSkipPath(item.path) &&
       !ignoredPaths.some((p) => item.path!.startsWith(p)),
   );
 
+  const filesScanned = blobs.length;
+
   for (let i = 0; i < blobs.length; i += BATCH_SIZE) {
     const batch = blobs.slice(i, i + BATCH_SIZE);
 
     await Promise.all(
-      batch.map(async (item) => {
+      batch.map(async (item: { path?: string }) => {
         const binary = isBinaryPath(item.path!);
         try {
           const { data } = await client.request(
@@ -628,14 +711,14 @@ async function scanViaTreeAndIndividualFiles(
     );
   }
 
-  return findings;
+  return { findings, filesScanned, commitSha, branch };
 }
 
-export async function scanFullRepoForPush(
+export async function scanFullRepoWithDetails(
   client: OctokitClient,
   owner: string,
   repo: string,
-): Promise<Finding[]> {
+): Promise<FullRepoScanResult> {
   try {
     logger.info(`[scan] Attempting zipball-based scan for ${owner}/${repo}`);
     return await scanViaZipball(client, owner, repo);
@@ -646,4 +729,13 @@ export async function scanFullRepoForPush(
     );
     return await scanViaTreeAndIndividualFiles(client, owner, repo);
   }
+}
+
+export async function scanFullRepoForPush(
+  client: OctokitClient,
+  owner: string,
+  repo: string,
+): Promise<Finding[]> {
+  const result = await scanFullRepoWithDetails(client, owner, repo);
+  return result.findings;
 }
