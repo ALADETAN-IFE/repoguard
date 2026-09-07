@@ -6,6 +6,7 @@ import {
   requireRescanSecret,
   requireWebhookSignature,
   webhookRateLimit,
+  type AuthenticatedRequest,
 } from "./middleware";
 import { Scan, Finding, Installation, Checkpoint } from "./models";
 import { scanRepoList } from "./webhooks/installation";
@@ -110,9 +111,15 @@ const getScans = async (req: Request, res: Response): Promise<void> => {
     const limitNum = Math.min(100, Math.max(1, parseInt(limit as string, 10)));
     const skip = (pageNum - 1) * limitNum;
 
+    const authReq = req as AuthenticatedRequest;
+    const targetOwner =
+      (typeof owner === "string" && owner.trim()) ||
+      authReq.userSession?.user?.login ||
+      "";
+
     const filter: Record<string, unknown> = {};
-    if (owner && typeof owner === "string" && owner.trim()) {
-      filter.owner = new RegExp(`^${owner.trim()}$`, "i");
+    if (targetOwner) {
+      filter.owner = new RegExp(`^${targetOwner}$`, "i");
     }
     if (repo && typeof repo === "string" && repo.trim()) {
       filter.repo = new RegExp(`^${repo.trim()}$`, "i");
