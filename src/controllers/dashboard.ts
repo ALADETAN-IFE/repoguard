@@ -406,33 +406,65 @@ export const getInstallationFixPRs = async (
               pr.head.ref.startsWith("repoguard/"),
           );
 
-          return repoGuardPulls.map(
-            (pr: {
-              id: number;
-              number: number;
-              title: string;
-              head: { ref: string };
-              base: { repo: { name: string } };
-              html_url: string;
-              created_at: string;
-              user: { login: string } | null;
-              labels: { name: string }[];
-            }) => ({
-              id: pr.id,
-              number: pr.number,
-              title: pr.title,
-              owner,
-              repo: pr.base?.repo?.name || r.name,
-              branch: pr.head.ref,
-              url: pr.html_url,
-              findingsCount: 1,
-              severity: deriveSeverity(pr),
-              rule: "security-fix",
-              status: "open",
-              createdAt: pr.created_at,
-              author: pr.user?.login || "repoguard[bot]",
-            }),
+          const prsWithDiff = await Promise.all(
+            repoGuardPulls.map(
+              async (pr: {
+                id: number;
+                number: number;
+                title: string;
+                head: { ref: string };
+                base: { repo: { name: string } };
+                html_url: string;
+                created_at: string;
+                user: { login: string } | null;
+                labels: { name: string }[];
+              }) => {
+                let diff: string | undefined;
+                try {
+                  const diffRes = await client.request(
+                    "GET /repos/{owner}/{repo}/pulls/{pull_number}",
+                    {
+                      owner,
+                      repo: r.name,
+                      pull_number: pr.number,
+                      headers: { accept: "application/vnd.github.diff" },
+                    },
+                  );
+                  const diffText: unknown = diffRes.data;
+                  if (typeof diffText === "string" && diffText.length > 0) {
+                    diff = diffText;
+                  }
+                } catch (diffErr) {
+                  const diffMsg =
+                    diffErr instanceof Error
+                      ? diffErr.message
+                      : String(diffErr);
+                  logger.warn(
+                    `[api/installations/pulls] Could not fetch diff for PR #${pr.number}: ${diffMsg}`,
+                  );
+                }
+
+                return {
+                  id: pr.id,
+                  number: pr.number,
+                  title: pr.title,
+                  owner,
+                  repo: pr.base?.repo?.name || r.name,
+                  branch: pr.head.ref,
+                  url: pr.html_url,
+                  findingsCount: 1,
+                  severity: deriveSeverity(pr),
+                  rule: "security-fix",
+                  status: "open",
+                  createdAt: pr.created_at,
+                  author: pr.user?.login || "repoguard[bot]",
+                  diff,
+                };
+              },
+            ),
           );
+
+          return prsWithDiff;
         } catch {
           return [];
         }
