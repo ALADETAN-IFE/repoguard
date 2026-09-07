@@ -58,6 +58,7 @@ export interface SessionPayload {
     avatarUrl: string;
     isSystemAdmin: boolean;
     role: "system_admin" | "org_admin" | "member";
+    accessToken?: string;
   };
   accounts: AccountContext[];
   exp: number;
@@ -126,7 +127,7 @@ export const initiateGitHubOAuth = (req: Request, res: Response): void => {
     process.env.GITHUB_CALLBACK_URL ||
     `${req.protocol}://${req.get("host")}/auth/github/callback`;
 
-  const scope = "read:user user:email read:org";
+  const scope = "read:user user:email read:org repo";
   const state = crypto.randomBytes(16).toString("hex");
 
   let authUrl = `https://github.com/login/oauth/authorize?client_id=${clientId}&scope=${encodeURIComponent(
@@ -374,6 +375,7 @@ export const handleGitHubOAuthCallback = async (
         avatarUrl: ghUser.avatar_url,
         isSystemAdmin,
         role: defaultRole,
+        accessToken,
       },
       accounts,
     });

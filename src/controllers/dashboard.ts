@@ -4,6 +4,7 @@ import { githubApp } from "../config/githubApp";
 import { normaliseOctokit } from "../utils/normaliseOctokit";
 import logger from "../utils/logger";
 import { scanRepoList } from "../webhooks/installation";
+import { verifySessionToken } from "./auth";
 
 /**
  * GET /api/stats
@@ -406,65 +407,33 @@ export const getInstallationFixPRs = async (
               pr.head.ref.startsWith("repoguard/"),
           );
 
-          const prsWithDiff = await Promise.all(
-            repoGuardPulls.map(
-              async (pr: {
-                id: number;
-                number: number;
-                title: string;
-                head: { ref: string };
-                base: { repo: { name: string } };
-                html_url: string;
-                created_at: string;
-                user: { login: string } | null;
-                labels: { name: string }[];
-              }) => {
-                let diff: string | undefined;
-                try {
-                  const diffRes = await client.request(
-                    "GET /repos/{owner}/{repo}/pulls/{pull_number}",
-                    {
-                      owner,
-                      repo: r.name,
-                      pull_number: pr.number,
-                      headers: { accept: "application/vnd.github.diff" },
-                    },
-                  );
-                  const diffText: unknown = diffRes.data;
-                  if (typeof diffText === "string" && diffText.length > 0) {
-                    diff = diffText;
-                  }
-                } catch (diffErr) {
-                  const diffMsg =
-                    diffErr instanceof Error
-                      ? diffErr.message
-                      : String(diffErr);
-                  logger.warn(
-                    `[api/installations/pulls] Could not fetch diff for PR #${pr.number}: ${diffMsg}`,
-                  );
-                }
-
-                return {
-                  id: pr.id,
-                  number: pr.number,
-                  title: pr.title,
-                  owner,
-                  repo: pr.base?.repo?.name || r.name,
-                  branch: pr.head.ref,
-                  url: pr.html_url,
-                  findingsCount: 1,
-                  severity: deriveSeverity(pr),
-                  rule: "security-fix",
-                  status: "open",
-                  createdAt: pr.created_at,
-                  author: pr.user?.login || "repoguard[bot]",
-                  diff,
-                };
-              },
-            ),
+          return repoGuardPulls.map(
+            (pr: {
+              id: number;
+              number: number;
+              title: string;
+              head: { ref: string };
+              base: { repo: { name: string } };
+              html_url: string;
+              created_at: string;
+              user: { login: string } | null;
+              labels: { name: string }[];
+            }) => ({
+              id: pr.id,
+              number: pr.number,
+              title: pr.title,
+              owner,
+              repo: pr.base?.repo?.name || r.name,
+              branch: pr.head.ref,
+              url: pr.html_url,
+              findingsCount: 1,
+              severity: deriveSeverity(pr),
+              rule: "security-fix",
+              status: "open",
+              createdAt: pr.created_at,
+              author: pr.user?.login || "repoguard[bot]",
+            }),
           );
-
-          return prsWithDiff;
         } catch {
           return [];
         }
@@ -632,6 +601,73 @@ export const getRepoFixPRs = async (
 };
 
 /**
+ * GET /api/repos/:owner/:repo/pulls/:pull_number/diff
+ * Fetches the unified Git diff for a specific Fix PR on demand.
+ */
+export const getRepoFixPRDiff = async (
+  req: Request,
+  res: Response,
+): Promise<void> => {
+  const { owner, repo, pull_number } = req.params;
+  const pullNumber = parseInt(pull_number, 10);
+  logger.info(
+    `[api/repos/pulls/diff] Fetching on-demand diff for PR #${pullNumber} in '${owner}/${repo}'`,
+  );
+
+  try {
+    const installation = await Installation.findOne({
+      owner: new RegExp(`^${owner}$`, "i"),
+      uninstalledAt: null,
+    }).lean();
+
+    if (!installation) {
+      res
+        .status(404)
+        .json({ error: `Installation not found for owner '${owner}'` });
+      return;
+    }
+
+    const octokit = await githubApp.getInstallationOctokit(
+      installation.installationId,
+    );
+    const client = normaliseOctokit(octokit);
+
+    const diffRes = await client.request(
+      "GET /repos/{owner}/{repo}/pulls/{pull_number}",
+      {
+        owner,
+        repo,
+        pull_number: pullNumber,
+        headers: { accept: "application/vnd.github.diff" },
+      },
+    );
+
+    const diffText: unknown = diffRes.data;
+    let diff = "";
+    let isTruncated = false;
+    if (typeof diffText === "string" && diffText.length > 0) {
+      const MAX_DIFF_LEN = 25000;
+      if (diffText.length > MAX_DIFF_LEN) {
+        diff =
+          diffText.slice(0, MAX_DIFF_LEN) +
+          "\n\n... (Diff truncated for preview. View full patch on GitHub)";
+        isTruncated = true;
+      } else {
+        diff = diffText;
+      }
+    }
+
+    res.json({ diff, isTruncated });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    logger.error(
+      `[api/repos/pulls/diff] ERROR: Failed to fetch diff for PR #${pullNumber}: ${message}`,
+    );
+    res.status(500).json({ error: message });
+  }
+};
+
+/**
  * POST /api/repos/:owner/:repo/pulls/:pull_number/approve
  * Approves a RepoGuard Fix PR
  */
@@ -661,44 +697,104 @@ export const approveFixPR = async (
       return;
     }
 
-    const octokit = await githubApp.getInstallationOctokit(
-      installation.installationId,
-    );
-    const client = normaliseOctokit(octokit);
+    // Check if the user is authenticated with their personal GitHub OAuth token
+    const authHeader = req.headers.authorization;
+    const token = authHeader?.startsWith("Bearer ")
+      ? authHeader.substring(7)
+      : null;
+    let userAccessToken: string | undefined;
+    let userLogin: string | undefined;
 
-    try {
-      await client.request(
-        "POST /repos/{owner}/{repo}/pulls/{pull_number}/reviews",
-        {
-          owner,
-          repo,
-          pull_number: pullNumber,
-          event: "APPROVE",
-          body: "✓ Approved via RepoGuard Security Console.",
-        },
-      );
-    } catch (reviewErr: unknown) {
-      const errMsg =
-        reviewErr instanceof Error ? reviewErr.message : String(reviewErr);
-      if (
-        errMsg.includes("Can not approve your own pull request") ||
-        errMsg.includes("Unprocessable Entity")
-      ) {
+    if (token) {
+      const session = verifySessionToken(token);
+      if (session?.user?.accessToken) {
+        userAccessToken = session.user.accessToken;
+        userLogin = session.user.login;
+      }
+    }
+
+    let approvedAsUser = false;
+
+    if (userAccessToken) {
+      try {
         logger.info(
-          `[api/repos/pulls/approve] Bot is author of PR #${pullNumber}. Submitting review confirmation comment instead.`,
+          `[api/repos/pulls/approve] Submitting review as user @${userLogin} for PR #${pullNumber} in '${owner}/${repo}'`,
         );
+        const reviewRes = await fetch(
+          `https://api.github.com/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/pulls/${pullNumber}/reviews`,
+          {
+            method: "POST",
+            headers: {
+              Authorization: `Bearer ${userAccessToken}`,
+              Accept: "application/vnd.github+json",
+              "User-Agent": "RepoGuard-App",
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify({
+              event: "APPROVE",
+              body: "Approved via RepoGuard Security Console.",
+            }),
+          },
+        );
+
+        if (reviewRes.ok) {
+          approvedAsUser = true;
+          logger.info(
+            `[api/repos/pulls/approve] SUCCESS: User @${userLogin} approved PR #${pullNumber}`,
+          );
+        } else {
+          const errBody = await reviewRes.json().catch(() => ({}));
+          logger.warn(
+            `[api/repos/pulls/approve] User review failed with status ${reviewRes.status}: ${JSON.stringify(errBody)}. Falling back to bot.`,
+          );
+        }
+      } catch (userErr) {
+        logger.warn(
+          `[api/repos/pulls/approve] Error during user review call: ${String(userErr)}. Falling back to bot.`,
+        );
+      }
+    }
+
+    if (!approvedAsUser) {
+      const octokit = await githubApp.getInstallationOctokit(
+        installation.installationId,
+      );
+      const client = normaliseOctokit(octokit);
+
+      try {
         await client.request(
           "POST /repos/{owner}/{repo}/pulls/{pull_number}/reviews",
           {
             owner,
             repo,
             pull_number: pullNumber,
-            event: "COMMENT",
-            body: "✅ **RepoGuard Approval:** Changes verified and approved for merge via RepoGuard Security Console.",
+            event: "APPROVE",
+            body: "✓ Approved via RepoGuard Security Console.",
           },
         );
-      } else {
-        throw reviewErr;
+      } catch (reviewErr: unknown) {
+        const errMsg =
+          reviewErr instanceof Error ? reviewErr.message : String(reviewErr);
+        if (
+          errMsg.includes("Can not approve your own pull request") ||
+          errMsg.includes("Unprocessable Entity")
+        ) {
+          logger.info(
+            `[api/repos/pulls/approve] Bot is author of PR #${pullNumber}. Submitting review confirmation comment instead.`,
+          );
+          await client.request(
+            "POST /repos/{owner}/{repo}/pulls/{pull_number}/reviews",
+            {
+              owner,
+              repo,
+              pull_number: pullNumber,
+              event: "COMMENT",
+              body: "✅ **RepoGuard Approval:** Changes verified and approved for merge via RepoGuard Security Console.",
+            },
+          );
+        } else {
+          throw reviewErr;
+        }
       }
     }
 

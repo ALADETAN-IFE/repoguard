@@ -22,6 +22,7 @@ import {
   getInstallationFixPRs,
   scanSingleRepository,
   getRepoFixPRs,
+  getRepoFixPRDiff,
   approveFixPR,
   mergeFixPR,
 } from "./controllers/dashboard";
@@ -253,6 +254,16 @@ router.get(
   requireApiKey,
   (req, res) => {
     void getRepoFixPRs(req, res);
+  },
+);
+
+// Repository Fix PR Diff (on-demand)
+router.get(
+  "/api/repos/:owner/:repo/pulls/:pull_number/diff",
+  authRateLimit,
+  requireApiKey,
+  (req, res) => {
+    void getRepoFixPRDiff(req, res);
   },
 );
 
