@@ -111,8 +111,12 @@ const getScans = async (req: Request, res: Response): Promise<void> => {
     const skip = (pageNum - 1) * limitNum;
 
     const filter: Record<string, unknown> = {};
-    if (owner) filter.owner = owner;
-    if (repo) filter.repo = repo;
+    if (owner && typeof owner === "string" && owner.trim()) {
+      filter.owner = new RegExp(`^${owner.trim()}$`, "i");
+    }
+    if (repo && typeof repo === "string" && repo.trim()) {
+      filter.repo = new RegExp(`^${repo.trim()}$`, "i");
+    }
 
     const [scans, total] = await Promise.all([
       Scan.find(filter)
@@ -140,7 +144,11 @@ const getScans = async (req: Request, res: Response): Promise<void> => {
       durationMs:
         s.durationMs ??
         (s.completedAt && s.startedAt
-          ? Math.max(0, new Date(s.completedAt).getTime() - new Date(s.startedAt).getTime())
+          ? Math.max(
+              0,
+              new Date(s.completedAt).getTime() -
+                new Date(s.startedAt).getTime(),
+            )
           : 0),
       findingsCount: s.findingsCount || 0,
       filesScanned: s.filesScanned ?? 0,

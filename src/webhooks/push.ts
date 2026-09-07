@@ -105,7 +105,8 @@ export function handlePush(
 
     const startTime = Date.now();
     const scanId = new Types.ObjectId();
-    let installationId = (payload as { installation?: { id: number } }).installation?.id;
+    let installationId = (payload as { installation?: { id: number } })
+      .installation?.id;
     if (!installationId) {
       try {
         const inst = await Installation.findOne({
@@ -181,22 +182,25 @@ export function handlePush(
 
       // Persist findings to MongoDB
       if (findings.length > 0) {
-        await safeWrite(`FindingModel.insertMany:${owner}/${repo}:${headSha.slice(0, 7)}`, {
-          type: "INSERT_FINDINGS",
-          data: {
-            findings: findings.map((f) => ({
-              scanId: scanId.toHexString(),
-              installationId,
-              owner,
-              repo,
-              rule: f.rule,
-              severity: f.severity,
-              message: f.message,
-              file: f.file,
-              detectedAt: new Date().toISOString(),
-            })),
+        await safeWrite(
+          `FindingModel.insertMany:${owner}/${repo}:${headSha.slice(0, 7)}`,
+          {
+            type: "INSERT_FINDINGS",
+            data: {
+              findings: findings.map((f) => ({
+                scanId: scanId.toHexString(),
+                installationId,
+                owner,
+                repo,
+                rule: f.rule,
+                severity: f.severity,
+                message: f.message,
+                file: f.file,
+                detectedAt: new Date().toISOString(),
+              })),
+            },
           },
-        });
+        );
       }
 
       // Mark scan complete

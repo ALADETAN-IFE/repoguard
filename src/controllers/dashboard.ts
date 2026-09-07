@@ -90,7 +90,11 @@ export const getDashboardStats = async (
       durationMs:
         s.durationMs ??
         (s.completedAt && s.startedAt
-          ? Math.max(0, new Date(s.completedAt).getTime() - new Date(s.startedAt).getTime())
+          ? Math.max(
+              0,
+              new Date(s.completedAt).getTime() -
+                new Date(s.startedAt).getTime(),
+            )
           : 0),
       findingsCount: s.findingsCount || 0,
       filesScanned: s.filesScanned ?? 0,
@@ -296,7 +300,13 @@ export const scanSingleRepository = async (
     );
 
     // Fire scan with manual trigger
-    void scanRepoList(client, installationKey, installation.owner, repoList, "manual");
+    void scanRepoList(
+      client,
+      installationKey,
+      installation.owner,
+      repoList,
+      "manual",
+    );
 
     res.json({
       message: `Scan initiated for ${owner}/${repo}`,
@@ -322,7 +332,9 @@ export const getInstallationFixPRs = async (
   res: Response,
 ): Promise<void> => {
   const { owner } = req.params;
-  logger.info(`[api/installations/pulls] Fetching open Fix PRs for installation '${owner}'`);
+  logger.info(
+    `[api/installations/pulls] Fetching open Fix PRs for installation '${owner}'`,
+  );
 
   try {
     const installation = await Installation.findOne({
@@ -357,11 +369,20 @@ export const getInstallationFixPRs = async (
       title: string;
     }): string => {
       const labelNames = pr.labels.map((l) => l.name.toLowerCase());
-      if (labelNames.includes("critical") || pr.title.toLowerCase().includes("critical"))
+      if (
+        labelNames.includes("critical") ||
+        pr.title.toLowerCase().includes("critical")
+      )
         return "critical";
-      if (labelNames.includes("high") || pr.title.toLowerCase().includes("high"))
+      if (
+        labelNames.includes("high") ||
+        pr.title.toLowerCase().includes("high")
+      )
         return "high";
-      if (labelNames.includes("medium") || pr.title.toLowerCase().includes("medium"))
+      if (
+        labelNames.includes("medium") ||
+        pr.title.toLowerCase().includes("medium")
+      )
         return "medium";
       return "low";
     };
@@ -381,7 +402,8 @@ export const getInstallationFixPRs = async (
 
           const repoGuardPulls = pulls.filter(
             (pr: { title: string; head: { ref: string } }) =>
-              pr.title.includes("RepoGuard") || pr.head.ref.startsWith("repoguard/"),
+              pr.title.includes("RepoGuard") ||
+              pr.head.ref.startsWith("repoguard/"),
           );
 
           return repoGuardPulls.map(
@@ -624,7 +646,8 @@ export const approveFixPR = async (
         },
       );
     } catch (reviewErr: unknown) {
-      const errMsg = reviewErr instanceof Error ? reviewErr.message : String(reviewErr);
+      const errMsg =
+        reviewErr instanceof Error ? reviewErr.message : String(reviewErr);
       if (
         errMsg.includes("Can not approve your own pull request") ||
         errMsg.includes("Unprocessable Entity")

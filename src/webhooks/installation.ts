@@ -143,12 +143,15 @@ export async function scanRepoList(
     const scanId = new Types.ObjectId();
 
     let branch = "main";
-    let commitSha = "";
+    const commitSha = "";
     try {
-      const { data: repoData } = await client.request("GET /repos/{owner}/{repo}", {
-        owner,
-        repo: repo.name,
-      });
+      const { data: repoData } = await client.request(
+        "GET /repos/{owner}/{repo}",
+        {
+          owner,
+          repo: repo.name,
+        },
+      );
       branch = repoData.default_branch || "main";
     } catch {
       // default to main
@@ -171,7 +174,11 @@ export async function scanRepoList(
     });
 
     try {
-      const scanResult = await scanFullRepoWithDetails(client, owner, repo.name);
+      const scanResult = await scanFullRepoWithDetails(
+        client,
+        owner,
+        repo.name,
+      );
       const findings = scanResult.findings;
       const filesScanned = scanResult.filesScanned;
       const finalSha = scanResult.commitSha || commitSha;
@@ -633,10 +640,13 @@ async function scanViaTreeAndIndividualFiles(
   }
 
   try {
-    const { data: repoData } = await client.request("GET /repos/{owner}/{repo}", {
-      owner,
-      repo,
-    });
+    const { data: repoData } = await client.request(
+      "GET /repos/{owner}/{repo}",
+      {
+        owner,
+        repo,
+      },
+    );
     branch = repoData.default_branch || "main";
   } catch {
     // ignore
