@@ -632,15 +632,22 @@ export const getRepoFixPRDiff = async (
     );
     const client = normaliseOctokit(octokit);
 
-    const diffRes = await client.request(
-      "GET /repos/{owner}/{repo}/pulls/{pull_number}",
-      {
+    const [diffRes, reviewsRes] = await Promise.all([
+      client.request("GET /repos/{owner}/{repo}/pulls/{pull_number}", {
         owner,
         repo,
         pull_number: pullNumber,
         headers: { accept: "application/vnd.github.diff" },
-      },
-    );
+      }),
+      client
+        .request("GET /repos/{owner}/{repo}/pulls/{pull_number}/reviews", {
+          owner,
+          repo,
+          pull_number: pullNumber,
+          per_page: 20,
+        })
+        .catch(() => ({ data: [] })),
+    ]);
 
     const diffText: unknown = diffRes.data;
     let diff = "";
@@ -657,7 +664,18 @@ export const getRepoFixPRDiff = async (
       }
     }
 
-    res.json({ diff, isTruncated });
+    let isApproved = false;
+    let reviewStatus: string | null = null;
+    const reviews = Array.isArray(reviewsRes.data) ? reviewsRes.data : [];
+    const approvedReview = reviews.find(
+      (r: { state: string }) => r.state === "APPROVED",
+    );
+    if (approvedReview) {
+      isApproved = true;
+      reviewStatus = "APPROVED";
+    }
+
+    res.json({ diff, isTruncated, isApproved, reviewStatus });
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     logger.error(
