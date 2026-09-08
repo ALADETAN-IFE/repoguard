@@ -905,7 +905,20 @@ export const getFindings = async (
   req: Request,
   res: Response,
 ): Promise<void> => {
-  const { owner, repo, severity, status, scanId } = req.query;
+  const owner =
+    typeof req.query.owner === "string" ? req.query.owner.trim() : "";
+  const repo = typeof req.query.repo === "string" ? req.query.repo.trim() : "";
+  const severity =
+    typeof req.query.severity === "string"
+      ? req.query.severity.trim().toLowerCase()
+      : "";
+  const status =
+    typeof req.query.status === "string"
+      ? req.query.status.trim().toLowerCase()
+      : "";
+  const scanId =
+    typeof req.query.scanId === "string" ? req.query.scanId.trim() : "";
+
   logger.info(
     `[api/findings] Fetching findings (owner: ${owner || "ALL"}, repo: ${repo || "ALL"}, status: ${status || "ALL"})`,
   );
@@ -913,16 +926,16 @@ export const getFindings = async (
   try {
     const filter: Record<string, unknown> = {};
 
-    if (owner && typeof owner === "string" && owner.trim()) {
-      filter.owner = new RegExp(`^${owner.trim()}$`, "i");
+    if (owner) {
+      filter.owner = new RegExp(`^${owner}$`, "i");
     }
 
-    if (repo && typeof repo === "string" && repo.trim()) {
-      filter.repo = new RegExp(`^${repo.trim()}$`, "i");
+    if (repo) {
+      filter.repo = new RegExp(`^${repo}$`, "i");
     }
 
-    if (severity && typeof severity === "string" && severity.trim()) {
-      filter.severity = severity.trim().toLowerCase();
+    if (severity) {
+      filter.severity = severity;
     }
 
     if (status === "unresolved") {
@@ -931,8 +944,8 @@ export const getFindings = async (
       filter.resolvedAt = { $ne: null };
     }
 
-    if (scanId && typeof scanId === "string" && scanId.trim()) {
-      filter.scanId = scanId.trim();
+    if (scanId) {
+      filter.scanId = scanId;
     }
 
     const findings = await Finding.find(filter)
