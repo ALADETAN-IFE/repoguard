@@ -13,13 +13,13 @@ export interface TenantSummary {
   installationId: number;
   owner: string;
   email: string | null;
-  installedAt: Date;
-  uninstalledAt: Date | null;
+  installedAt: string;
+  uninstalledAt: string | null;
   isActive: boolean;
   marketplacePlan: string | null;
   billingCycle: "monthly" | "yearly" | null;
   onFreeTrial: boolean;
-  freeTrialEndsOn: Date | null;
+  freeTrialEndsOn: string | null;
   totalScans: number;
   unresolvedThreats: number;
 }
@@ -31,8 +31,8 @@ export interface CheckpointSummary {
   totalCount: number;
   scannedCount: number;
   isComplete: boolean;
-  updatedAt: Date;
-  startedAt: Date;
+  updatedAt: string;
+  startedAt: string;
 }
 
 /**
@@ -106,15 +106,28 @@ export async function getAdminOverview(
         return {
           id: String(inst._id),
           installationId: inst.installationId,
-          owner: inst.owner,
-          email: inst.email,
-          installedAt: inst.installedAt,
-          uninstalledAt: inst.uninstalledAt,
+          owner: String(inst.owner),
+          email: inst.email ? String(inst.email) : null,
+          installedAt:
+            inst.installedAt instanceof Date
+              ? inst.installedAt.toISOString()
+              : String(inst.installedAt ?? ""),
+          uninstalledAt:
+            inst.uninstalledAt instanceof Date
+              ? inst.uninstalledAt.toISOString()
+              : inst.uninstalledAt
+                ? String(inst.uninstalledAt)
+                : null,
           isActive: !inst.uninstalledAt,
-          marketplacePlan: inst.marketplacePlan || "free",
-          billingCycle: inst.billingCycle,
+          marketplacePlan: String(inst.marketplacePlan || "free"),
+          billingCycle: inst.billingCycle ?? null,
           onFreeTrial: Boolean(inst.onFreeTrial),
-          freeTrialEndsOn: inst.freeTrialEndsOn,
+          freeTrialEndsOn:
+            inst.freeTrialEndsOn instanceof Date
+              ? inst.freeTrialEndsOn.toISOString()
+              : inst.freeTrialEndsOn
+                ? String(inst.freeTrialEndsOn)
+                : null,
           totalScans,
           unresolvedThreats,
         };
@@ -128,13 +141,23 @@ export async function getAdminOverview(
       .lean();
     const checkpoints: CheckpointSummary[] = rawCheckpoints.map((cp) => ({
       id: String(cp._id),
-      installationKey: cp.installationKey,
-      owner: cp.owner,
+      installationKey: String(cp.installationKey),
+      owner: String(cp.owner),
       totalCount: cp.totalRepos?.length || 0,
       scannedCount: cp.scanned?.length || 0,
       isComplete: (cp.scanned?.length || 0) >= (cp.totalRepos?.length || 0),
-      updatedAt: cp.updatedAt,
-      startedAt: cp.startedAt,
+      updatedAt:
+        cp.updatedAt instanceof Date
+          ? cp.updatedAt.toISOString()
+          : cp.updatedAt
+            ? String(cp.updatedAt)
+            : new Date().toISOString(),
+      startedAt:
+        cp.startedAt instanceof Date
+          ? cp.startedAt.toISOString()
+          : cp.startedAt
+            ? String(cp.startedAt)
+            : new Date().toISOString(),
     }));
 
     // 4. Subscriptions & MRR Analytics
