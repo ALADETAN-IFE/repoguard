@@ -249,6 +249,16 @@ export const handleGitHubOAuthCallback = async (
           emails[0];
         if (primaryEmail?.email) {
           userEmail = primaryEmail.email;
+          Installation.updateMany(
+            {
+              owner: new RegExp(`^${ghUser.login}$`, "i"),
+            },
+            { $set: { email: userEmail } },
+          ).catch((err: unknown) => {
+            logger.warn(
+              `[auth/github/callback] Could not backfill installation email: ${String(err)}`,
+            );
+          });
         }
       }
     } catch (e) {

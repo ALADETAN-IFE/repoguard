@@ -103,11 +103,22 @@ export async function getAdminOverview(
           }),
         ]);
 
+        let resolvedEmail = inst.email ? String(inst.email) : null;
+        if (!resolvedEmail) {
+          const sameOwner = rawInstallations.find(
+            (i) =>
+              i.owner.toLowerCase() === inst.owner.toLowerCase() && i.email,
+          );
+          if (sameOwner?.email) {
+            resolvedEmail = String(sameOwner.email);
+          }
+        }
+
         return {
           id: String(inst._id),
           installationId: inst.installationId,
           owner: String(inst.owner),
-          email: inst.email ? String(inst.email) : null,
+          email: resolvedEmail,
           installedAt:
             inst.installedAt instanceof Date
               ? inst.installedAt.toISOString()
