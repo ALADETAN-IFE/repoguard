@@ -896,3 +896,75 @@ export const mergeFixPR = async (
     res.status(500).json({ error: message });
   }
 };
+
+/**
+ * GET /api/findings
+ * Lists all threat findings across all scans/repositories for an owner or specific repository
+ */
+export const getFindings = async (
+  req: Request,
+  res: Response,
+): Promise<void> => {
+  const { owner, repo, severity, status, scanId } = req.query;
+  logger.info(
+    `[api/findings] Fetching findings (owner: ${owner || "ALL"}, repo: ${repo || "ALL"}, status: ${status || "ALL"})`,
+  );
+
+  try {
+    const filter: Record<string, unknown> = {};
+
+    if (owner && typeof owner === "string" && owner.trim()) {
+      filter.owner = new RegExp(`^${owner.trim()}$`, "i");
+    }
+
+    if (repo && typeof repo === "string" && repo.trim()) {
+      filter.repo = new RegExp(`^${repo.trim()}$`, "i");
+    }
+
+    if (severity && typeof severity === "string" && severity.trim()) {
+      filter.severity = severity.trim().toLowerCase();
+    }
+
+    if (status === "unresolved") {
+      filter.resolvedAt = null;
+    } else if (status === "resolved") {
+      filter.resolvedAt = { $ne: null };
+    }
+
+    if (scanId && typeof scanId === "string" && scanId.trim()) {
+      filter.scanId = scanId.trim();
+    }
+
+    const findings = await Finding.find(filter)
+      .sort({ detectedAt: -1, severity: 1 })
+      .lean();
+
+    const formatted = findings.map((f) => ({
+      id: f._id.toString(),
+      _id: f._id.toString(),
+      scanId: f.scanId ? f.scanId.toString() : "",
+      installationId: f.installationId,
+      owner: f.owner,
+      repo: f.repo,
+      rule: f.rule,
+      ruleTitle: f.rule,
+      severity: f.severity,
+      message: f.message,
+      file: f.file || "-",
+      lineNumber: 1,
+      matchedSnippet: f.message,
+      status: f.resolvedAt ? "resolved" : "unresolved",
+      detectedAt: f.detectedAt,
+      resolvedAt: f.resolvedAt,
+    }));
+
+    logger.info(
+      `[api/findings] Success: Found ${formatted.length} finding(s) matching filter`,
+    );
+    res.json({ findings: formatted });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    logger.error(`[api/findings] ERROR: Failed to get findings: ${message}`);
+    res.status(500).json({ error: "Internal server error" });
+  }
+};
