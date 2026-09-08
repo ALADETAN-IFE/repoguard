@@ -25,6 +25,7 @@ import {
   getRepoFixPRDiff,
   approveFixPR,
   mergeFixPR,
+  getFindings,
 } from "./controllers/dashboard";
 import {
   initiateGitHubOAuth,
@@ -206,6 +207,11 @@ router.get(
     void getScanFindings(req, res);
   },
 );
+
+// Account/Repo-wide Threat Findings & Vulnerabilities
+router.get("/api/findings", authRateLimit, requireApiKey, (req, res) => {
+  void getFindings(req, res);
+});
 
 // Dashboard Statistics & Overview
 router.get("/api/stats", authRateLimit, requireApiKey, (req, res) => {
