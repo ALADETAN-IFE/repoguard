@@ -30,6 +30,11 @@ import {
   getFindings,
 } from "./controllers/dashboard";
 import {
+  getAdminOverview,
+  getAdminAuditLogs,
+  rescanTenant,
+} from "./controllers/admin";
+import {
   initiateGitHubOAuth,
   handleGitHubOAuthCallback,
   getCurrentUser,
@@ -415,10 +420,40 @@ export const rescanAll = async (req: Request, res: Response): Promise<void> => {
 
 router.post(
   "/api/rescan-all",
-  authRateLimit,
+  apiRateLimit,
   requireRescanSecret,
   (req, res) => {
     void rescanAll(req, res);
+  },
+);
+
+// Admin Dashboard Overview (Telemetry, Tenants, Subscriptions, Checkpoints)
+router.get(
+  "/api/admin/overview",
+  apiRateLimit,
+  requireRescanSecret,
+  (req, res) => {
+    void getAdminOverview(req, res);
+  },
+);
+
+// Admin Audit Logs
+router.get(
+  "/api/admin/audit-logs",
+  apiRateLimit,
+  requireRescanSecret,
+  (req, res) => {
+    getAdminAuditLogs(req, res);
+  },
+);
+
+// Admin Single Tenant Rescan
+router.post(
+  "/api/admin/installations/:owner/rescan",
+  apiRateLimit,
+  requireRescanSecret,
+  (req, res) => {
+    void rescanTenant(req, res);
   },
 );
 
