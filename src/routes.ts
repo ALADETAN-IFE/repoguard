@@ -25,6 +25,7 @@ import {
   getRepoFixPRDiff,
   approveFixPR,
   mergeFixPR,
+  closeFixPR,
   getFindings,
 } from "./controllers/dashboard";
 import {
@@ -290,6 +291,16 @@ router.post(
   requireApiKey,
   (req, res) => {
     void mergeFixPR(req, res);
+  },
+);
+
+// Close Fix PR (without merging)
+router.post(
+  "/api/repos/:owner/:repo/pulls/:pull_number/close",
+  authRateLimit,
+  requireApiKey,
+  (req, res) => {
+    void closeFixPR(req, res);
   },
 );
 

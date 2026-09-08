@@ -898,6 +898,61 @@ export const mergeFixPR = async (
 };
 
 /**
+ * POST /api/repos/:owner/:repo/pulls/:pull_number/close
+ * Closes a Fix PR on GitHub without merging
+ */
+export const closeFixPR = async (
+  req: Request,
+  res: Response,
+): Promise<void> => {
+  const { owner, repo, pull_number } = req.params;
+  const pullNumber = parseInt(pull_number, 10);
+  logger.info(
+    `[api/repos/pulls/close] Closing Fix PR #${pullNumber} in '${owner}/${repo}'`,
+  );
+
+  try {
+    const installation = await Installation.findOne({
+      owner: new RegExp(`^${owner}$`, "i"),
+      uninstalledAt: null,
+    }).lean();
+
+    if (!installation) {
+      logger.warn(
+        `[api/repos/pulls/close] Installation not found for owner '${owner}'`,
+      );
+      res
+        .status(404)
+        .json({ error: `Installation not found for owner '${owner}'` });
+      return;
+    }
+
+    const octokit = await githubApp.getInstallationOctokit(
+      installation.installationId,
+    );
+    const client = normaliseOctokit(octokit);
+
+    await client.request("PATCH /repos/{owner}/{repo}/pulls/{pull_number}", {
+      owner,
+      repo,
+      pull_number: pullNumber,
+      state: "closed",
+    });
+
+    logger.info(
+      `[api/repos/pulls/close] SUCCESS: Closed PR #${pullNumber} in ${owner}/${repo}`,
+    );
+    res.json({ message: `Pull Request #${pullNumber} closed successfully` });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    logger.error(
+      `[api/repos/pulls/close] ERROR: Failed to close PR #${req.params.pull_number}: ${message}`,
+    );
+    res.status(500).json({ error: message });
+  }
+};
+
+/**
  * GET /api/findings
  * Lists all threat findings across all scans/repositories for an owner or specific repository
  */
