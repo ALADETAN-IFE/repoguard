@@ -3,7 +3,12 @@ import { redis } from "../config/redis";
 import { Installation, Scan } from "../models";
 import { pendingWriteCount } from "./writeQueue";
 
-export type CheckStatus = "ok" | "connected" | "error" | "disconnected" | "skipped";
+export type CheckStatus =
+  | "ok"
+  | "connected"
+  | "error"
+  | "disconnected"
+  | "skipped";
 
 export interface MongoHealthCheck {
   status: CheckStatus;
@@ -100,12 +105,13 @@ async function checkRedis(): Promise<RedisHealthCheck> {
 }
 
 export async function getHealthReport(): Promise<HealthReport> {
-  const [mongodb, redisCheck, totalInstallations, totalScans] = await Promise.all([
-    checkMongoDB(),
-    checkRedis(),
-    Installation.countDocuments({ uninstalledAt: null }).catch(() => 0),
-    Scan.countDocuments().catch(() => 0),
-  ]);
+  const [mongodb, redisCheck, totalInstallations, totalScans] =
+    await Promise.all([
+      checkMongoDB(),
+      checkRedis(),
+      Installation.countDocuments({ uninstalledAt: null }).catch(() => 0),
+      Scan.countDocuments().catch(() => 0),
+    ]);
 
   const isHealthy =
     (mongodb.status === "ok" || mongodb.status === "connected") &&
@@ -131,4 +137,3 @@ export async function getHealthReport(): Promise<HealthReport> {
 export function getHealthStatusCode(report: HealthReport): number {
   return report.status === "ok" || report.status === "healthy" ? 200 : 503;
 }
-
