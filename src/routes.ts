@@ -1,5 +1,6 @@
 import express, { raw, type Request, type Response } from "express";
 import {
+  apiRateLimit,
   authRateLimit,
   handleWebhook,
   requireApiKey,
@@ -202,7 +203,7 @@ const getScanFindings = async (req: Request, res: Response): Promise<void> => {
 
 router.get(
   "/api/scans/:scanId/findings",
-  authRateLimit,
+  apiRateLimit,
   requireApiKey,
   (req, res) => {
     void getScanFindings(req, res);
@@ -210,24 +211,24 @@ router.get(
 );
 
 // Account/Repo-wide Threat Findings & Vulnerabilities
-router.get("/api/findings", authRateLimit, requireApiKey, (req, res) => {
+router.get("/api/findings", apiRateLimit, requireApiKey, (req, res) => {
   void getFindings(req, res);
 });
 
 // Dashboard Statistics & Overview
-router.get("/api/stats", authRateLimit, requireApiKey, (req, res) => {
+router.get("/api/stats", apiRateLimit, requireApiKey, (req, res) => {
   void getDashboardStats(req, res);
 });
 
 // Installations List
-router.get("/api/installations", authRateLimit, requireApiKey, (req, res) => {
+router.get("/api/installations", apiRateLimit, requireApiKey, (req, res) => {
   void getInstallations(req, res);
 });
 
 // Installation Repositories with Security Status
 router.get(
   "/api/installations/:owner/repos",
-  authRateLimit,
+  apiRateLimit,
   requireApiKey,
   (req, res) => {
     void getInstallationRepos(req, res);
@@ -237,7 +238,7 @@ router.get(
 // Installation-wide Fix PRs (All repos under an installation in 1 request)
 router.get(
   "/api/installations/:owner/pulls",
-  authRateLimit,
+  apiRateLimit,
   requireApiKey,
   (req, res) => {
     void getInstallationFixPRs(req, res);
@@ -247,7 +248,7 @@ router.get(
 // On-Demand Single Repository Scan
 router.post(
   "/api/repos/:owner/:repo/scan",
-  authRateLimit,
+  apiRateLimit,
   requireApiKey,
   (req, res) => {
     void scanSingleRepository(req, res);
@@ -257,7 +258,7 @@ router.post(
 // Repository Fix PRs
 router.get(
   "/api/repos/:owner/:repo/pulls",
-  authRateLimit,
+  apiRateLimit,
   requireApiKey,
   (req, res) => {
     void getRepoFixPRs(req, res);
@@ -267,7 +268,7 @@ router.get(
 // Repository Fix PR Diff (on-demand)
 router.get(
   "/api/repos/:owner/:repo/pulls/:pull_number/diff",
-  authRateLimit,
+  apiRateLimit,
   requireApiKey,
   (req, res) => {
     void getRepoFixPRDiff(req, res);
@@ -277,7 +278,7 @@ router.get(
 // Approve Fix PR
 router.post(
   "/api/repos/:owner/:repo/pulls/:pull_number/approve",
-  authRateLimit,
+  apiRateLimit,
   requireApiKey,
   (req, res) => {
     void approveFixPR(req, res);
@@ -287,7 +288,7 @@ router.post(
 // Merge Fix PR
 router.post(
   "/api/repos/:owner/:repo/pulls/:pull_number/merge",
-  authRateLimit,
+  apiRateLimit,
   requireApiKey,
   (req, res) => {
     void mergeFixPR(req, res);
@@ -297,7 +298,7 @@ router.post(
 // Close Fix PR (without merging)
 router.post(
   "/api/repos/:owner/:repo/pulls/:pull_number/close",
-  authRateLimit,
+  apiRateLimit,
   requireApiKey,
   (req, res) => {
     void closeFixPR(req, res);

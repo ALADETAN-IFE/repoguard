@@ -105,6 +105,24 @@ export const authRateLimit: RequestHandler = rateLimit({
   },
 });
 
+// ─── Security: Dashboard API Rate Limiter ────────────────────────────────────
+// Allows smooth navigation and background SWR revalidation across pages (120 req/min)
+export const apiRateLimit: RequestHandler = rateLimit({
+  windowMs: RATE_LIMIT_WINDOW_MS, // 1 minute window
+  max: 120, // Max 120 requests per minute per IP
+  standardHeaders: true,
+  legacyHeaders: false,
+  store: createRedisStore(),
+  handler: (req, res, _next, options) => {
+    logger.warn(
+      `[security] API rate limit exceeded on route from IP ${getClientIp(req)}`,
+    );
+    res
+      .status(options.statusCode)
+      .json({ error: "Too many requests. Please slow down." });
+  },
+});
+
 // ─── Security Helpers for Key Verification ────────────────────────────────────
 
 /**
