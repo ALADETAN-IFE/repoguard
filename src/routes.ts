@@ -32,6 +32,7 @@ import {
 import {
   getAdminOverview,
   getAdminAuditLogs,
+  getAdminStream,
   rescanTenant,
 } from "./controllers/admin";
 import {
@@ -436,6 +437,12 @@ router.get(
     void getAdminOverview(req, res);
   },
 );
+
+// Admin SSE Stream — single persistent connection, pushes fresh snapshots every 30s
+// No rate limiter on SSE because it's a long-lived connection, not a burst request
+router.get("/api/admin/stream", requireRescanSecret, (req, res) => {
+  getAdminStream(req, res);
+});
 
 // Admin Audit Logs
 router.get(
