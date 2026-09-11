@@ -3,7 +3,10 @@ import os from "os";
 import { Installation, Checkpoint, Scan, Finding } from "../models";
 import { githubApp } from "../config/githubApp";
 import { normaliseOctokit } from "../utils/normaliseOctokit";
-import { scanRepoList } from "../webhooks/installation";
+import {
+  scanRepoList,
+  fetchAllInstallationRepos,
+} from "../webhooks/installation";
 import { pendingWriteCount } from "../utils/writeQueue";
 import { logAuditEvent, getRecentAuditLogs } from "../utils/auditLogger";
 import { getHealthReport } from "../utils/health";
@@ -339,19 +342,7 @@ export async function rescanTenant(req: Request, res: Response): Promise<void> {
           installation.installationId,
         );
         const client = normaliseOctokit(octokit);
-        const { data: repos } = await client.request(
-          "GET /installation/repositories",
-          {
-            per_page: 100,
-          },
-        );
-
-        const repoList = repos.repositories.map(
-          (r: { full_name: string; name: string }) => ({
-            full_name: r.full_name,
-            name: r.name,
-          }),
-        );
+        const repoList = await fetchAllInstallationRepos(client);
 
         const installationKey = `${installation.owner}-${installation.installationId}`;
         await scanRepoList(

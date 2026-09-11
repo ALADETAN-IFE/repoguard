@@ -11,6 +11,15 @@ export interface GitHubRepository {
   default_branch?: string;
 }
 
+// Repository shape returned by the Installation repositories API
+export interface GitHubInstallationRepository {
+  id: number;
+  name: string;
+  full_name: string;
+  private?: boolean;
+  default_branch?: string;
+}
+
 // ─── push event ───────────────────────────────────────────────────────────────
 
 export interface GitHubCommit {

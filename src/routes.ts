@@ -10,7 +10,10 @@ import {
   type AuthenticatedRequest,
 } from "./middleware";
 import { Scan, Finding, Installation, Checkpoint } from "./models";
-import { scanRepoList } from "./webhooks/installation";
+import {
+  scanRepoList,
+  fetchAllInstallationRepos,
+} from "./webhooks/installation";
 import { githubApp } from "./config/githubApp";
 import { normaliseOctokit } from "./utils/normaliseOctokit";
 import logger from "./utils/logger";
@@ -349,17 +352,7 @@ export const rescanAll = async (req: Request, res: Response): Promise<void> => {
           const client = normaliseOctokit(octokit);
 
           // Get all repos for this installation
-          const { data: repos } = await client.request(
-            "GET /installation/repositories",
-            { per_page: 100 },
-          );
-
-          const repoList = repos.repositories.map(
-            (r: { full_name: string; name: string }) => ({
-              full_name: r.full_name,
-              name: r.name,
-            }),
-          );
+          const repoList = await fetchAllInstallationRepos(client);
 
           if (repoList.length === 0) continue;
 
