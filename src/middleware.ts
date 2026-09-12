@@ -190,10 +190,15 @@ export function requireAdminUserOrSecret(
   res: Response,
   next: NextFunction,
 ): void {
-  // 1. Check for Bearer token with isSystemAdmin privilege
+  // 1. Check for Bearer token or query param token (for EventSource SSE) with isSystemAdmin privilege
   const authHeader = req.headers.authorization;
-  if (authHeader?.startsWith("Bearer ")) {
-    const token = authHeader.substring(7);
+  const tokenFromQuery =
+    typeof req.query.token === "string" ? req.query.token : undefined;
+  const token = authHeader?.startsWith("Bearer ")
+    ? authHeader.substring(7)
+    : tokenFromQuery;
+
+  if (token) {
     const session = verifySessionToken(token);
     if (session && session.user.isSystemAdmin) {
       (req as AuthenticatedRequest).userSession = session;
