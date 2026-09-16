@@ -9,6 +9,7 @@ import {
 import { postReviewComments, getOpenRepoGuardIssue } from "../pullRequest";
 import { normaliseOctokit } from "../utils/normaliseOctokit";
 import logger from "../utils/logger";
+import { isAuthorizedFixBranchPusher } from "../utils/botAuth";
 import type { WebhookEvent, Finding, OctokitClient } from "../types/index";
 
 interface PullRequestOpenedPayload {
@@ -17,11 +18,18 @@ interface PullRequestOpenedPayload {
     number: number;
     head: { sha: string; ref: string };
     changed_files: number;
+    html_url?: string;
   };
   repository: {
     name: string;
     owner: { login: string };
   };
+  sender?: { login: string; type?: string };
+}
+
+interface PRDiffScanResult {
+  findings: Finding[];
+  totalChangedFiles: number;
 }
 
 // ─── Scan all files changed across the entire PR (not just the latest push) ──
@@ -32,7 +40,7 @@ async function scanFullPRDiff(
   repo: string,
   prNumber: number,
   headSha: string,
-): Promise<Finding[]> {
+): Promise<PRDiffScanResult> {
   const findings: Finding[] = [];
 
   // Paginate through all PR files (GitHub returns max 100 per page)
@@ -102,7 +110,7 @@ async function scanFullPRDiff(
     );
   }
 
-  return findings;
+  return { findings, totalChangedFiles: allFiles.length };
 }
 
 // ─── Check if this PR had a previous RepoGuard review with findings ───────────
@@ -149,16 +157,139 @@ export function handlePullRequestOpened(
     );
 
     const client = normaliseOctokit(octokit);
+    const isFixBranch = pull_request.head.ref.startsWith("repoguard/fixes-");
+
+    // ── Safeguard: Prevent unauthorized tampering with RepoGuard Fix PRs ────────
+    if (
+      isFixBranch &&
+      isSynchronize &&
+      payload.sender &&
+      !isAuthorizedFixBranchPusher(
+        undefined,
+        payload.sender.login,
+        payload.sender.type,
+      )
+    ) {
+      logger.warn(
+        `[pr] TAMPERING DETECTED: Unauthorized synchronize on fix PR #${prNumber} (${pull_request.head.ref}) by "${payload.sender.login}" in ${owner}/${repo}`,
+      );
+
+      try {
+        await client.request(
+          "POST /repos/{owner}/{repo}/issues/{issue_number}/comments",
+          {
+            owner,
+            repo,
+            issue_number: prNumber,
+            body: [
+              "🚨 **RepoGuard Security Alert: Fix Branch Tampering Detected**",
+              "",
+              `An unauthorized synchronize/push event was initiated by **${payload.sender.login}** on automated remediation branch \`${pull_request.head.ref}\`.`,
+              "",
+              "RepoGuard fix branches are exclusively managed by the RepoGuard bot to prevent unverified code injections.",
+              "Closing this PR and deleting the branch to protect repository integrity.",
+            ].join("\n"),
+          },
+        );
+
+        await client.request(
+          "PATCH /repos/{owner}/{repo}/pulls/{pull_number}",
+          {
+            owner,
+            repo,
+            pull_number: prNumber,
+            state: "closed",
+          },
+        );
+
+        try {
+          await client.request("DELETE /repos/{owner}/{repo}/git/refs/{ref}", {
+            owner,
+            repo,
+            ref: `heads/${pull_request.head.ref}`,
+          });
+          logger.info(
+            `[pr] Deleted tampered branch ${pull_request.head.ref} in ${owner}/${repo}`,
+          );
+        } catch {
+          // ignore
+        }
+      } catch (err) {
+        logger.warn(
+          `[pr] Could not close tampered PR #${prNumber}: ${String(err)}`,
+        );
+      }
+
+      return;
+    }
 
     try {
       // ── Scan ALL files changed in the PR, not just the latest push ─────────
-      const findings = await scanFullPRDiff(
+      const { findings, totalChangedFiles } = await scanFullPRDiff(
         client,
         owner,
         repo,
         prNumber,
         headSha,
       );
+
+      // ── Safeguard: Automatically close obsolete Fix PRs with 0 diff ────────
+      if (isFixBranch && totalChangedFiles === 0) {
+        logger.info(
+          `[pr] Fix PR #${prNumber} (${pull_request.head.ref}) has 0 changed files relative to base branch — closing as obsolete`,
+        );
+
+        try {
+          await client.request(
+            "POST /repos/{owner}/{repo}/issues/{issue_number}/comments",
+            {
+              owner,
+              repo,
+              issue_number: prNumber,
+              body: [
+                "ℹ️ **RepoGuard Notice: Remediation PR is Obsolete**",
+                "",
+                "This pull request no longer contains any file changes relative to the base branch (`0 files changed`).",
+                "",
+                "The proposed security remediation has either been reverted, already applied directly to the base branch, or overwritten.",
+                "Closing this PR and cleaning up the branch.",
+              ].join("\n"),
+            },
+          );
+
+          await client.request(
+            "PATCH /repos/{owner}/{repo}/pulls/{pull_number}",
+            {
+              owner,
+              repo,
+              pull_number: prNumber,
+              state: "closed",
+            },
+          );
+
+          try {
+            await client.request(
+              "DELETE /repos/{owner}/{repo}/git/refs/{ref}",
+              {
+                owner,
+                repo,
+                ref: `heads/${pull_request.head.ref}`,
+              },
+            );
+            logger.info(
+              `[pr] Deleted obsolete branch ${pull_request.head.ref} in ${owner}/${repo}`,
+            );
+          } catch {
+            // ignore
+          }
+        } catch (err) {
+          logger.warn(
+            `[pr] Could not close obsolete PR #${prNumber}: ${String(err)}`,
+          );
+        }
+
+        return;
+      }
 
       if (findings.length > 0) {
         logger.warn(

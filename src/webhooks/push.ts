@@ -16,6 +16,7 @@ import { scanFullRepoForPush, scanFullRepoWithDetails } from "./installation";
 import { safeWrite } from "../utils/writeQueue";
 import { Scan, Installation } from "../models";
 import logger from "../utils/logger";
+import { isAuthorizedFixBranchPusher } from "../utils/botAuth";
 import type {
   WebhookEvent,
   PushEventPayload,
@@ -144,6 +145,142 @@ export function handlePush(
     });
 
     if (!checkRunId) return;
+
+    // ── Safeguard: Prevent unauthorized tampering with RepoGuard Fix branches ──
+    const isFixBranch = branch.startsWith("repoguard/fixes-");
+    if (
+      isFixBranch &&
+      !isAuthorizedFixBranchPusher(
+        pusher?.name,
+        payload.sender?.login,
+        payload.sender?.type,
+      )
+    ) {
+      const actorName = pusher?.name || payload.sender?.login || "unknown";
+      logger.warn(
+        `[push] TAMPERING DETECTED: Unauthorized push to automated remediation branch "${branch}" by "${actorName}" in ${owner}/${repo}`,
+      );
+
+      await updateCheckRun({
+        octokit: client,
+        owner,
+        repo,
+        checkRunId,
+        conclusion: "failure",
+        findings: [
+          {
+            rule: "unauthorized-fix-branch-modification",
+            severity: "critical",
+            message: `Unauthorized push detected on automated remediation branch "${branch}" by "${actorName}". RepoGuard fix branches cannot be modified by external contributors.`,
+            file: null,
+          },
+        ],
+        summary: [
+          "🚨 **SECURITY ALERT: Unauthorized Fix Branch Modification**",
+          "",
+          `The automated remediation branch \`${branch}\` was pushed to by **${actorName}**.`,
+          "",
+          "RepoGuard remediation branches are strictly managed by the RepoGuard bot to guarantee patch authenticity.",
+          "External commits or force-pushes to fix branches invalidate the remediation state.",
+          "",
+          "**Actions Taken:**",
+          "- Failed security status check.",
+          "- Associated pull request closed.",
+          "- Compromised branch deleted.",
+        ].join("\n"),
+      });
+
+      // Close open PR on this branch
+      try {
+        const { data: pulls } = await client.request(
+          "GET /repos/{owner}/{repo}/pulls",
+          { owner, repo, state: "open", head: `${owner}:${branch}` },
+        );
+
+        if ((pulls as unknown[]).length > 0) {
+          const pr = (pulls as Array<{ number: number }>)[0];
+          await client.request(
+            "POST /repos/{owner}/{repo}/issues/{issue_number}/comments",
+            {
+              owner,
+              repo,
+              issue_number: pr.number,
+              body: [
+                "🚨 **RepoGuard Security Alert: Fix Branch Tampering Detected**",
+                "",
+                `An unauthorized push by **${actorName}** was detected on this remediation branch (\`${branch}\`).`,
+                "",
+                "Automated remediation pull requests must not be modified directly by external contributors or force-pushes.",
+                "Closing this PR and deleting the branch to protect repository integrity. If vulnerabilities remain on the default branch, RepoGuard will generate a fresh remediation.",
+              ].join("\n"),
+            },
+          );
+
+          await client.request(
+            "PATCH /repos/{owner}/{repo}/pulls/{pull_number}",
+            {
+              owner,
+              repo,
+              pull_number: pr.number,
+              state: "closed",
+            },
+          );
+          logger.info(
+            `[push] Closed tampered PR #${pr.number} in ${owner}/${repo}`,
+          );
+        }
+      } catch (prErr) {
+        logger.warn(
+          `[push] Could not close tampered PR: ${prErr instanceof Error ? prErr.message : String(prErr)}`,
+        );
+      }
+
+      // Delete the tampered branch
+      try {
+        await client.request("DELETE /repos/{owner}/{repo}/git/refs/{ref}", {
+          owner,
+          repo,
+          ref: `heads/${branch}`,
+        });
+        logger.info(
+          `[push] Deleted tampered branch ${branch} in ${owner}/${repo}`,
+        );
+      } catch (delErr) {
+        logger.warn(
+          `[push] Could not delete tampered branch: ${delErr instanceof Error ? delErr.message : String(delErr)}`,
+        );
+      }
+
+      await sendAlert({
+        owner,
+        repo,
+        ref,
+        pusher: actorName,
+        headSha,
+        findings: [
+          {
+            rule: "unauthorized-fix-branch-modification",
+            severity: "critical",
+            message: `Unauthorized push to remediation branch ${branch} by ${actorName}`,
+            file: null,
+          },
+        ],
+        context: "push",
+      });
+
+      await safeWrite(`Scan.complete:${owner}/${repo}:${headSha.slice(0, 7)}`, {
+        type: "COMPLETE_SCAN",
+        data: {
+          scanId: scanId.toHexString(),
+          findingsCount: 1,
+          filesScanned: 0,
+          durationMs: Date.now() - startTime,
+          completedAt: new Date().toISOString(),
+        },
+      });
+
+      return;
+    }
 
     try {
       let findings: Finding[] = [];

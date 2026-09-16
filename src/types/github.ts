@@ -33,6 +33,7 @@ export interface PushEventPayload {
   repository: GitHubRepository;
   commits: GitHubCommit[];
   pusher: { name: string };
+  sender?: { login: string; type?: string };
   ref: string;
   before?: string;
   after: string; // head SHA
