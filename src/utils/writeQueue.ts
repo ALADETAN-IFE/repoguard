@@ -281,3 +281,9 @@ export async function pendingWriteCount(): Promise<number> {
   }
   return count;
 }
+
+// ─── Queue Worker Concurrency ───────────────────────────────────────────────
+// Current writeQueue implementation operates with 1 dedicated drain loop consumer
+export function getQueueWorkerCount(): number {
+  return 1;
+}

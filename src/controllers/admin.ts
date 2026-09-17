@@ -7,7 +7,7 @@ import {
   scanRepoList,
   fetchAllInstallationRepos,
 } from "../webhooks/installation";
-import { pendingWriteCount } from "../utils/writeQueue";
+import { pendingWriteCount, getQueueWorkerCount } from "../utils/writeQueue";
 import { logAuditEvent, getRecentAuditLogs } from "../utils/auditLogger";
 import { getHealthReport } from "../utils/health";
 import logger from "../utils/logger";
@@ -195,7 +195,7 @@ async function buildAdminSnapshot(): Promise<Record<string, unknown>> {
   const pendingWrites = await pendingWriteCount().catch(() => 0);
   const queue = {
     pendingWrites,
-    activeWorkers: 2,
+    activeWorkers: getQueueWorkerCount(),
   };
 
   // 7. Recent Audit Logs

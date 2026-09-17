@@ -126,7 +126,6 @@ export async function getHealthReport(): Promise<HealthReport> {
     uptime: Math.floor(process.uptime()),
     totalInstallations,
     totalScans,
-    activeWorkers: 1,
     checks: {
       mongodb,
       redis: redisCheck,
