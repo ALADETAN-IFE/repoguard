@@ -59,6 +59,9 @@ export interface SessionPayload {
     isSystemAdmin: boolean;
     role: "system_admin" | "org_admin" | "member";
     accessToken?: string;
+    refreshToken?: string;
+    /** Unix timestamp (seconds) when accessToken expires */
+    accessTokenExpiresAt?: number;
   };
   accounts: AccountContext[];
   exp: number;
@@ -76,6 +79,73 @@ export function signSessionToken(payload: Omit<SessionPayload, "exp">): string {
     .update(dataB64)
     .digest("base64url");
   return `${dataB64}.${signature}`;
+}
+
+/**
+ * Use a GitHub refresh_token to silently obtain a new access_token + refresh_token pair.
+ * Requires "Expiring user authorization tokens" to be enabled in the GitHub App settings.
+ *
+ * Returns the refreshed token data, or null if the refresh fails (e.g. refresh_token expired).
+ */
+export async function refreshAccessToken(refreshToken: string): Promise<{
+  accessToken: string;
+  refreshToken: string;
+  accessTokenExpiresAt: number;
+} | null> {
+  const clientId = process.env.GITHUB_CLIENT_ID;
+  const clientSecret = process.env.GITHUB_CLIENT_SECRET;
+
+  if (!clientId || !clientSecret) {
+    logger.warn(
+      "[auth/refresh] Cannot refresh — GITHUB_CLIENT_ID or GITHUB_CLIENT_SECRET missing",
+    );
+    return null;
+  }
+
+  try {
+    const res = await fetch("https://github.com/login/oauth/access_token", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Accept: "application/json",
+      },
+      body: JSON.stringify({
+        client_id: clientId,
+        client_secret: clientSecret,
+        grant_type: "refresh_token",
+        refresh_token: refreshToken,
+      }),
+    });
+
+    const data = (await res.json()) as {
+      access_token?: string;
+      refresh_token?: string;
+      expires_in?: number;
+      error?: string;
+      error_description?: string;
+    };
+
+    if (!data.access_token || !data.refresh_token) {
+      logger.warn(
+        `[auth/refresh] Token refresh failed: ${data.error ?? "unknown"} — ${data.error_description ?? ""}`,
+      );
+      return null;
+    }
+
+    const accessTokenExpiresAt =
+      Math.floor(Date.now() / 1000) + (data.expires_in ?? 28800); // default 8h
+
+    logger.info("[auth/refresh] Successfully refreshed GitHub access token");
+
+    return {
+      accessToken: data.access_token,
+      refreshToken: data.refresh_token,
+      accessTokenExpiresAt,
+    };
+  } catch (err) {
+    logger.warn(`[auth/refresh] Refresh request threw: ${String(err)}`);
+    return null;
+  }
 }
 
 /**
@@ -209,6 +279,8 @@ export const handleGitHubOAuthCallback = async (
 
     const tokenData = (await tokenRes.json()) as {
       access_token?: string;
+      refresh_token?: string;
+      expires_in?: number;
       error?: string;
       error_description?: string;
     };
@@ -221,6 +293,10 @@ export const handleGitHubOAuthCallback = async (
     }
 
     const accessToken = tokenData.access_token;
+    const refreshToken = tokenData.refresh_token; // present only when expiring tokens are enabled
+    const accessTokenExpiresAt = tokenData.expires_in
+      ? Math.floor(Date.now() / 1000) + tokenData.expires_in
+      : undefined;
 
     // 2. Fetch user profile
     logger.info("[auth/github/callback] Fetching GitHub user profile");
@@ -386,6 +462,8 @@ export const handleGitHubOAuthCallback = async (
         isSystemAdmin,
         role: defaultRole,
         accessToken,
+        refreshToken,
+        accessTokenExpiresAt,
       },
       accounts,
     });

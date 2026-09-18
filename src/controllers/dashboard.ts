@@ -7,7 +7,11 @@ import {
   scanRepoList,
   fetchAllInstallationRepos,
 } from "../webhooks/installation";
-import { verifySessionToken } from "./auth";
+import {
+  verifySessionToken,
+  refreshAccessToken,
+  signSessionToken,
+} from "./auth";
 import type { GitHubInstallationRepository } from "../types";
 
 /**
@@ -711,8 +715,42 @@ export const approveFixPR = async (
     if (token) {
       const session = verifySessionToken(token);
       if (session?.user?.accessToken) {
-        userAccessToken = session.user.accessToken;
-        userLogin = session.user.login;
+        // Check if access token is expired or expiring within 5 minutes
+        const now = Math.floor(Date.now() / 1000);
+        const expiresAt = session.user.accessTokenExpiresAt;
+        const isExpiredOrExpiring = expiresAt ? expiresAt - now < 300 : false;
+
+        if (isExpiredOrExpiring && session.user.refreshToken) {
+          logger.info(
+            `[api/repos/pulls/approve] Access token expiring for @${session.user.login} — attempting silent refresh`,
+          );
+          const refreshed = await refreshAccessToken(session.user.refreshToken);
+          if (refreshed) {
+            userAccessToken = refreshed.accessToken;
+            userLogin = session.user.login;
+
+            // Re-sign a fresh session token with the new token values
+            const newSessionToken = signSessionToken({
+              ...session,
+              user: {
+                ...session.user,
+                accessToken: refreshed.accessToken,
+                refreshToken: refreshed.refreshToken,
+                accessTokenExpiresAt: refreshed.accessTokenExpiresAt,
+              },
+            });
+            // Send refreshed session token back so the browser stays up to date
+            res.setHeader("X-Refreshed-Token", newSessionToken);
+          } else {
+            // Refresh failed — fall through to bot fallback gracefully
+            logger.warn(
+              `[api/repos/pulls/approve] Silent refresh failed for @${session.user.login} — will fall back to bot`,
+            );
+          }
+        } else {
+          userAccessToken = session.user.accessToken;
+          userLogin = session.user.login;
+        }
       }
     }
 
