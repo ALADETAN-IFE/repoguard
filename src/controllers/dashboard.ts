@@ -64,14 +64,18 @@ export const getDashboardStats = async (
       criticalFindings + highFindings + mediumFindings + lowFindings;
 
     // Calculate score (0 - 100)
+    // Penalty is normalised by totalScans so that a large, actively-scanned
+    // codebase with a handful of findings scores better than a tiny codebase
+    // with the same raw finding counts.
     let score = 100;
     if (totalScans > 0) {
-      const penalty =
+      const rawPenalty =
         criticalFindings * 25 +
         highFindings * 15 +
         mediumFindings * 5 +
         lowFindings * 1;
-      score = Math.max(0, Math.min(100, 100 - penalty));
+      const penaltyPerScan = rawPenalty / totalScans;
+      score = Math.max(0, Math.min(100, Math.round(100 - penaltyPerScan)));
     }
 
     let grade = "A";
