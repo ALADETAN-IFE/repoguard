@@ -9,6 +9,7 @@ import type {
   WebhookEvent,
   InstallationEventPayload,
   OctokitClient,
+  GitHubInstallationRepository,
 } from "../types/index";
 import { Types } from "mongoose";
 import { sendAlert } from "../alerts";
@@ -19,6 +20,34 @@ import {
   looksLikeJavaScript,
 } from "@repoguard/scanner";
 import AdmZip from "adm-zip";
+
+export async function fetchAllInstallationRepos(
+  client: OctokitClient,
+): Promise<GitHubInstallationRepository[]> {
+  const allRepos: GitHubInstallationRepository[] = [];
+  let page = 1;
+  let hasMore = true;
+
+  while (hasMore) {
+    const { data } = await client.request("GET /installation/repositories", {
+      per_page: 100,
+      page,
+    });
+
+    const repositories = Array.isArray(data.repositories)
+      ? (data.repositories as GitHubInstallationRepository[])
+      : [];
+
+    allRepos.push(...repositories);
+    hasMore =
+      typeof data.total_count === "number" &&
+      allRepos.length < data.total_count &&
+      repositories.length === 100;
+    page += 1;
+  }
+
+  return allRepos;
+}
 
 // ─── Checkpoint helpers (MongoDB) ─────────────────────────────────────────────
 
@@ -345,26 +374,7 @@ export function handleInstallation(
         logger.info(
           `[installation] Fetching all repositories for installation ${installation.id}`,
         );
-        const reposFromGitHub: Array<{ full_name: string; name: string }> = [];
-        let page = 1;
-        let hasMore = true;
-
-        while (hasMore) {
-          const { data } = await client.request(
-            "GET /installation/repositories",
-            { per_page: 100, page },
-          );
-          reposFromGitHub.push(
-            ...(data.repositories as Array<{
-              full_name: string;
-              name: string;
-            }>),
-          );
-          hasMore =
-            reposFromGitHub.length < data.total_count &&
-            data.repositories.length === 100;
-          page++;
-        }
+        const reposFromGitHub = await fetchAllInstallationRepos(client);
         if (reposFromGitHub.length > 0) {
           allRepos = reposFromGitHub;
         }

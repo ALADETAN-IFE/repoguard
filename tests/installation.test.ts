@@ -4,6 +4,7 @@ import {
   patchCheckpointTotalRepos,
   getIncompleteScans,
   handleInstallation,
+  fetchAllInstallationRepos,
 } from "../src/webhooks/installation";
 import type { App } from "@octokit/app";
 import type { OctokitClient, WebhookEvent, InstallationEventPayload } from "../src/types";
@@ -307,6 +308,49 @@ describe("getIncompleteScans", () => {
     const result = await getIncompleteScans();
 
     expect(result).toEqual([]);
+  });
+});
+
+describe("fetchAllInstallationRepos", () => {
+  it("paginates through all repositories when the installation has more than 100 repos", async () => {
+    const requestMock = jest.fn()
+      .mockResolvedValueOnce({
+        data: {
+          total_count: 150,
+          repositories: Array.from({ length: 100 }, (_, index) => ({
+            full_name: `acme/repo-${index + 1}`,
+            name: `repo-${index + 1}`,
+          })),
+        },
+      })
+      .mockResolvedValueOnce({
+        data: {
+          total_count: 150,
+          repositories: Array.from({ length: 50 }, (_, index) => ({
+            full_name: `acme/repo-${index + 101}`,
+            name: `repo-${index + 101}`,
+          })),
+        },
+      });
+
+    const repos = await fetchAllInstallationRepos({
+      request: requestMock,
+    } as unknown as OctokitClient);
+
+    expect(requestMock).toHaveBeenCalledTimes(2);
+    expect(requestMock).toHaveBeenNthCalledWith(
+      1,
+      "GET /installation/repositories",
+      { per_page: 100, page: 1 },
+    );
+    expect(requestMock).toHaveBeenNthCalledWith(
+      2,
+      "GET /installation/repositories",
+      { per_page: 100, page: 2 },
+    );
+    expect(repos).toHaveLength(150);
+    expect(repos[0]).toEqual({ full_name: "acme/repo-1", name: "repo-1" });
+    expect(repos[149]).toEqual({ full_name: "acme/repo-150", name: "repo-150" });
   });
 });
 

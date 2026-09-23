@@ -4,6 +4,7 @@ import {
   patchCheckpointTotalRepos,
   clearCheckpoint,
   scanRepoList,
+  fetchAllInstallationRepos,
 } from "../webhooks/installation";
 import type { OctokitClient } from "../types/index";
 import logger from "./logger";
@@ -57,21 +58,9 @@ export async function resumeIncompleteScans(): Promise<void> {
           `[startup] ${installationKey} has no totalRepos — fetching from GitHub`,
         );
 
-        const allRepos: Array<{ full_name: string; name: string }> = [];
-        let page = 1;
-        let hasMore = true;
-
-        while (hasMore) {
-          const { data } = await octokit.request(
-            "GET /installation/repositories",
-            { per_page: 100, page },
-          );
-          allRepos.push(...data.repositories);
-          hasMore =
-            allRepos.length < data.total_count &&
-            data.repositories.length === 100;
-          page++;
-        }
+        const allRepos = await fetchAllInstallationRepos(
+          octokit as OctokitClient,
+        );
 
         await patchCheckpointTotalRepos(
           installationKey,

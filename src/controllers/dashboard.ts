@@ -3,8 +3,12 @@ import { Scan, Finding, Installation } from "../models";
 import { githubApp } from "../config/githubApp";
 import { normaliseOctokit } from "../utils/normaliseOctokit";
 import logger from "../utils/logger";
-import { scanRepoList } from "../webhooks/installation";
+import {
+  scanRepoList,
+  fetchAllInstallationRepos,
+} from "../webhooks/installation";
 import { verifySessionToken } from "./auth";
+import type { GitHubInstallationRepository } from "../types";
 
 /**
  * GET /api/stats
@@ -195,55 +199,41 @@ export const getInstallationRepos = async (
     );
     const client = normaliseOctokit(octokit);
 
-    const { data: reposData } = await client.request(
-      "GET /installation/repositories",
-      {
-        per_page: 100,
-      },
-    );
+    const reposData = await fetchAllInstallationRepos(client);
 
     logger.info(
-      `[api/installations/repos] Retrieved ${reposData.repositories.length} repos from GitHub for installation #${installation.installationId}`,
+      `[api/installations/repos] Retrieved ${reposData.length} repos from GitHub for installation #${installation.installationId}`,
     );
 
     const reposWithStats = await Promise.all(
-      reposData.repositories.map(
-        async (r: {
-          id: number;
-          name: string;
-          full_name: string;
-          private: boolean;
-          default_branch: string;
-        }) => {
-          const [latestScan, openFindingsCount] = await Promise.all([
-            Scan.findOne({
-              installationId: installation.installationId,
-              repo: r.name,
-            })
-              .sort({ startedAt: -1 })
-              .lean(),
-            Finding.countDocuments({
-              installationId: installation.installationId,
-              repo: r.name,
-              resolvedAt: null,
-            }),
-          ]);
+      reposData.map(async (r: GitHubInstallationRepository) => {
+        const [latestScan, openFindingsCount] = await Promise.all([
+          Scan.findOne({
+            installationId: installation.installationId,
+            repo: r.name,
+          })
+            .sort({ startedAt: -1 })
+            .lean(),
+          Finding.countDocuments({
+            installationId: installation.installationId,
+            repo: r.name,
+            resolvedAt: null,
+          }),
+        ]);
 
-          return {
-            id: r.id,
-            name: r.name,
-            fullName: r.full_name,
-            owner: installation.owner,
-            isPrivate: r.private,
-            defaultBranch: r.default_branch || "main",
-            status: openFindingsCount > 0 ? "at_risk" : "clean",
-            lastScanAt:
-              latestScan?.completedAt || latestScan?.startedAt || null,
-            findingsCount: openFindingsCount,
-            openFixPrsCount: openFindingsCount > 0 ? 1 : 0,
-          };
-        },
-      ),
+        return {
+          id: r.id,
+          name: r.name,
+          fullName: r.full_name,
+          owner: installation.owner,
+          isPrivate: r.private,
+          defaultBranch: r.default_branch || "main",
+          status: openFindingsCount > 0 ? "at_risk" : "clean",
+          lastScanAt: latestScan?.completedAt || latestScan?.startedAt || null,
+          findingsCount: openFindingsCount,
+          openFixPrsCount: openFindingsCount > 0 ? 1 : 0,
+        };
+      }),
     );
 
     logger.info(
@@ -358,12 +348,7 @@ export const getInstallationFixPRs = async (
     );
     const client = normaliseOctokit(octokit);
 
-    const { data: reposData } = await client.request(
-      "GET /installation/repositories",
-      { per_page: 100 },
-    );
-
-    const repos = reposData.repositories || [];
+    const repos = await fetchAllInstallationRepos(client);
 
     const deriveSeverity = (pr: {
       labels: { name: string }[];
