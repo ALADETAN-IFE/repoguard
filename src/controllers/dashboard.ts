@@ -713,55 +713,54 @@ export const approveFixPR = async (
     const token = authHeader?.startsWith("Bearer ")
       ? authHeader.substring(7)
       : null;
-    let userAccessToken: string | undefined;
-    let userLogin: string | undefined;
+    const session = token ? verifySessionToken(token) : null;
+    let userAccessToken = session?.user?.accessToken;
+    const userLogin = session?.user?.login;
+    let currentRefreshToken = session?.user?.refreshToken;
+    let hasRefreshed = false;
 
-    if (token) {
-      const session = verifySessionToken(token);
-      if (session?.user?.accessToken) {
-        // Check if access token is expired or expiring within 5 minutes
-        const now = Math.floor(Date.now() / 1000);
-        const expiresAt = session.user.accessTokenExpiresAt;
-        const isExpiredOrExpiring = expiresAt ? expiresAt - now < 300 : false;
+    // 1. Pre-emptive refresh if access token is known to be expired or expiring within 5 minutes
+    if (session?.user && currentRefreshToken) {
+      const now = Math.floor(Date.now() / 1000);
+      const expiresAt = session.user.accessTokenExpiresAt;
+      const isExpiredOrExpiring = expiresAt
+        ? expiresAt - now < 300
+        : !userAccessToken;
 
-        if (isExpiredOrExpiring && session.user.refreshToken) {
-          logger.info(
-            `[api/repos/pulls/approve] Access token expiring for @${session.user.login} — attempting silent refresh`,
-          );
-          const refreshed = await refreshAccessToken(session.user.refreshToken);
-          if (refreshed) {
-            userAccessToken = refreshed.accessToken;
-            userLogin = session.user.login;
+      if (isExpiredOrExpiring) {
+        logger.info(
+          `[api/repos/pulls/approve] Pre-emptive refresh: Access token expiring for @${session.user.login} — refreshing...`,
+        );
+        const refreshed = await refreshAccessToken(currentRefreshToken);
+        if (refreshed) {
+          userAccessToken = refreshed.accessToken;
+          currentRefreshToken = refreshed.refreshToken;
+          hasRefreshed = true;
 
-            // Re-sign a fresh session token with the new token values
-            const newSessionToken = signSessionToken({
-              ...session,
-              user: {
-                ...session.user,
-                accessToken: refreshed.accessToken,
-                refreshToken: refreshed.refreshToken,
-                accessTokenExpiresAt: refreshed.accessTokenExpiresAt,
-              },
-            });
-            // Send refreshed session token back so the browser stays up to date
-            res.setHeader("X-Refreshed-Token", newSessionToken);
-          } else {
-            // Refresh failed — fall through to bot fallback gracefully
-            logger.warn(
-              `[api/repos/pulls/approve] Silent refresh failed for @${session.user.login} — will fall back to bot`,
-            );
-          }
+          const newSessionToken = signSessionToken({
+            ...session,
+            user: {
+              ...session.user,
+              accessToken: refreshed.accessToken,
+              refreshToken: refreshed.refreshToken,
+              accessTokenExpiresAt: refreshed.accessTokenExpiresAt,
+            },
+          });
+          res.setHeader("X-Refreshed-Token", newSessionToken);
         } else {
-          userAccessToken = session.user.accessToken;
-          userLogin = session.user.login;
+          logger.warn(
+            `[api/repos/pulls/approve] Pre-emptive refresh failed for @${session.user.login}`,
+          );
         }
       }
     }
 
     let approvedAsUser = false;
 
-    if (userAccessToken) {
-      try {
+    if (userAccessToken && userLogin) {
+      const postReview = async (
+        tokenToUse: string,
+      ): Promise<{ ok: boolean; status: number; body: unknown }> => {
         logger.info(
           `[api/repos/pulls/approve] Submitting review as user @${userLogin} for PR #${pullNumber} in '${owner}/${repo}'`,
         );
@@ -770,7 +769,7 @@ export const approveFixPR = async (
           {
             method: "POST",
             headers: {
-              Authorization: `Bearer ${userAccessToken}`,
+              Authorization: `Bearer ${tokenToUse}`,
               Accept: "application/vnd.github+json",
               "User-Agent": "RepoGuard-App",
               "Content-Type": "application/json",
@@ -781,16 +780,59 @@ export const approveFixPR = async (
             }),
           },
         );
+        const body = await reviewRes.json().catch(() => ({}));
+        return { ok: reviewRes.ok, status: reviewRes.status, body };
+      };
 
-        if (reviewRes.ok) {
+      try {
+        let result = await postReview(userAccessToken);
+
+        // 2. Reactive refresh: If GitHub returns 401 Unauthorized and we have a refresh token, refresh & retry once
+        if (
+          !result.ok &&
+          result.status === 401 &&
+          currentRefreshToken &&
+          !hasRefreshed
+        ) {
+          logger.info(
+            `[api/repos/pulls/approve] Received 401 Unauthorized for @${userLogin} — attempting reactive token refresh with refreshToken...`,
+          );
+          const refreshed = await refreshAccessToken(currentRefreshToken);
+          if (refreshed && session) {
+            userAccessToken = refreshed.accessToken;
+            currentRefreshToken = refreshed.refreshToken;
+            hasRefreshed = true;
+
+            const newSessionToken = signSessionToken({
+              ...session,
+              user: {
+                ...session.user,
+                accessToken: refreshed.accessToken,
+                refreshToken: refreshed.refreshToken,
+                accessTokenExpiresAt: refreshed.accessTokenExpiresAt,
+              },
+            });
+            res.setHeader("X-Refreshed-Token", newSessionToken);
+
+            logger.info(
+              `[api/repos/pulls/approve] Token refreshed successfully — retrying review as user @${userLogin}...`,
+            );
+            result = await postReview(refreshed.accessToken);
+          } else {
+            logger.warn(
+              `[api/repos/pulls/approve] Reactive token refresh failed for @${userLogin}`,
+            );
+          }
+        }
+
+        if (result.ok) {
           approvedAsUser = true;
           logger.info(
             `[api/repos/pulls/approve] SUCCESS: User @${userLogin} approved PR #${pullNumber}`,
           );
         } else {
-          const errBody = await reviewRes.json().catch(() => ({}));
           logger.warn(
-            `[api/repos/pulls/approve] User review failed with status ${reviewRes.status}: ${JSON.stringify(errBody)}. Falling back to bot.`,
+            `[api/repos/pulls/approve] User review failed with status ${result.status}: ${JSON.stringify(result.body)}. Falling back to bot.`,
           );
         }
       } catch (userErr) {
