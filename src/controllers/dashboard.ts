@@ -843,46 +843,55 @@ export const approveFixPR = async (
     }
 
     if (!approvedAsUser) {
-      const octokit = await githubApp.getInstallationOctokit(
-        installation.installationId,
+      logger.info(
+        `[api/repos/pulls/approve] No approved user found when approving PR #${pullNumber}.`,
       );
-      const client = normaliseOctokit(octokit);
+      res
+        .status(400)
+        .json({
+          error: `No approved user found when approving PR #${pullNumber}. Try logging out and logging back in.`,
+        });
+      return;
+      // const octokit = await githubApp.getInstallationOctokit(
+      //   installation.installationId,
+      // );
+      // const client = normaliseOctokit(octokit);
 
-      try {
-        await client.request(
-          "POST /repos/{owner}/{repo}/pulls/{pull_number}/reviews",
-          {
-            owner,
-            repo,
-            pull_number: pullNumber,
-            event: "APPROVE",
-            body: "✓ Approved via RepoGuard Security Console.",
-          },
-        );
-      } catch (reviewErr: unknown) {
-        const errMsg =
-          reviewErr instanceof Error ? reviewErr.message : String(reviewErr);
-        if (
-          errMsg.includes("Can not approve your own pull request") ||
-          errMsg.includes("Unprocessable Entity")
-        ) {
-          logger.info(
-            `[api/repos/pulls/approve] Bot is author of PR #${pullNumber}. Submitting review confirmation comment instead.`,
-          );
-          await client.request(
-            "POST /repos/{owner}/{repo}/pulls/{pull_number}/reviews",
-            {
-              owner,
-              repo,
-              pull_number: pullNumber,
-              event: "COMMENT",
-              body: "✅ **RepoGuard Approval:** Changes verified and approved for merge via RepoGuard Security Console.",
-            },
-          );
-        } else {
-          throw reviewErr;
-        }
-      }
+      // try {
+      //   await client.request(
+      //     "POST /repos/{owner}/{repo}/pulls/{pull_number}/reviews",
+      //     {
+      //       owner,
+      //       repo,
+      //       pull_number: pullNumber,
+      //       event: "APPROVE",
+      //       body: "✓ Approved via RepoGuard Security Console.",
+      //     },
+      //   );
+      // } catch (reviewErr: unknown) {
+      //   const errMsg =
+      //     reviewErr instanceof Error ? reviewErr.message : String(reviewErr);
+      //   if (
+      //     errMsg.includes("Can not approve your own pull request") ||
+      //     errMsg.includes("Unprocessable Entity")
+      //   ) {
+      //     logger.info(
+      //       `[api/repos/pulls/approve] Bot is author of PR #${pullNumber}. Submitting review confirmation comment instead.`,
+      //     );
+      //     await client.request(
+      //       "POST /repos/{owner}/{repo}/pulls/{pull_number}/reviews",
+      //       {
+      //         owner,
+      //         repo,
+      //         pull_number: pullNumber,
+      //         event: "COMMENT",
+      //         body: "✅ **RepoGuard Approval:** Changes verified and approved for merge via RepoGuard Security Console.",
+      //       },
+      //     );
+      //   } else {
+      //     throw reviewErr;
+      //   }
+      // }
     }
 
     logger.info(
