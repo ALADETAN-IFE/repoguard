@@ -54,13 +54,38 @@ describe("pullRequest", () => {
           file: "postcss.config.mjs",
         },
       ];
-      const { patchedContent, patchedFindings } = await applyPatches(original, findings, "postcss.config.mjs");
+      const { patchedContent, patchedFindings, shouldDelete } = await applyPatches(
+        original,
+        findings,
+        "postcss.config.mjs",
+      );
       expect(patchedContent).toContain("// REMOVED BY REPOGUARD: obfuscated malware payload");
       expect(patchedContent).toContain("// REMOVED BY REPOGUARD: createRequire import for malware");
       expect(patchedContent).toContain("// REMOVED BY REPOGUARD: require definition for malware");
       expect(patchedContent).not.toContain("global.i=");
       expect(patchedContent).not.toContain("global.r=");
       expect(patchedFindings).toHaveLength(1);
+      expect(shouldDelete).toBe(false);
+    });
+
+    it("flags whole-file obfuscated-malware payloads for deletion instead of tombstone commits", async () => {
+      const original =
+        'global.i="A8-2728";global.r=require;const http=require("\\u0068\\u0074\\u0074\\u0070");';
+      const findings: Finding[] = [
+        {
+          rule: "obfuscated-malware-pattern",
+          severity: "critical",
+          message: "malware pattern detected",
+          file: "data/scripts/app-58.js",
+        },
+      ];
+      const { patchedFindings, shouldDelete } = await applyPatches(
+        original,
+        findings,
+        "data/scripts/app-58.js",
+      );
+      expect(patchedFindings).toHaveLength(1);
+      expect(shouldDelete).toBe(true);
     });
 
     it("patches js-obfuscated-hex with unicode escape sequences and marks overlapping line findings as patched", async () => {
@@ -596,6 +621,63 @@ describe("pullRequest", () => {
       expect(routesCalled).toContain("DELETE /repos/{owner}/{repo}/contents/{path}");
       expect(routesCalled).not.toContain("PUT /repos/{owner}/{repo}/contents/{path}");
       expect(routesCalled).toContain("POST /repos/{owner}/{repo}/pulls");
+    });
+
+    it("deletes whole-file obfuscated malware instead of committing a tombstone", async () => {
+      const malware =
+        'global.i="A8-2728";global.r=require;const http=require("\\u0068\\u0074\\u0074\\u0070");';
+      requestMock.mockImplementation((route: string) => {
+        if (route === "GET /repos/{owner}/{repo}/contents/{path}") {
+          return {
+            data: {
+              type: "file",
+              content: Buffer.from(malware).toString("base64"),
+              sha: "file-sha-malware",
+            },
+          };
+        }
+        if (route === "GET /repos/{owner}/{repo}") {
+          return { data: { default_branch: "main" } };
+        }
+        if (route === "GET /repos/{owner}/{repo}/git/ref/{ref}") {
+          return { data: { object: { sha: "base-sha-123" } } };
+        }
+        if (route === "POST /repos/{owner}/{repo}/git/refs") {
+          return { data: {} };
+        }
+        if (route === "DELETE /repos/{owner}/{repo}/contents/{path}") {
+          return { data: {} };
+        }
+        if (route === "POST /repos/{owner}/{repo}/pulls") {
+          return { data: { number: 101 } };
+        }
+        if (route === "GET /repos/{owner}/{repo}/collaborators") {
+          return { data: [] };
+        }
+        if (route === "GET /repos/{owner}/{repo}/labels") {
+          return { data: [] };
+        }
+        throw new Error(`Unexpected request: ${route}`);
+      });
+
+      const findings: Finding[] = [
+        {
+          rule: "obfuscated-malware-pattern",
+          severity: "critical",
+          message: "malware pattern detected",
+          file: "data/scripts/app-58.js",
+        },
+      ];
+
+      await openFixPR(mockOctokit, {
+        owner: "test-owner",
+        repo: "test-repo",
+        findings,
+      });
+
+      const routesCalled = requestMock.mock.calls.map((c) => c[0]);
+      expect(routesCalled).toContain("DELETE /repos/{owner}/{repo}/contents/{path}");
+      expect(routesCalled).not.toContain("PUT /repos/{owner}/{repo}/contents/{path}");
     });
 
     it("falls back to security issue if git branch creation fails due to permission error", async () => {

@@ -44,18 +44,28 @@ async function isEffectivelyEmpty(
 ): Promise<boolean> {
   const formatted = await formatContent(content, filePath);
 
-  const stripped = formatted
+  let stripped = formatted
     // Remove block comments  /* … */
     .replace(/\/\*[\s\S]*?\*\//g, "")
     // Remove single-line // comments
     .replace(/\/\/[^\n]*/g, "")
     // Remove shell / Python # comments
     .replace(/#[^\n]*/g, "")
-    // Collapse whitespace
+    .trim();
+
+  // Drop any leftover REPOGUARD tombstone text (non-comment edge cases)
+  stripped = stripped
+    .split("\n")
+    .filter((line) => !/REMOVED BY REPOGUARD/i.test(line))
+    .join("\n")
     .replace(/\s+/g, " ")
     .trim();
 
-  return stripped.length === 0;
+  if (stripped.length === 0) return true;
+  // Patch replacements can leave a lone ";" where malware followed legitimate code
+  if (/^[\s;,{}[\]()]*$/.test(stripped)) return true;
+
+  return false;
 }
 
 // ─── Permission error detection ───────────────────────────────────────────────
@@ -495,16 +505,32 @@ export async function applyPatches(
           "// REMOVED BY REPOGUARD: require definition for malware",
         );
         nextPatched = nextPatched.replace(
+          /^global(?:\.(?:i|r|m)|\[['"](?:!|i|r|m)['"]\]|\[_\$_\w+\[\d+\]\])\s*=[\s\S]*/gm,
+          "// REMOVED BY REPOGUARD: obfuscated malware payload",
+        );
+        nextPatched = nextPatched.replace(
           /(?:;\s*|\s+)global(?:\.(?:i|r|m)|\[['"](?:!|i|r|m)['"]\]|\[_\$_\w+\[\d+\]\])\s*=[\s\S]*/g,
           ";\n// REMOVED BY REPOGUARD: obfuscated malware payload",
+        );
+        nextPatched = nextPatched.replace(
+          /^global\[['"]!['"\]][\s\S]*/gm,
+          "// REMOVED BY REPOGUARD: obfuscated malware payload",
         );
         nextPatched = nextPatched.replace(
           /\n?global\[['"]!['"\]][\s\S]*/g,
           "\n// REMOVED BY REPOGUARD: obfuscated malware payload",
         );
         nextPatched = nextPatched.replace(
+          /^global\[_\$_\w+\[\d+\]\]\s*=\s*require[\s\S]*/gm,
+          "// REMOVED BY REPOGUARD: obfuscated malware payload",
+        );
+        nextPatched = nextPatched.replace(
           /\n?global\[_\$_\w+\[\d+\]\]\s*=\s*require[\s\S]*/g,
           "\n// REMOVED BY REPOGUARD: obfuscated malware payload",
+        );
+        nextPatched = nextPatched.replace(
+          /^var _\$_\w+\s*=\s*\(?function[\s\S]*/gm,
+          "// REMOVED BY REPOGUARD: obfuscated malware payload",
         );
         nextPatched = nextPatched.replace(
           /\n?var _\$_\w+\s*=\s*\(?function[\s\S]*/g,

@@ -846,11 +846,9 @@ export const approveFixPR = async (
       logger.info(
         `[api/repos/pulls/approve] No approved user found when approving PR #${pullNumber}.`,
       );
-      res
-        .status(400)
-        .json({
-          error: `No approved user found when approving PR #${pullNumber}. Try logging out and logging back in.`,
-        });
+      res.status(400).json({
+        error: `No approved user found when approving PR #${pullNumber}. Try logging out and logging back in.`,
+      });
       return;
       // const octokit = await githubApp.getInstallationOctokit(
       //   installation.installationId,
