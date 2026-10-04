@@ -504,6 +504,21 @@ export async function applyPatches(
           /\n?const\s+require\s*=\s*createRequire\s*\(\s*import\.meta\.url\s*\);?/g,
           "// REMOVED BY REPOGUARD: require definition for malware",
         );
+        // Hex / string array definition function
+        nextPatched = nextPatched.replace(
+          /(?:^|\n)\s*function\s+[a-zA-Z0-9_$]+\s*\(\s*\)\s*\{\s*(?:var|let|const)\s+[a-zA-Z0-9_$]+\s*=\s*\[[\s\S]*?\];\s*[a-zA-Z0-9_$]+\s*=\s*function\s*\(\s*\)\s*\{\s*return\s+[a-zA-Z0-9_$]+;?\s*\};?\s*return\s+[a-zA-Z0-9_$]+\(\);?\s*\}[\s;]*/g,
+          "\n// REMOVED BY REPOGUARD: obfuscated malware string array\n",
+        );
+        // Array rotation IIFE loop (shift-push / self-defending)
+        nextPatched = nextPatched.replace(
+          /(?:^|\n)\s*(?:(?:var|let|const)\s+[a-zA-Z0-9_$]+\s*=\s*[a-zA-Z0-9_$]+;?\s*)?\(function\s*\([a-zA-Z0-9_$,\s]*\)\s*\{[\s\S]*?(?:push|shift)[\s\S]*?\}\)\s*\(\s*[a-zA-Z0-9_$]+[\s\S]*?\);?/g,
+          "\n// REMOVED BY REPOGUARD: obfuscated malware array rotation loop\n",
+        );
+        // Obfuscation decoder / RC4 / hex-table lookup function
+        nextPatched = nextPatched.replace(
+          /(?:^|\n)\s*function\s+[a-zA-Z0-9_$]+\s*\([a-zA-Z0-9_$,\s]*\)\s*\{[\s\S]*?(?:(?:return\s+[a-zA-Z0-9_$]+(?:\.join|\[[^\]]+\])\([^)]*\))|(?:return\s+[a-zA-Z0-9_$]+\[[^\]]+\]));?\s*\}[\s;]*/g,
+          "\n// REMOVED BY REPOGUARD: obfuscated malware decoder\n",
+        );
         nextPatched = nextPatched.replace(
           /^global(?:\.(?:i|r|m)|\[['"](?:!|i|r|m)['"]\]|\[_\$_\w+\[\d+\]\])\s*=[\s\S]*/gm,
           "// REMOVED BY REPOGUARD: obfuscated malware payload",

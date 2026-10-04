@@ -88,6 +88,54 @@ describe("pullRequest", () => {
       expect(shouldDelete).toBe(true);
     });
 
+    it("cleans full JS-obfuscator scaffolding (string array, rotation IIFE, decoder) and flags standalone file for deletion", async () => {
+      const original = `function RvJq_qacMrKUHEOocOXlFJqDe() {
+  var QyHKBnoNrhREfFAeW_tAK = [
+    "4d4e494c4d4b382b05110e2e",
+    "4c4d4b4b47492b311b32250c",
+  ];
+  RvJq_qacMrKUHEOocOXlFJqDe = function () {
+    return QyHKBnoNrhREfFAeW_tAK;
+  };
+  return RvJq_qacMrKUHEOocOXlFJqDe();
+}
+var GE$TYvOXPng_M = F$FsRLfhVq_nVmBU;
+(function (i_FYaFntneVSCadivHjf$Uv, OuqqirYNMp_HsmM$LYk) {
+  var nYhvB = F$FsRLfhVq_nVmBU,
+    c$oRltkYNdCFIAbwVtMaUye = i_FYaFntneVSCadivHjf$Uv();
+  while (!![]) {
+    try {
+      var fHTkC = 12345;
+      if (fHTkC === OuqqirYNMp_HsmM$LYk) break;
+      else c$oRltkYNdCFIAbwVtMaUye["push"](c$oRltkYNdCFIAbwVtMaUye["shift"]());
+    } catch (IkOOXLDamGHHtCgdDsAwD) {
+      c$oRltkYNdCFIAbwVtMaUye["push"](c$oRltkYNdCFIAbwVtMaUye["shift"]());
+    }
+  }
+})(RvJq_qacMrKUHEOocOXlFJqDe, 0x1234);
+function y7(GLDiFXCesXEKjzn, BcKUQUM$aLlybiThmznRHr$Cl) {
+  var fVBkmr$uE$BmG = [];
+  return fVBkmr$uE$BmG["join"]("");
+}
+global.i = "malicious";
+`;
+      const findings: Finding[] = [
+        {
+          rule: "obfuscated-malware-pattern",
+          severity: "critical",
+          message: "obfuscated malware pattern detected",
+          file: "api.js",
+        },
+      ];
+      const { patchedFindings, shouldDelete } = await applyPatches(
+        original,
+        findings,
+        "api.js",
+      );
+      expect(patchedFindings).toHaveLength(1);
+      expect(shouldDelete).toBe(true);
+    });
+
     it("patches js-obfuscated-hex with unicode escape sequences and marks overlapping line findings as patched", async () => {
       const original = "const http=require('\\u0068\\u0074\\u0074\\u0070\\u0073');";
       const findings: Finding[] = [
