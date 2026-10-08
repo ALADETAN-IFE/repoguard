@@ -6,6 +6,7 @@ import {
   KNOWN_NPM_TYPOSQUATS,
   KNOWN_PYPI_TYPOSQUATS,
 } from "@repoguard/scanner";
+import { generateAIPatch, isAIEnabled } from "../services/aiService";
 
 interface OpenFixPROptions {
   owner: string;
@@ -747,6 +748,34 @@ export async function applyPatches(
       if (origLineText && !patched.includes(origLineText.trim())) {
         patchedFindings.push(finding);
       }
+    }
+  }
+
+  // ── AI Surgical Patch Fallback (when static regex does not resolve findings) ──
+  if (patchedFindings.length < findings.length && isAIEnabled()) {
+    try {
+      const aiPatch = await generateAIPatch(content, filePath, findings);
+      if (aiPatch) {
+        if (aiPatch.shouldDelete) {
+          logger.info(`[pr] AI classified ${filePath} as standalone malware — flagging for deletion`);
+          return {
+            patchedContent: "",
+            patchedFindings: findings,
+            shouldDelete: true,
+          };
+        }
+        if (aiPatch.patchedContent && aiPatch.patchedContent !== content) {
+          logger.info(`[pr] AI successfully generated surgical patch for ${filePath}: ${aiPatch.reasoning}`);
+          const formatted = await formatContent(aiPatch.patchedContent, filePath);
+          return {
+            patchedContent: formatted,
+            patchedFindings: findings,
+            shouldDelete: false,
+          };
+        }
+      }
+    } catch (aiErr) {
+      logger.warn(`[pr] AI patch fallback error for ${filePath}: ${aiErr instanceof Error ? aiErr.message : String(aiErr)}`);
     }
   }
 
