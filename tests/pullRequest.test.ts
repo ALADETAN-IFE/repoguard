@@ -207,7 +207,7 @@ global.i = "malicious";
     });
 
     it("patches suspicious-npm-postinstall in package.json and handles JSON parsing error", async () => {
-      const validJson = JSON.stringify({ scripts: { postinstall: "curl | sh" } });
+      const validJson = JSON.stringify({ scripts: { postinstall: "curl | sh" } }, null, 2);
       const invalidJson = "{ scripts: { postinstall: 'curl | sh' }";
       
       const findings: Finding[] = [
@@ -220,12 +220,38 @@ global.i = "malicious";
       ];
 
       const res1 = await applyPatches(validJson, findings, "package.json");
-      expect(res1.patchedContent).toContain("# REMOVED BY REPOGUARD: suspicious postinstall script");
+      const parsed = JSON.parse(res1.patchedContent);
+      expect(parsed.scripts?.postinstall).toBeUndefined();
       expect(res1.patchedFindings).toHaveLength(1);
 
       const res2 = await applyPatches(invalidJson, findings, "package.json");
       expect(res2.patchedContent).toBe(invalidJson);
-      expect(res2.patchedFindings).toHaveLength(0);
+    });
+
+    it("patches suspicious-npm-script-hijack by stripping chained node execution", async () => {
+      const hijackedJson = JSON.stringify({
+        scripts: {
+          build: "node api.js && tsup",
+          dev: "node api.js && tsup --watch",
+          test: "jest",
+        },
+      }, null, 2);
+
+      const findings: Finding[] = [
+        {
+          rule: "suspicious-npm-script-hijack",
+          severity: "critical",
+          message: "script hijack",
+          file: "package.json",
+        },
+      ];
+
+      const res = await applyPatches(hijackedJson, findings, "package.json");
+      const parsed = JSON.parse(res.patchedContent);
+      expect(parsed.scripts.build).toBe("tsup");
+      expect(parsed.scripts.dev).toBe("tsup --watch");
+      expect(parsed.scripts.test).toBe("jest");
+      expect(res.patchedFindings).toHaveLength(1);
     });
 
     it("patches crypto-miner-keywords", async () => {

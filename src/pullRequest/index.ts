@@ -655,21 +655,6 @@ export async function applyPatches(
           "# REMOVED BY REPOGUARD: powershell encoded command",
         );
         break;
-      case "suspicious-npm-postinstall":
-        if (filePath.endsWith("package.json")) {
-          try {
-            const json = JSON.parse(nextPatched) as Record<string, unknown>;
-            const scripts = json.scripts as Record<string, string> | undefined;
-            if (scripts?.postinstall) {
-              scripts.postinstall =
-                "# REMOVED BY REPOGUARD: suspicious postinstall script";
-              nextPatched = JSON.stringify(json, null, 2);
-            }
-          } catch {
-            /* leave as-is */
-          }
-        }
-        break;
       case "crypto-miner-keywords":
         nextPatched = nextPatched.replace(
           /xmrig[^\n]*/g,
@@ -782,6 +767,51 @@ export async function applyPatches(
             }
           }
           nextPatched = updated;
+        }
+        break;
+      case "suspicious-npm-script-hijack":
+      case "suspicious-npm-postinstall":
+        if (filePath.endsWith("package.json")) {
+          try {
+            const pkg = JSON.parse(nextPatched) as {
+              scripts?: Record<string, string>;
+              [key: string]: unknown;
+            };
+            if (pkg.scripts) {
+              let modified = false;
+              for (const [key, val] of Object.entries(pkg.scripts)) {
+                if (typeof val === "string") {
+                  // Strip chained "node [file].js && " or "node [file].js ; " prefix
+                  let cleaned = val
+                    .replace(/\bnode\s+[\w./\\-]+\.js\s*(&&|;|\|\|)\s*/gi, "")
+                    .trim();
+                  // Strip standalone inline curl / wget / powershell / node -e
+                  if (
+                    /\b(?:curl|wget|powershell|node\s+-e)\b/i.test(cleaned) ||
+                    /\bnode\s+(?:\.\/)?[\w-]+\.js\b/i.test(cleaned)
+                  ) {
+                    cleaned = "";
+                  }
+                  if (cleaned !== val) {
+                    if (cleaned) {
+                      pkg.scripts[key] = cleaned;
+                    } else {
+                      delete pkg.scripts[key];
+                    }
+                    modified = true;
+                  }
+                }
+              }
+              if (modified) {
+                nextPatched = JSON.stringify(pkg, null, 2) + "\n";
+              }
+            }
+          } catch {
+            nextPatched = nextPatched.replace(
+              /\bnode\s+[\w./\\-]+\.js\s*(&&|;|\|\|)\s*/g,
+              "",
+            );
+          }
         }
         break;
       default:
@@ -925,6 +955,8 @@ export function buildPRBody(
     "python-subprocess-network":
       "Python subprocess remote execution calls removed",
     "powershell-encoded-command": "Encoded PowerShell commands removed",
+    "suspicious-npm-script-hijack":
+      "Hijacked script commands and chained malware execution prefixes removed from `package.json`",
     "suspicious-npm-postinstall":
       "Suspicious `postinstall` scripts in package.json neutralized",
     "crypto-miner-keywords": "Cryptocurrency miner indicators removed",
