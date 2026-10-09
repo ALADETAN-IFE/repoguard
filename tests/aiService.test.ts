@@ -1,5 +1,6 @@
 import {
   isAIEnabled,
+  scrubPotentialSecrets,
   analyzeSuspiciousCode,
   generateAIPatch,
   summarizeForcePushSecurityImpact,
@@ -31,9 +32,26 @@ describe("aiService", () => {
       expect(isAIEnabled()).toBe(true);
     });
 
+    it("returns false when tenantOptIn is explicitly false even with key", () => {
+      process.env.GEMINI_API_KEY = "test-gemini-key";
+      expect(isAIEnabled(false)).toBe(false);
+    });
+
     it("returns true when OPENAI_API_KEY is present", () => {
       process.env.OPENAI_API_KEY = "test-openai-key";
       expect(isAIEnabled()).toBe(true);
+    });
+  });
+
+  describe("scrubPotentialSecrets", () => {
+    it("scrubs GitHub PATs, AWS keys, and Bearer tokens", () => {
+      const sensitiveCode =
+        'const pat = "ghp_123456789012345678901234567890123456"; const aws = "AKIAIOSFODNN7EXAMPLE"; const auth = "Bearer eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxIn0.xyz";';
+      const scrubbed = scrubPotentialSecrets(sensitiveCode);
+      expect(scrubbed).not.toContain("ghp_123456789012345678901234567890123456");
+      expect(scrubbed).not.toContain("AKIAIOSFODNN7EXAMPLE");
+      expect(scrubbed).toContain("[SCRUBBED_GITHUB_TOKEN]");
+      expect(scrubbed).toContain("[SCRUBBED_AWS_KEY]");
     });
   });
 

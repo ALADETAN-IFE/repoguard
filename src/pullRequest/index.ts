@@ -757,7 +757,9 @@ export async function applyPatches(
       const aiPatch = await generateAIPatch(content, filePath, findings);
       if (aiPatch) {
         if (aiPatch.shouldDelete) {
-          logger.info(`[pr] AI classified ${filePath} as standalone malware — flagging for deletion`);
+          logger.info(
+            `[pr] AI classified ${filePath} as standalone malware — flagging for deletion`,
+          );
           return {
             patchedContent: "",
             patchedFindings: findings,
@@ -765,8 +767,13 @@ export async function applyPatches(
           };
         }
         if (aiPatch.patchedContent && aiPatch.patchedContent !== content) {
-          logger.info(`[pr] AI successfully generated surgical patch for ${filePath}: ${aiPatch.reasoning}`);
-          const formatted = await formatContent(aiPatch.patchedContent, filePath);
+          logger.info(
+            `[pr] AI successfully generated surgical patch for ${filePath}: ${aiPatch.reasoning}`,
+          );
+          const formatted = await formatContent(
+            aiPatch.patchedContent,
+            filePath,
+          );
           return {
             patchedContent: formatted,
             patchedFindings: findings,
@@ -775,7 +782,9 @@ export async function applyPatches(
         }
       }
     } catch (aiErr) {
-      logger.warn(`[pr] AI patch fallback error for ${filePath}: ${aiErr instanceof Error ? aiErr.message : String(aiErr)}`);
+      logger.warn(
+        `[pr] AI patch fallback error for ${filePath}: ${aiErr instanceof Error ? aiErr.message : String(aiErr)}`,
+      );
     }
   }
 

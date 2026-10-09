@@ -17,10 +17,37 @@ export interface AIPatchResult {
 }
 
 /**
- * Checks if an AI provider API key is configured.
+ * Checks if an AI provider API key is configured and optionally checks tenant opt-in.
  */
-export function isAIEnabled(): boolean {
+export function isAIEnabled(tenantOptIn = true): boolean {
+  if (!tenantOptIn) return false;
   return !!(process.env.GEMINI_API_KEY || process.env.OPENAI_API_KEY);
+}
+
+/**
+ * Privacy Guard: Scrubs API keys, bearer tokens, and secrets from code
+ * before sending to LLMs, ensuring zero secret leakage.
+ */
+export function scrubPotentialSecrets(code: string): string {
+  return (
+    code
+      // GitHub PATs and tokens
+      .replace(/gh[pousr]_[A-Za-z0-9_]{36,255}/g, "[SCRUBBED_GITHUB_TOKEN]")
+      .replace(/github_pat_[A-Za-z0-9_]{80,255}/g, "[SCRUBBED_GITHUB_PAT]")
+      // AWS Access Keys
+      .replace(/(?:AKIA|ABIA|ACCA|ASIA)[0-9A-Z]{16}/g, "[SCRUBBED_AWS_KEY]")
+      // Slack tokens
+      .replace(/xox[baprs]-[0-9a-zA-Z-]{10,255}/g, "[SCRUBBED_SLACK_TOKEN]")
+      // Generic Bearer / API Keys / JWTs
+      .replace(
+        /Bearer\s+[A-Za-z0-9\-._~+/]+=*/gi,
+        "Bearer [SCRUBBED_BEARER_TOKEN]",
+      )
+      .replace(
+        /ey[A-Za-z0-9-_=]+\.ey[A-Za-z0-9-_=]+\.[A-Za-z0-9-_.+/=]+/g,
+        "[SCRUBBED_JWT]",
+      )
+  );
 }
 
 /**
@@ -47,7 +74,9 @@ async function callGemini(
 
   if (!response.ok) {
     const errText = await response.text();
-    logger.warn(`[aiService] Gemini API returned error ${response.status}: ${errText}`);
+    logger.warn(
+      `[aiService] Gemini API returned error ${response.status}: ${errText}`,
+    );
     return null;
   }
 
@@ -87,7 +116,9 @@ async function callOpenAI(
 
   if (!response.ok) {
     const errText = await response.text();
-    logger.warn(`[aiService] OpenAI API returned error ${response.status}: ${errText}`);
+    logger.warn(
+      `[aiService] OpenAI API returned error ${response.status}: ${errText}`,
+    );
     return null;
   }
 
@@ -127,6 +158,7 @@ export async function analyzeSuspiciousCode(
   if (!isAIEnabled()) return null;
 
   try {
+    const safeCode = scrubPotentialSecrets(code);
     const prompt = `You are RepoGuard's expert Application Security AI.
 Analyze the following code from file "${filePath}" for malicious code, backdoors, obfuscated payloads, credential stealers, data exfiltration, or supply chain tampering.
 
@@ -135,7 +167,7 @@ ${JSON.stringify(findings, null, 2)}
 
 Code content to inspect:
 \`\`\`
-${code.slice(0, 15000)}
+${safeCode.slice(0, 15000)}
 \`\`\`
 
 Return a JSON object with this EXACT structure:
@@ -174,6 +206,7 @@ export async function generateAIPatch(
   if (!isAIEnabled()) return null;
 
   try {
+    const safeContent = scrubPotentialSecrets(originalContent);
     const prompt = `You are RepoGuard's automated remediation engine.
 Given the file "${filePath}" and detected security findings, generate a clean, syntax-valid patched version removing ONLY the malicious payloads, obfuscation scaffolding, and harmful scripts, while preserving all legitimate functionality, exports, comments, and structure.
 
@@ -182,7 +215,7 @@ ${JSON.stringify(findings, null, 2)}
 
 Original File:
 \`\`\`
-${originalContent.slice(0, 20000)}
+${safeContent.slice(0, 20000)}
 \`\`\`
 
 Return a JSON object with this EXACT schema:
@@ -199,7 +232,9 @@ Return a JSON object with this EXACT schema:
     return result;
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
-    logger.warn(`[aiService] AI patch generation failed for ${filePath}: ${msg}`);
+    logger.warn(
+      `[aiService] AI patch generation failed for ${filePath}: ${msg}`,
+    );
     return null;
   }
 }

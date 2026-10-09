@@ -13,6 +13,7 @@ export interface IInstallation extends Document {
   freeTrialEndsOn: Date | null;
   marketplaceUpdatedAt: Date | null;
   marketplaceCancelledAt: Date | null;
+  enableAiAnalysis: boolean;
 }
 
 const InstallationSchema = new Schema<IInstallation>(
@@ -65,6 +66,10 @@ const InstallationSchema = new Schema<IInstallation>(
     marketplaceCancelledAt: {
       type: Date,
       default: null,
+    },
+    enableAiAnalysis: {
+      type: Boolean,
+      default: true,
     },
   },
   { timestamps: true },

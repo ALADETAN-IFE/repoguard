@@ -51,6 +51,15 @@ We commit to:
 - Fix confirmed vulnerabilities as quickly as possible
 - Never take legal action against good-faith security researchers
 
+## AI Privacy & Data Handling Guarantees
+
+RepoGuard integrates AI-assisted de-obfuscation and automated patch remediation while adhering to strict privacy standards for private and enterprise repositories:
+
+1. **Quarantined Snippet Isolation:** RepoGuard **never** uploads entire repositories or business logic. Only isolated snippets that already triggered a high-confidence malware alert (e.g. obfuscated payload lines) are evaluated.
+2. **Automated Secret Scrubbing:** All API tokens, GitHub PATs, AWS keys, Slack tokens, and credentials are automatically scrubbed locally before analysis.
+3. **Zero Data Retention (ZDR):** API transmissions use enterprise endpoints with strict Zero Data Retention policies. Your code is processed entirely in memory and is **never** used to train AI models.
+4. **Tenant-Level Opt-Out Control:** AI analysis is active by default for all installations (when an API key is configured on the instance) to provide automated zero-day protection, and can be disabled per installation at any time. When disabled, RepoGuard operates exclusively using 100% local, static AST and regex rules.
+
 ---
 
 _RepoGuard is a security tool — we take reports about our own security seriously._
