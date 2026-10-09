@@ -459,6 +459,50 @@ export async function applyPatches(
     };
   }
 
+  // ── Standalone Obfuscated Malware File Detection ───────────────────────────
+  // If the file consists entirely of JS-obfuscator scaffolding (hex string array,
+  // rotation IIFE loop, global payload/require assignment) with no legitimate exports,
+  // flag the entire file for auto-deletion.
+  const hasObfuscatedFinding = findings.some(
+    (f) =>
+      f.rule === "obfuscated-malware-pattern" ||
+      f.rule === "js-obfuscated-charcode",
+  );
+  if (hasObfuscatedFinding) {
+    const hasStringArray =
+      /function\s+[a-zA-Z0-9_$]+\s*\(\s*\)\s*\{\s*(?:var|let|const)\s+[a-zA-Z0-9_$]+\s*=\s*\[[\s\S]*?\];[\s\S]*?return\s+[a-zA-Z0-9_$]+/s.test(
+        content,
+      );
+    const hasRotationLoop =
+      /\(function\s*\([a-zA-Z0-9_$,\s]*\)\s*\{[\s\S]*?(?:push|shift)[\s\S]*?\}\s*\(|\(function\s*\([a-zA-Z0-9_$,\s]*\)\s*\{[\s\S]*?(?:push|shift)[\s\S]*?\}\)\s*\(/s.test(
+        content,
+      );
+    const hasGlobalOrRequire =
+      /global(?:\.(?:i|r|m)|\[['"](?:!|i|r|m)['"]\]|\[_\$_\w+\[\d+\]\])|require\s*\(|new\s+Function|fromCharCode/s.test(
+        content,
+      );
+    const hasLegitimateExports =
+      /(?:export\s+(?:default|const|let|var|function|class)|module\.exports\s*=|exports\.[a-zA-Z0-9_$]+\s*=)/.test(
+        content.replace(/global\[.*\]/g, ""),
+      );
+
+    if (
+      hasStringArray &&
+      hasRotationLoop &&
+      hasGlobalOrRequire &&
+      !hasLegitimateExports
+    ) {
+      logger.info(
+        `[pr] Standalone obfuscated malware file detected: ${filePath} — flagging for auto-deletion`,
+      );
+      return {
+        patchedContent: "",
+        patchedFindings: findings,
+        shouldDelete: true,
+      };
+    }
+  }
+
   let patched = content;
   const patchedFindings: Finding[] = [];
 
@@ -507,18 +551,23 @@ export async function applyPatches(
         );
         // Hex / string array definition function
         nextPatched = nextPatched.replace(
-          /(?:^|\n)\s*function\s+[a-zA-Z0-9_$]+\s*\(\s*\)\s*\{\s*(?:var|let|const)\s+[a-zA-Z0-9_$]+\s*=\s*\[[\s\S]*?\];\s*[a-zA-Z0-9_$]+\s*=\s*function\s*\(\s*\)\s*\{\s*return\s+[a-zA-Z0-9_$]+;?\s*\};?\s*return\s+[a-zA-Z0-9_$]+\(\);?\s*\}[\s;]*/g,
+          /(?:^|[\n;\s])function\s+[a-zA-Z0-9_$]+\s*\(\s*\)\s*\{\s*(?:var|let|const)\s+[a-zA-Z0-9_$]+\s*=\s*\[[\s\S]*?\];\s*[a-zA-Z0-9_$]+\s*=\s*function\s*\(\s*\)\s*\{\s*return\s+[a-zA-Z0-9_$]+;?\s*\};?\s*return\s+[a-zA-Z0-9_$]+\(\);?\s*\}[\s;]*/g,
           "\n// REMOVED BY REPOGUARD: obfuscated malware string array\n",
         );
         // Array rotation IIFE loop (shift-push / self-defending)
         nextPatched = nextPatched.replace(
-          /(?:^|\n)\s*(?:(?:var|let|const)\s+[a-zA-Z0-9_$]+\s*=\s*[a-zA-Z0-9_$]+;?\s*)?\(function\s*\([a-zA-Z0-9_$,\s]*\)\s*\{[\s\S]*?(?:push|shift)[\s\S]*?\}\)\s*\(\s*[a-zA-Z0-9_$]+[\s\S]*?\);?/g,
+          /(?:^|[\n;\s])\(?\s*function\s*\([a-zA-Z0-9_$,\s]*\)\s*\{[\s\S]*?(?:push|shift)[\s\S]*?\}\s*\)?\s*\([\s\S]*?\)\s*\)?;?/g,
           "\n// REMOVED BY REPOGUARD: obfuscated malware array rotation loop\n",
         );
         // Obfuscation decoder / RC4 / hex-table lookup function
         nextPatched = nextPatched.replace(
-          /(?:^|\n)\s*function\s+[a-zA-Z0-9_$]+\s*\([a-zA-Z0-9_$,\s]*\)\s*\{[\s\S]*?(?:(?:return\s+[a-zA-Z0-9_$]+(?:\.join|\[[^\]]+\])\([^)]*\))|(?:return\s+[a-zA-Z0-9_$]+\[[^\]]+\]));?\s*\}[\s;]*/g,
+          /(?:^|[\n;\s])function\s+[a-zA-Z0-9_$]+\s*\([a-zA-Z0-9_$,\s]*\)\s*\{[\s\S]*?return\s+[^;]+;?\s*\}[\s;]*/g,
           "\n// REMOVED BY REPOGUARD: obfuscated malware decoder\n",
+        );
+        // Decoder alias variables
+        nextPatched = nextPatched.replace(
+          /(?:^|[\n;\s])(?:var|let|const)\s+[a-zA-Z0-9_$]+\s*=\s*[a-zA-Z0-9_$]+;?/g,
+          "\n// REMOVED BY REPOGUARD: obfuscated malware alias\n",
         );
         nextPatched = nextPatched.replace(
           /^global(?:\.(?:i|r|m)|\[['"](?:!|i|r|m)['"]\]|\[_\$_\w+\[\d+\]\])\s*=[\s\S]*/gm,
