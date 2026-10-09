@@ -377,8 +377,12 @@ export interface PullRequestClosedPayload {
   repository: {
     name: string;
     owner: { login: string };
+    default_branch?: string;
   };
+  sender?: { login: string; type?: string };
 }
+
+const INFECTED_PR_TRIGGER = "infected pr";
 
 export function handlePullRequestClosed(
   _app: App,
@@ -391,8 +395,11 @@ export function handlePullRequestClosed(
     const repo = repository.name;
     const branchRef = pull_request.head.ref;
     const client = normaliseOctokit(octokit);
+    const isFixBranch = branchRef.startsWith("repoguard/fixes-");
+    const wasMerged = pull_request.merged;
 
-    if (branchRef.startsWith("repoguard/fixes-")) {
+    // ── 1. Always clean up the fix branch ──────────────────────────────────
+    if (isFixBranch) {
       try {
         await client.request("DELETE /repos/{owner}/{repo}/git/refs/{ref}", {
           owner,
@@ -400,7 +407,7 @@ export function handlePullRequestClosed(
           ref: `heads/${branchRef}`,
         });
         logger.info(
-          `[pr] Deleted branch ${branchRef} in ${owner}/${repo} after PR #${pull_request.number} was ${pull_request.merged ? "merged" : "closed"}`,
+          `[pr] Deleted branch ${branchRef} in ${owner}/${repo} after PR #${pull_request.number} was ${wasMerged ? "merged" : "closed"}`,
         );
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
@@ -410,8 +417,8 @@ export function handlePullRequestClosed(
       }
     }
 
-    // If PR was merged, close any associated issues with a remark
-    if (pull_request.merged) {
+    // ── 2. If merged: close any linked security issues ──────────────────────
+    if (wasMerged) {
       try {
         const bodyText = pull_request.body || "";
         const issueMatches = [
@@ -422,7 +429,6 @@ export function handlePullRequestClosed(
 
         const targetIssueNumbers = new Set(issueMatches);
 
-        // Check if there is an open RepoGuard security issue for this repo
         const openIssue = await getOpenRepoGuardIssue(client, owner, repo);
         if (openIssue) {
           targetIssueNumbers.add(openIssue.number);
@@ -458,6 +464,152 @@ export function handlePullRequestClosed(
           `[pr] Could not close linked issue for merged PR #${pull_request.number}: ${message}`,
         );
       }
+
+      return; // merged → done
+    }
+
+    // ── 3. Closed WITHOUT merging — rescan and respond ─────────────────────
+    if (!isFixBranch) return; // only care about our own fix branches
+
+    logger.warn(
+      `[pr] RepoGuard Fix PR #${pull_request.number} was closed without merging in ${owner}/${repo} — rescanning`,
+    );
+
+    try {
+      // Check if the last comment on the PR contains "infected pr"
+      let isInfectedPRTrigger = false;
+      try {
+        const { data: comments } = await client.request(
+          "GET /repos/{owner}/{repo}/issues/{issue_number}/comments",
+          { owner, repo, issue_number: pull_request.number, per_page: 100 },
+        );
+        const allComments = comments as Array<{
+          body?: string;
+          user?: { type?: string; login?: string };
+        }>;
+        // Look through all comments (excluding bot comments) for "infected pr"
+        isInfectedPRTrigger = allComments
+          .filter((c) => c.user?.type !== "Bot")
+          .some((c) => c.body?.toLowerCase().includes(INFECTED_PR_TRIGGER));
+      } catch {
+        /* if we can't fetch comments, proceed without the trigger */
+      }
+
+      // Full repo scan on the default branch
+      const { scanFullRepoForPush } = await import("./installation");
+      const findings = await scanFullRepoForPush(client, owner, repo);
+
+      if (findings.length === 0) {
+        // Repo is now clean — close any linked security issue
+        logger.info(
+          `[pr] Post-close rescan: ${owner}/${repo} is clean — no action needed`,
+        );
+        const openIssue = await getOpenRepoGuardIssue(client, owner, repo);
+        if (openIssue) {
+          await client.request(
+            "POST /repos/{owner}/{repo}/issues/{issue_number}/comments",
+            {
+              owner,
+              repo,
+              issue_number: openIssue.number,
+              body: `✅ **RepoGuard Update:** Fix PR #${pull_request.number} was closed, but a rescan of the default branch shows **no security issues remain**. Closing this issue as resolved.`,
+            },
+          );
+          await client.request(
+            "PATCH /repos/{owner}/{repo}/issues/{issue_number}",
+            {
+              owner,
+              repo,
+              issue_number: openIssue.number,
+              state: "closed",
+              state_reason: "completed",
+            },
+          );
+        }
+        return;
+      }
+
+      // Threats still present after close
+      logger.warn(
+        `[pr] Post-close rescan: ${findings.length} finding(s) still active in ${owner}/${repo}`,
+      );
+
+      if (isInfectedPRTrigger) {
+        // ── "infected pr" comment detected → open a fresh Fix PR ─────────────
+        logger.info(
+          `[pr] "infected pr" trigger detected on closed PR #${pull_request.number} — generating new Fix PR`,
+        );
+
+        const { openFixPR } = await import("../pullRequest");
+        const openIssue = await getOpenRepoGuardIssue(client, owner, repo);
+        const result = await openFixPR(client, {
+          owner,
+          repo,
+          findings,
+          issueNumber: openIssue?.number,
+        });
+
+        if (result?.pr) {
+          logger.info(
+            `[pr] Opened fresh Fix PR #${result.pr.number} in ${owner}/${repo} after "infected pr" trigger`,
+          );
+          // Comment on the closed PR linking the new one
+          try {
+            await client.request(
+              "POST /repos/{owner}/{repo}/issues/{issue_number}/comments",
+              {
+                owner,
+                repo,
+                issue_number: pull_request.number,
+                body: [
+                  `🔄 **RepoGuard:** "infected pr" trigger received.`,
+                  ``,
+                  `A rescan confirmed **${findings.length} security issue(s) still active** on the default branch.`,
+                  `A new automated Fix PR has been opened: [#${result.pr.number}](${result.pr.html_url})`,
+                ].join("\n"),
+              },
+            );
+          } catch {
+            /* non-fatal */
+          }
+        }
+      } else {
+        // ── Standard close without "infected pr" → open/update security issue ─
+        const { openFixPR } = await import("../pullRequest");
+        const openIssue = await getOpenRepoGuardIssue(client, owner, repo);
+
+        if (openIssue) {
+          // Update existing issue
+          await client.request(
+            "POST /repos/{owner}/{repo}/issues/{issue_number}/comments",
+            {
+              owner,
+              repo,
+              issue_number: openIssue.number,
+              body: [
+                `⚠️ **RepoGuard Alert:** Fix PR #${pull_request.number} was closed without merging.`,
+                ``,
+                `A rescan of the default branch found **${findings.length} security issue(s) still active**.`,
+                ``,
+                `Comment \`/fix\` to generate a new automated Fix PR, or remediate the findings manually.`,
+              ].join("\n"),
+            },
+          );
+          // Reopen if closed
+          await client.request(
+            "PATCH /repos/{owner}/{repo}/issues/{issue_number}",
+            { owner, repo, issue_number: openIssue.number, state: "open" },
+          );
+        } else {
+          // No open issue — open a fresh one via openFixPR fallback
+          await openFixPR(client, { owner, repo, findings });
+        }
+      }
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      logger.error(
+        `[pr] Post-close rescan failed for ${owner}/${repo}: ${message}`,
+      );
     }
   };
 }
