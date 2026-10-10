@@ -1,10 +1,10 @@
 import {
   isAIEnabled,
-  scrubPotentialSecrets,
   analyzeSuspiciousCode,
   generateAIPatch,
   summarizeForcePushSecurityImpact,
 } from "../src/services/aiService";
+import { scrubPotentialSecrets } from "../src/services/scrubOff";
 import type { Finding } from "../src/types";
 
 describe("aiService", () => {

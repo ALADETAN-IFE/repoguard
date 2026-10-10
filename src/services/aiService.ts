@@ -1,5 +1,6 @@
 import logger from "../utils/logger";
 import type { Finding } from "../types";
+import { scrubPotentialSecrets } from "./scrubOff";
 
 export interface AIAnalysisResult {
   isMalicious: boolean;
@@ -23,32 +24,6 @@ export interface AIPatchResult {
 export function isAIEnabled(tenantOptIn = true): boolean {
   if (!tenantOptIn) return false;
   return !!(process.env.GEMINI_API_KEY || process.env.OPENAI_API_KEY);
-}
-
-/**
- * Privacy Guard: Scrubs API keys, bearer tokens, and secrets from code
- * before sending to LLMs, ensuring zero secret leakage.
- */
-export function scrubPotentialSecrets(code: string): string {
-  return (
-    code
-      // GitHub PATs and tokens
-      .replace(/gh[pousr]_[A-Za-z0-9_]{36,255}/g, "[SCRUBBED_GITHUB_TOKEN]")
-      .replace(/github_pat_[A-Za-z0-9_]{80,255}/g, "[SCRUBBED_GITHUB_PAT]")
-      // AWS Access Keys
-      .replace(/(?:AKIA|ABIA|ACCA|ASIA)[0-9A-Z]{16}/g, "[SCRUBBED_AWS_KEY]")
-      // Slack tokens
-      .replace(/xox[baprs]-[0-9a-zA-Z-]{10,255}/g, "[SCRUBBED_SLACK_TOKEN]")
-      // Generic Bearer / API Keys / JWTs
-      .replace(
-        /Bearer\s+[A-Za-z0-9\-._~+/]+=*/gi,
-        "Bearer [SCRUBBED_BEARER_TOKEN]",
-      )
-      .replace(
-        /ey[A-Za-z0-9-_=]+\.ey[A-Za-z0-9-_=]+\.[A-Za-z0-9-_.+/=]+/g,
-        "[SCRUBBED_JWT]",
-      )
-  );
 }
 
 /**
