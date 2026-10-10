@@ -81,23 +81,30 @@ function isPermissionError(err: unknown): boolean {
   );
 }
 
+// ─── Secret rules that must NEVER be auto-patched by AI or regex ─────────────
+export const SECRET_RULES = new Set([
+  "hardcoded-secret",
+  "high-entropy-secret",
+  "env-exfiltration",
+  "workflow-exfiltrate-secrets",
+]);
+
 export async function openFixPR(
   octokit: OctokitClient,
   { owner, repo, findings, issueNumber }: OpenFixPROptions,
 ): Promise<OpenFixPRResult | undefined> {
   try {
-    // ── 0. Prevent duplicate Fix PRs if one is already open ───────────────────
+    // ── 0. Check if an open Fix PR already exists ─────────────────────────────
+    let existingPR: GitHubPullRequest | undefined;
     try {
-      const alreadyHasFixPR = await hasOpenRepoGuardFixPR(octokit, owner, repo);
-      if (alreadyHasFixPR) {
-        logger.info(
-          `[pr] Open Fix PR already exists in ${owner}/${repo} — skipping duplicate creation`,
-        );
-        return;
-      }
+      existingPR = await getExistingRepoGuardFixPR(octokit, owner, repo);
     } catch {
       /* non-fatal if pulls listing fails */
     }
+
+    const branch = existingPR
+      ? existingPR.head.ref
+      : `repoguard/fixes-${Date.now()}`;
 
     // ── 1. Fetch each affected file and see if there are actual patches ──────────
     const affectedFiles = [
@@ -116,27 +123,62 @@ export async function openFixPR(
 
     const allPatchedFindings: Finding[] = [];
     const allUnpatchedFindings: Finding[] = [];
+    const fileSuggestions = new Map<string, Map<number, string>>();
 
     for (const filePath of affectedFiles) {
       try {
-        // Fetch content from default branch
-        const { data } = await octokit.request(
-          "GET /repos/{owner}/{repo}/contents/{path}",
-          { owner, repo, path: filePath },
-        );
+        // Fetch content from the fix branch if existingPR, or default branch
+        let fileData:
+          | { type?: string; content?: string; sha: string }
+          | undefined;
+        try {
+          if (existingPR) {
+            const res = await octokit.request(
+              "GET /repos/{owner}/{repo}/contents/{path}",
+              { owner, repo, path: filePath, ref: branch },
+            );
+            fileData = res.data as {
+              type?: string;
+              content?: string;
+              sha: string;
+            };
+          }
+        } catch {
+          // File might not exist on branch yet — fall back to default branch
+        }
 
-        if (Array.isArray(data) || data.type !== "file" || !("content" in data))
+        if (!fileData) {
+          const res = await octokit.request(
+            "GET /repos/{owner}/{repo}/contents/{path}",
+            { owner, repo, path: filePath },
+          );
+          fileData = res.data as {
+            type?: string;
+            content?: string;
+            sha: string;
+          };
+        }
+
+        if (
+          Array.isArray(fileData) ||
+          fileData.type !== "file" ||
+          !("content" in fileData)
+        )
           continue;
 
         const originalContent = Buffer.from(
-          data.content || "",
+          fileData.content || "",
           "base64",
         ).toString("utf8");
-        const fileSha: string = data.sha;
+        const fileSha: string = fileData.sha;
 
         const fileFindings = findings.filter((f) => f.file === filePath);
-        const { patchedContent, patchedFindings, shouldDelete } =
+        const { patchedContent, patchedFindings, shouldDelete, aiSuggestions } =
           await applyPatches(originalContent, fileFindings, filePath, octokit);
+
+        if (aiSuggestions && aiSuggestions.size > 0) {
+          fileSuggestions.set(filePath, aiSuggestions);
+        }
 
         const fileUnpatched = fileFindings.filter(
           (f) => !patchedFindings.includes(f),
@@ -144,7 +186,12 @@ export async function openFixPR(
         allPatchedFindings.push(...patchedFindings);
         allUnpatchedFindings.push(...fileUnpatched);
 
-        if (patchedFindings.length > 0) {
+        // If on an existing PR, only queue if content actually changed or needs deletion
+        const isModified =
+          shouldDelete ||
+          (patchedFindings.length > 0 && patchedContent !== originalContent);
+
+        if (isModified && patchedFindings.length > 0) {
           filesToPatch.push({
             filePath,
             originalContent,
@@ -171,8 +218,7 @@ export async function openFixPR(
 
     // ── 1.1 Cross-File Remediation: package.json script cleanup ──────────────
     // If any file was flagged for deletion (e.g. api.js), OR if package.json was not
-    // yet included in filesToPatch, inspect package.json on the default branch.
-    // If package.json references any deleted files or has hijacked scripts, patch it!
+    // yet included in filesToPatch, inspect package.json on the target branch.
     const deletedFileNames = filesToPatch
       .filter((f) => f.shouldDelete)
       .map((f) => f.filePath.split("/").pop() ?? "")
@@ -186,7 +232,12 @@ export async function openFixPR(
       try {
         const { data: pkgData } = await octokit.request(
           "GET /repos/{owner}/{repo}/contents/{path}",
-          { owner, repo, path: "package.json" },
+          {
+            owner,
+            repo,
+            path: "package.json",
+            ...(existingPR ? { ref: branch } : {}),
+          },
         );
         if (
           !Array.isArray(pkgData) &&
@@ -253,7 +304,127 @@ export async function openFixPR(
       }
     }
 
-    // ── 2. Fall back to security issue if no files have functional changes ───────
+    // ── 2. Handle existing open PR (Incremental updates) ──────────────────────
+    if (existingPR) {
+      if (filesToPatch.length > 0) {
+        logger.info(
+          `[pr] Open Fix PR #${existingPR.number} exists — committing ${filesToPatch.length} new/updated patch(es) to branch ${branch}`,
+        );
+
+        for (const file of filesToPatch) {
+          if (file.shouldDelete) {
+            await octokit.request(
+              "DELETE /repos/{owner}/{repo}/contents/{path}",
+              {
+                owner,
+                repo,
+                path: file.filePath,
+                message: `fix(security): delete fully-malicious file ${file.filePath}\n\nDetected by RepoGuard:\n${file.patchedFindings.map((f) => `- ${f.rule}: ${f.message}`).join("\n")}`,
+                sha: file.fileSha,
+                branch,
+              },
+            );
+            logger.info(
+              `[pr] Deleted fully-malicious file ${file.filePath} on existing branch ${branch}`,
+            );
+            continue;
+          }
+
+          const fileUnpatched = file.fileFindings.filter(
+            (f) => !file.patchedFindings.includes(f),
+          );
+          const header =
+            fileUnpatched.length > 0
+              ? buildFileHeader(fileUnpatched, file.filePath)
+              : "";
+          const finalContent = header + file.patchedContent;
+
+          await octokit.request("PUT /repos/{owner}/{repo}/contents/{path}", {
+            owner,
+            repo,
+            path: file.filePath,
+            message: `fix(security): remove malicious content from ${file.filePath}\n\nDetected by RepoGuard:\n${file.patchedFindings.map((f) => `- ${f.rule}: ${f.message}`).join("\n")}`,
+            content: Buffer.from(finalContent).toString("base64"),
+            sha: file.fileSha,
+            branch,
+          });
+
+          logger.info(
+            `[pr] Patched ${file.filePath} on existing branch ${branch}`,
+          );
+        }
+
+        // Post an update comment on the existing PR explaining the new fixes
+        const newlyPatchedList = filesToPatch
+          .map(
+            (f) =>
+              `- \`${f.filePath}\`: ${f.patchedFindings.map((pf) => `\`${pf.rule}\``).join(", ")}`,
+          )
+          .join("\n");
+
+        try {
+          await octokit.request(
+            "POST /repos/{owner}/{repo}/issues/{issue_number}/comments",
+            {
+              owner,
+              repo,
+              issue_number: existingPR.number,
+              body: `🔄 **RepoGuard Update:** Additional security findings detected and patched in this branch:\n\n${newlyPatchedList}`,
+            },
+          );
+        } catch (commentErr) {
+          logger.warn(
+            `[pr] Could not post update comment to PR #${existingPR.number}: ${String(commentErr)}`,
+          );
+        }
+      } else {
+        logger.info(
+          `[pr] Open Fix PR #${existingPR.number} already has all patches applied — no new commits needed`,
+        );
+      }
+
+      // Post inline review comments for any unpatched / secret findings on existing PR
+      const deletedFiles = filesToPatch
+        .filter((f) => f.shouldDelete)
+        .map((f) => f.filePath);
+      const patchedMap = new Map(
+        filesToPatch
+          .filter((f) => !f.shouldDelete)
+          .map((f) => [f.filePath, f.patchedContent]),
+      );
+      for (const f of findings) {
+        if (
+          f.file &&
+          !deletedFiles.includes(f.file) &&
+          !patchedMap.has(f.file)
+        ) {
+          patchedMap.set(f.file, "");
+        }
+      }
+
+      await postReviewComments(
+        octokit,
+        owner,
+        repo,
+        existingPR.number,
+        existingPR.head?.ref || branch,
+        findings,
+        patchedMap,
+        allPatchedFindings,
+        fileSuggestions,
+      );
+
+      return {
+        pr: {
+          number: existingPR.number,
+          html_url:
+            existingPR.html_url ||
+            `https://github.com/${owner}/${repo}/pull/${existingPR.number}`,
+        },
+      };
+    }
+
+    // ── 3. Fall back to security issue if no files have functional changes ───────
     if (filesToPatch.length === 0) {
       logger.info(
         `[pr] No auto-patchable findings in ${owner}/${repo} — opening manual review security issue`,
@@ -266,7 +437,7 @@ export async function openFixPR(
       return { issue };
     }
 
-    // ── 3. Get default branch & base SHA for branch creation ────────────────────
+    // ── 4. Get default branch & base SHA for branch creation ────────────────────
     const { data: repoData } = await octokit.request(
       "GET /repos/{owner}/{repo}",
       { owner, repo },
@@ -279,9 +450,7 @@ export async function openFixPR(
     );
     const baseSha: string = refData.object.sha;
 
-    const branch = `repoguard/fixes-${Date.now()}`;
-
-    // ── 4. Create the fix branch ────────────────────────────────────────────
+    // ── 5. Create the fix branch ────────────────────────────────────────────
     try {
       await octokit.request("POST /repos/{owner}/{repo}/git/refs", {
         owner,
@@ -306,7 +475,7 @@ export async function openFixPR(
 
     logger.info(`[pr] Created branch ${branch} in ${owner}/${repo}`);
 
-    // ── 5. Commit each modified file (or delete if patching empties it) ─────
+    // ── 6. Commit each modified file (or delete if patching empties it) ─────
     for (const file of filesToPatch) {
       if (file.shouldDelete) {
         // The file would be left with nothing but REPOGUARD comment tombstones
@@ -351,7 +520,7 @@ export async function openFixPR(
       logger.info(`[pr] Patched ${file.filePath}`);
     }
 
-    // ── 6. Open the PR ──────────────────────────────────────────────────────
+    // ── 7. Open the PR ──────────────────────────────────────────────────────
     const totalAllPatchedFindings = allPatchedFindings.length;
     const deletedFiles = filesToPatch
       .filter((f) => f.shouldDelete)
@@ -380,6 +549,12 @@ export async function openFixPR(
         .filter((f) => !f.shouldDelete)
         .map((f) => [f.filePath, f.patchedContent]),
     );
+    for (const f of findings) {
+      if (f.file && !deletedFiles.includes(f.file) && !patchedMap.has(f.file)) {
+        patchedMap.set(f.file, "");
+      }
+    }
+
     await postReviewComments(
       octokit,
       owner,
@@ -389,11 +564,12 @@ export async function openFixPR(
       findings,
       patchedMap,
       allPatchedFindings,
+      fileSuggestions,
     );
 
     logger.info(`[pr] Opened PR #${pr.number} in ${owner}/${repo}`);
 
-    // ── 7. Request review from admins ───────────────────────────────────────
+    // ── 8. Request review from admins ───────────────────────────────────────
     const reviewers = await getAdminLogins(octokit, owner, repo);
 
     if (reviewers.length > 0) {
@@ -404,7 +580,7 @@ export async function openFixPR(
       logger.info(`[pr] Requested review from: ${reviewers.join(", ")}`);
     }
 
-    // ── 8. Ensure labels exist with brand colours, then apply them ──────────
+    // ── 9. Ensure labels exist with brand colours, then apply them ──────────
     await ensureAndApplyLabels(octokit, owner, repo, pr.number, [
       "repoguard",
       "security",
@@ -524,6 +700,7 @@ export async function applyPatches(
   patchedContent: string;
   patchedFindings: Finding[];
   shouldDelete: boolean;
+  aiSuggestions?: Map<number, string>;
 }> {
   const baseName = filePath.split("/").pop()?.toLowerCase() ?? "";
 
@@ -927,21 +1104,74 @@ export async function applyPatches(
     }
   }
 
-  // ── AI Surgical Patch Fallback (when static regex does not resolve findings) ──
+  const aiSuggestions = new Map<number, string>();
+
+  // ── AI Surgical Patch & Suggestion Generation ──────────────────────────────
   if (patchedFindings.length < findings.length && isAIEnabled()) {
     try {
       const aiPatch = await generateAIPatch(content, filePath, findings);
       if (aiPatch) {
-        if (aiPatch.shouldDelete) {
+        // Collect suggestions for secret lines from AI
+        const secretFindings = findings.filter((f) => SECRET_RULES.has(f.rule));
+        if (secretFindings.length > 0) {
+          const origLines = content.split("\n");
+          const patchedLines = (aiPatch.patchedContent || "").split("\n");
+
+          for (const sf of secretFindings) {
+            if (sf.line) {
+              const lineKey = String(sf.line);
+              let suggestion = aiPatch.lineSuggestions?.[lineKey];
+              if (
+                !suggestion &&
+                sf.line - 1 < patchedLines.length &&
+                sf.line - 1 < origLines.length
+              ) {
+                const pLine = patchedLines[sf.line - 1];
+                const oLine = origLines[sf.line - 1];
+                if (pLine !== oLine && pLine !== undefined) {
+                  suggestion = pLine;
+                }
+              }
+              if (suggestion) {
+                aiSuggestions.set(sf.line, suggestion.trim());
+              }
+            }
+          }
+        }
+
+        const nonSecretFindings = findings.filter(
+          (f) => !SECRET_RULES.has(f.rule),
+        );
+
+        // If the file consists entirely of secret findings, do NOT auto-patch directly.
+        // The AI suggestion is presented as an Actionable PR Review Comment suggestion instead!
+        if (nonSecretFindings.length === 0) {
+          logger.info(
+            `[pr] ${filePath} contains only secret findings — holding auto-commit; attaching AI suggestion to PR review comment`,
+          );
+          return {
+            patchedContent: content,
+            patchedFindings: [],
+            shouldDelete: false,
+            aiSuggestions,
+          };
+        }
+
+        if (
+          aiPatch.shouldDelete &&
+          nonSecretFindings.length === findings.length
+        ) {
           logger.info(
             `[pr] AI classified ${filePath} as standalone malware — flagging for deletion`,
           );
           return {
             patchedContent: "",
-            patchedFindings: findings,
+            patchedFindings: nonSecretFindings,
             shouldDelete: true,
+            aiSuggestions,
           };
         }
+
         if (aiPatch.patchedContent && aiPatch.patchedContent !== content) {
           logger.info(
             `[pr] AI successfully generated surgical patch for ${filePath}: ${aiPatch.reasoning}`,
@@ -952,8 +1182,9 @@ export async function applyPatches(
           );
           return {
             patchedContent: formatted,
-            patchedFindings: findings,
+            patchedFindings: nonSecretFindings,
             shouldDelete: false,
+            aiSuggestions,
           };
         }
       }
@@ -975,13 +1206,23 @@ export async function applyPatches(
       logger.info(
         `[pr] Patching ${filePath} would leave it empty — flagging for deletion`,
       );
-      return { patchedContent: patched, patchedFindings, shouldDelete: true };
+      return {
+        patchedContent: patched,
+        patchedFindings,
+        shouldDelete: true,
+        aiSuggestions,
+      };
     }
 
     patched = await formatContent(patched, filePath);
   }
 
-  return { patchedContent: patched, patchedFindings, shouldDelete: false };
+  return {
+    patchedContent: patched,
+    patchedFindings,
+    shouldDelete: false,
+    aiSuggestions,
+  };
 }
 
 // ─── PR body builder ──────────────────────────────────────────────────────────
@@ -1360,23 +1601,34 @@ export async function getOpenRepoGuardIssue(
   return undefined;
 }
 
+export async function getExistingRepoGuardFixPR(
+  octokit: OctokitClient,
+  owner: string,
+  repo: string,
+): Promise<GitHubPullRequest | undefined> {
+  try {
+    const { data: pulls } = await octokit.request(
+      "GET /repos/{owner}/{repo}/pulls",
+      { owner, repo, state: "open", per_page: 100 },
+    );
+
+    return (pulls as GitHubPullRequest[]).find(
+      (pr) =>
+        pr.head.ref.startsWith("repoguard/fixes-") ||
+        pr.title.includes("RepoGuard:"),
+    );
+  } catch {
+    return undefined;
+  }
+}
+
 export async function hasOpenRepoGuardFixPR(
   octokit: OctokitClient,
   owner: string,
   repo: string,
 ): Promise<boolean> {
-  const { data: pulls } = await octokit.request(
-    "GET /repos/{owner}/{repo}/pulls",
-    { owner, repo, state: "open", per_page: 100 },
-  );
-
-  const hasPR = (pulls as GitHubPullRequest[]).some(
-    (pr) =>
-      pr.head.ref.startsWith("repoguard/fixes-") ||
-      pr.title.includes("RepoGuard:"),
-  );
-
-  if (hasPR) return true;
+  const existingPR = await getExistingRepoGuardFixPR(octokit, owner, repo);
+  if (existingPR) return true;
 
   const issue = await getOpenRepoGuardIssue(octokit, owner, repo);
   return issue !== undefined;
@@ -1507,6 +1759,7 @@ export async function postReviewComments(
   findings: Finding[],
   patchedContent: Map<string, string>, // filePath → patched content
   allPatchedFindings: Finding[] = [],
+  fileSuggestions?: Map<string, Map<number, string>>,
 ): Promise<void> {
   const comments: ReviewComment[] = [];
 
@@ -1529,16 +1782,41 @@ export async function postReviewComments(
     // Only post a comment when the finding still requires manual remediation.
     if (isPatched) continue;
 
-    const body = [
-      `**RepoGuard** detected \`${finding.rule}\` (${finding.severity})`,
-      `> ${finding.message}`,
-      ``,
-      `<details>`,
-      `<summary>⚠️ Manual review required</summary>`,
-      ``,
-      `This finding cannot be automatically fixed. Please review and remediate manually.`,
-      `</details>`,
-    ].join("\n");
+    const isSecret = SECRET_RULES.has(finding.rule);
+
+    let body: string;
+    if (isSecret) {
+      const suggestionCode =
+        fileSuggestions?.get(finding.file)?.get(finding.line) ||
+        "// TODO: Replace hardcoded credential with process.env variable";
+
+      body = [
+        `### 🔑 RepoGuard Security Alert: Exposed Secret / Credential`,
+        ``,
+        `**Rule:** \`${finding.rule}\` (${severityEmoji(finding.severity)} ${finding.severity.toUpperCase()})`,
+        `> ${finding.message}`,
+        ``,
+        `#### ⚠️ Recommended Action & Secret Rotation Notes:`,
+        `1. **Rotate this secret immediately:** Consider this credential compromised. Invalidate and re-issue it in your provider dashboard (e.g., AWS, GitHub, Stripe, OpenAI).`,
+        `2. **Do not commit raw secrets:** Move secrets out of source code and into environment variables (e.g., \`process.env.SECRET_KEY\`) or repository/CI secrets.`,
+        `3. **Purge git history if necessary:** If this repo is public or shared, remove the secret from git commit history using \`git-filter-repo\` or BFG Repo-Cleaner.`,
+        ``,
+        `\`\`\`suggestion`,
+        suggestionCode,
+        `\`\`\``,
+      ].join("\n");
+    } else {
+      body = [
+        `**RepoGuard** detected \`${finding.rule}\` (${finding.severity})`,
+        `> ${finding.message}`,
+        ``,
+        `<details>`,
+        `<summary>⚠️ Manual review required</summary>`,
+        ``,
+        `This finding cannot be automatically fixed. Please review and remediate manually.`,
+        `</details>`,
+      ].join("\n");
+    }
 
     comments.push({
       path: finding.file,

@@ -14,6 +14,7 @@ export interface AIPatchResult {
   patchedContent: string;
   shouldDelete: boolean;
   reasoning: string;
+  lineSuggestions?: Record<string, string>;
 }
 
 /**
@@ -274,7 +275,10 @@ Return a JSON object with this EXACT schema:
 {
   "shouldDelete": boolean, // true if the file consists entirely of malware/obfuscation scaffolding with zero legitimate code
   "patchedContent": "Clean sanitized source code as a string (or empty if shouldDelete is true)",
-  "reasoning": "Brief explanation of the remediation performed"
+  "reasoning": "Brief explanation of the remediation performed",
+  "lineSuggestions": {
+    "<lineNumber>": "Replacement code line or snippet for this finding line (e.g. replacing hardcoded credentials with process.env.SECRET_NAME)"
+  }
 }`;
 
     const rawResponse = await queryLLM(prompt);
