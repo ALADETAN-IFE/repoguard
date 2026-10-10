@@ -56,38 +56,69 @@ export function scrubPotentialSecrets(code: string): string {
 async function callGemini(
   prompt: string,
   apiKey: string,
-  model = "gemini-1.5-flash",
+  model?: string,
 ): Promise<string | null> {
-  const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
-  const response = await fetch(url, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      contents: [{ role: "user", parts: [{ text: prompt }] }],
-      generationConfig: {
-        responseMimeType: "application/json",
-        temperature: 0.1,
-      },
-    }),
-    signal: AbortSignal.timeout(12000), // 12s timeout
-  });
+  const preferredModel =
+    model || process.env.GEMINI_MODEL || "gemini-2.5-flash";
+  const candidateModels = [
+    preferredModel,
+    "gemini-2.5-flash",
+    "gemini-3.5-flash-lite",
+    "gemini-3.8-flash",
+    "gemini-2.5-pro",
+  ];
+  const uniqueCandidates = [...new Set(candidateModels)];
 
-  if (!response.ok) {
-    const errText = await response.text();
-    logger.warn(
-      `[aiService] Gemini API returned error ${response.status}: ${errText}`,
-    );
-    return null;
+  for (const candidate of uniqueCandidates) {
+    try {
+      const url = `https://generativelanguage.googleapis.com/v1beta/models/${candidate}:generateContent?key=${apiKey}`;
+      const response = await fetch(url, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          contents: [{ role: "user", parts: [{ text: prompt }] }],
+          generationConfig: {
+            responseMimeType: "application/json",
+            temperature: 0.1,
+          },
+        }),
+        signal: AbortSignal.timeout(12000), // 12s timeout
+      });
+
+      if (
+        response.status === 404 &&
+        candidate !== uniqueCandidates[uniqueCandidates.length - 1]
+      ) {
+        logger.info(
+          `[aiService] Gemini model ${candidate} returned 404 — attempting fallback...`,
+        );
+        continue;
+      }
+
+      if (!response.ok) {
+        const errText = await response.text();
+        logger.warn(
+          `[aiService] Gemini API (${candidate}) returned error ${response.status}: ${errText}`,
+        );
+        return null;
+      }
+
+      const json = (await response.json()) as {
+        candidates?: Array<{
+          content?: { parts?: Array<{ text?: string }> };
+        }>;
+      };
+
+      const text = json.candidates?.[0]?.content?.parts?.[0]?.text;
+      return text ?? null;
+    } catch (err) {
+      logger.warn(
+        `[aiService] Gemini API call error on ${candidate}: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
   }
 
-  const json = (await response.json()) as {
-    candidates?: Array<{
-      content?: { parts?: Array<{ text?: string }> };
-    }>;
-  };
-
-  const text = json.candidates?.[0]?.content?.parts?.[0]?.text;
-  return text ?? null;
+  return null;
 }
 
 /**
@@ -96,38 +127,46 @@ async function callGemini(
 async function callOpenAI(
   prompt: string,
   apiKey: string,
-  model = "gpt-4o-mini",
+  model?: string,
 ): Promise<string | null> {
+  const chosenModel = model || process.env.OPENAI_MODEL || "gpt-4o-mini";
   const url = "https://api.openai.com/v1/chat/completions";
-  const response = await fetch(url, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${apiKey}`,
-    },
-    body: JSON.stringify({
-      model,
-      messages: [{ role: "user", content: prompt }],
-      response_format: { type: "json_object" },
-      temperature: 0.1,
-    }),
-    signal: AbortSignal.timeout(12000),
-  });
+  try {
+    const response = await fetch(url, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${apiKey}`,
+      },
+      body: JSON.stringify({
+        model: chosenModel,
+        messages: [{ role: "user", content: prompt }],
+        response_format: { type: "json_object" },
+        temperature: 0.1,
+      }),
+      signal: AbortSignal.timeout(12000),
+    });
 
-  if (!response.ok) {
-    const errText = await response.text();
+    if (!response.ok) {
+      const errText = await response.text();
+      logger.warn(
+        `[aiService] OpenAI API (${chosenModel}) returned error ${response.status}: ${errText}`,
+      );
+      return null;
+    }
+
+    const json = (await response.json()) as {
+      choices?: Array<{ message?: { content?: string } }>;
+    };
+
+    const content = json.choices?.[0]?.message?.content;
+    return content ?? null;
+  } catch (err) {
     logger.warn(
-      `[aiService] OpenAI API returned error ${response.status}: ${errText}`,
+      `[aiService] OpenAI API call error: ${err instanceof Error ? err.message : String(err)}`,
     );
     return null;
   }
-
-  const json = (await response.json()) as {
-    choices?: Array<{ message?: { content?: string } }>;
-  };
-
-  const content = json.choices?.[0]?.message?.content;
-  return content ?? null;
 }
 
 /**
