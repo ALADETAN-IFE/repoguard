@@ -156,6 +156,90 @@ export async function openFixPR(
     const findingsWithoutFiles = findings.filter((f) => !f.file);
     allUnpatchedFindings.push(...findingsWithoutFiles);
 
+    // ── 1.1 Cross-File Remediation: package.json script cleanup ──────────────
+    // If any file was flagged for deletion (e.g. api.js), OR if package.json was not
+    // yet included in filesToPatch, inspect package.json on the default branch.
+    // If package.json references any deleted files or has hijacked scripts, patch it!
+    const deletedFileNames = filesToPatch
+      .filter((f) => f.shouldDelete)
+      .map((f) => f.filePath.split("/").pop() ?? "")
+      .filter(Boolean);
+
+    const isPackageJsonAlreadyQueued = filesToPatch.some(
+      (f) => f.filePath === "package.json",
+    );
+
+    if (!isPackageJsonAlreadyQueued) {
+      try {
+        const { data: pkgData } = await octokit.request(
+          "GET /repos/{owner}/{repo}/contents/{path}",
+          { owner, repo, path: "package.json" },
+        );
+        if (
+          !Array.isArray(pkgData) &&
+          pkgData.type === "file" &&
+          "content" in pkgData
+        ) {
+          const originalPkgContent = Buffer.from(
+            pkgData.content || "",
+            "base64",
+          ).toString("utf8");
+          const pkgSha: string = pkgData.sha;
+
+          // Check if package.json contains references to deleted droppers OR chained node execution
+          const hasDeletedRef = deletedFileNames.some((name) =>
+            new RegExp(`\\bnode\\s+[\\w./\\\\-]*${name}\\b`, "i").test(
+              originalPkgContent,
+            ),
+          );
+          const hasHijackedScript =
+            /\bnode\s+[\w./\\-]+\.js\s*(&&|;|\|\|)\s*/i.test(
+              originalPkgContent,
+            );
+
+          if (hasDeletedRef || hasHijackedScript) {
+            logger.info(
+              `[pr] package.json has hijacked scripts or references to deleted malware (${deletedFileNames.join(", ")}) — queuing for cleanup`,
+            );
+            const syntheticFinding: Finding = {
+              rule: "suspicious-npm-script-hijack",
+              severity: "critical",
+              message:
+                "package.json script hijacked to execute arbitrary JS file or chained payload",
+              file: "package.json",
+              line: 1,
+            };
+
+            const { patchedContent, patchedFindings } = await applyPatches(
+              originalPkgContent,
+              [syntheticFinding],
+              "package.json",
+              octokit,
+            );
+
+            if (
+              patchedFindings.length > 0 &&
+              patchedContent !== originalPkgContent
+            ) {
+              findings.push(syntheticFinding);
+              allPatchedFindings.push(syntheticFinding);
+              filesToPatch.push({
+                filePath: "package.json",
+                originalContent: originalPkgContent,
+                patchedContent,
+                fileSha: pkgSha,
+                fileFindings: [syntheticFinding],
+                patchedFindings,
+                shouldDelete: false,
+              });
+            }
+          }
+        }
+      } catch {
+        /* package.json not found in repo or inaccessible — skip */
+      }
+    }
+
     // ── 2. Fall back to security issue if no files have functional changes ───────
     if (filesToPatch.length === 0) {
       logger.info(
