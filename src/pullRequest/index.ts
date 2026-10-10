@@ -838,9 +838,9 @@ export async function applyPatches(
           /(?:^|[\n;\s])function\s+[a-zA-Z0-9_$]+\s*\([a-zA-Z0-9_$,\s]*\)\s*\{[\s\S]*?return\s+[^;]+;?\s*\}[\s;]*/g,
           "\n// REMOVED BY REPOGUARD: obfuscated malware decoder\n",
         );
-        // Decoder alias variables
+        // Decoder alias variables (e.g. const _0xabc = _0x1234 or const _0xabc = _$_malware)
         nextPatched = nextPatched.replace(
-          /(?:^|[\n;\s])(?:var|let|const)\s+[a-zA-Z0-9_$]+\s*=\s*[a-zA-Z0-9_$]+;?/g,
+          /(?:^|[\n;\s])(?:var|let|const)\s+(_0x[a-fA-F0-9]+|_\$_\w+)\s*=\s*(_0x[a-fA-F0-9]+|_\$_\w+);?/g,
           "\n// REMOVED BY REPOGUARD: obfuscated malware alias\n",
         );
         nextPatched = nextPatched.replace(
@@ -1112,6 +1112,9 @@ export async function applyPatches(
       const aiPatch = await generateAIPatch(content, filePath, findings);
       if (aiPatch) {
         // Collect suggestions for secret lines from AI
+        logger.info(
+          `[pr] AI generated patch analysis for ${filePath} — extracting remediation suggestions`,
+        );
         const secretFindings = findings.filter((f) => SECRET_RULES.has(f.rule));
         if (secretFindings.length > 0) {
           const origLines = content.split("\n");
