@@ -170,15 +170,28 @@ async function callOpenAI(
 }
 
 /**
- * Generic caller routing to configured provider.
+ * Generic caller routing with automatic cross-provider fallback.
+ * If Gemini fails (429 rate limit, quota, or outage) and OPENAI_API_KEY is set,
+ * it seamlessly falls back to OpenAI.
  */
 async function queryLLM(prompt: string): Promise<string | null> {
   const geminiKey = process.env.GEMINI_API_KEY;
+  const openAIKey = process.env.OPENAI_API_KEY;
+
   if (geminiKey) {
-    return callGemini(prompt, geminiKey);
+    const geminiResult = await callGemini(prompt, geminiKey);
+    if (geminiResult) return geminiResult;
+
+    if (openAIKey) {
+      logger.info(
+        "[aiService] Gemini request failed or rate-limited — falling back to OpenAI...",
+      );
+      const openAIResult = await callOpenAI(prompt, openAIKey);
+      if (openAIResult) return openAIResult;
+    }
+    return null;
   }
 
-  const openAIKey = process.env.OPENAI_API_KEY;
   if (openAIKey) {
     return callOpenAI(prompt, openAIKey);
   }

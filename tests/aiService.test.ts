@@ -136,6 +136,45 @@ describe("aiService", () => {
       expect(result?.shouldDelete).toBe(false);
     });
 
+    it("falls back to OpenAI when Gemini returns an error", async () => {
+      process.env.GEMINI_API_KEY = "test-gemini-key";
+      process.env.OPENAI_API_KEY = "test-openai-key";
+
+      const openAIMockResponse = {
+        choices: [
+          {
+            message: {
+              content: JSON.stringify({
+                isMalicious: true,
+                confidence: 0.99,
+                reasoning: "OpenAI caught malware after Gemini failure",
+                extractedEndpoints: [],
+                shouldDelete: true,
+              }),
+            },
+          },
+        ],
+      };
+
+      // Gemini call fails (e.g. rate limit or 500 error)
+      (global.fetch as jest.Mock)
+        .mockResolvedValueOnce({
+          ok: false,
+          status: 429,
+          text: jest.fn().mockResolvedValue("Rate limit exceeded"),
+        })
+        // OpenAI succeeds
+        .mockResolvedValueOnce({
+          ok: true,
+          json: jest.fn().mockResolvedValueOnce(openAIMockResponse),
+        });
+
+      const result = await analyzeSuspiciousCode("function evil() {}", "api.js");
+      expect(result).not.toBeNull();
+      expect(result?.isMalicious).toBe(true);
+      expect(result?.reasoning).toContain("OpenAI");
+    });
+
     it("handles API error responses gracefully", async () => {
       process.env.GEMINI_API_KEY = "test-gemini-key";
 
