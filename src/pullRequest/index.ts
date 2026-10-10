@@ -86,6 +86,19 @@ export async function openFixPR(
   { owner, repo, findings, issueNumber }: OpenFixPROptions,
 ): Promise<OpenFixPRResult | undefined> {
   try {
+    // ── 0. Prevent duplicate Fix PRs if one is already open ───────────────────
+    try {
+      const alreadyHasFixPR = await hasOpenRepoGuardFixPR(octokit, owner, repo);
+      if (alreadyHasFixPR) {
+        logger.info(
+          `[pr] Open Fix PR already exists in ${owner}/${repo} — skipping duplicate creation`,
+        );
+        return;
+      }
+    } catch {
+      /* non-fatal if pulls listing fails */
+    }
+
     // ── 1. Fetch each affected file and see if there are actual patches ──────────
     const affectedFiles = [
       ...new Set(findings.map((f) => f.file).filter(Boolean)),
