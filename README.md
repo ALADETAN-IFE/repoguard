@@ -22,33 +22,33 @@ RepoGuard is a GitHub App that scans your repositories for malicious code, obfus
 
 ## Detection Rules
 
-| Rule | Severity | Description |
-|------|----------|-------------|
-| `obfuscated-malware-pattern` | Critical | Obfuscated string array payloads and createRequire bypasses |
-| `obfuscated-base64` | Critical | Base64-encoded eval payloads |
-| `python-exec-compile` | Critical | Python exec or compile-based code execution payloads |
-| `python-subprocess-network` | Critical | Python subprocess calls that reach out over the network |
-| `powershell-encoded-command` | Critical | Encoded PowerShell command execution |
-| `js-obfuscated-charcode` | Critical | JavaScript charCode-based obfuscation patterns |
-| `reverse-shell` | Critical | Bash and netcat reverse shell patterns |
-| `curl-pipe-bash` | Critical | Remote code execution via curl/wget piped to shell |
-| `hardcoded-secret` | High | API keys, tokens, and passwords hardcoded in source |
-| `env-exfiltration` | High | Environment variables sent to external endpoints |
-| `js-obfuscated-constructors` | High | JavaScript constructor-based obfuscation chains |
-| `python-dynamic-import` | High | Python dynamic import usage in suspicious contexts |
-| `dotenv-file-committed` | High | Committed `.env` or dotenv files with secrets |
-| `suspicious-npm-postinstall` | High | Malicious postinstall scripts in package.json |
-| `npm-typosquatted-package` | High | Typosquatted npm package dependencies |
-| `pypi-typosquatted-package` | High | Typosquatted PyPI package dependencies |
-| `suspicious-registry-url` | High | Non-standard npm registry references |
-| `crypto-miner-keywords` | High | Cryptocurrency miner indicators |
-| `workflow-exfiltrate-secrets` | High | GitHub Actions workflows leaking secrets externally |
-| `workflow-curl-pipe-bash` | Critical | GitHub Actions workflows that pipe curl or wget into a shell |
+| Rule                                    | Severity | Description                                                               |
+| --------------------------------------- | -------- | ------------------------------------------------------------------------- |
+| `obfuscated-malware-pattern`            | Critical | Obfuscated string array payloads and createRequire bypasses               |
+| `obfuscated-base64`                     | Critical | Base64-encoded eval payloads                                              |
+| `python-exec-compile`                   | Critical | Python exec or compile-based code execution payloads                      |
+| `python-subprocess-network`             | Critical | Python subprocess calls that reach out over the network                   |
+| `powershell-encoded-command`            | Critical | Encoded PowerShell command execution                                      |
+| `js-obfuscated-charcode`                | Critical | JavaScript charCode-based obfuscation patterns                            |
+| `reverse-shell`                         | Critical | Bash and netcat reverse shell patterns                                    |
+| `curl-pipe-bash`                        | Critical | Remote code execution via curl/wget piped to shell                        |
+| `hardcoded-secret`                      | High     | API keys, tokens, and passwords hardcoded in source                       |
+| `env-exfiltration`                      | High     | Environment variables sent to external endpoints                          |
+| `js-obfuscated-constructors`            | High     | JavaScript constructor-based obfuscation chains                           |
+| `python-dynamic-import`                 | High     | Python dynamic import usage in suspicious contexts                        |
+| `dotenv-file-committed`                 | High     | Committed `.env` or dotenv files with secrets                             |
+| `suspicious-npm-postinstall`            | High     | Malicious postinstall scripts in package.json                             |
+| `npm-typosquatted-package`              | High     | Typosquatted npm package dependencies                                     |
+| `pypi-typosquatted-package`             | High     | Typosquatted PyPI package dependencies                                    |
+| `suspicious-registry-url`               | High     | Non-standard npm registry references                                      |
+| `crypto-miner-keywords`                 | High     | Cryptocurrency miner indicators                                           |
+| `workflow-exfiltrate-secrets`           | High     | GitHub Actions workflows leaking secrets externally                       |
+| `workflow-curl-pipe-bash`               | Critical | GitHub Actions workflows that pipe curl or wget into a shell              |
 | `workflow-pull-request-target-checkout` | Critical | GitHub Actions pull_request_target workflows that checkout untrusted code |
-| `workflow-suspicious-trigger` | Medium | Overly broad workflow triggers |
-| `workflow-unpinned-action` | Medium | Third-party Actions not pinned to a commit SHA |
-| `suspicious-branch-create` | High | Branch creation by non-org members |
-| `suspicious-gitignore-entry` | High | Known malware artifacts listed in `.gitignore` or `.repoguardignore` |
+| `workflow-suspicious-trigger`           | Medium   | Overly broad workflow triggers                                            |
+| `workflow-unpinned-action`              | Medium   | Third-party Actions not pinned to a commit SHA                            |
+| `suspicious-branch-create`              | High     | Branch creation by non-org members                                        |
+| `suspicious-gitignore-entry`            | High     | Known malware artifacts listed in `.gitignore` or `.repoguardignore`      |
 
 ---
 
@@ -79,6 +79,7 @@ Scans all changed files
 ### On-Demand Issue Scanning
 
 You can manually trigger a full repository scan at any time by opening a GitHub Issue:
+
 - **Title:** `Repoguard`
 - **Body:** `/repoguard scan`
 
@@ -103,14 +104,14 @@ RepoGuard will reply with an initial comment while scanning, and upon completion
 
 ## Permissions Required
 
-| Permission | Access | Reason |
-|------------|--------|--------|
-| Repository contents | Read & Write | Scan files and commit patches |
-| Issues | Read & Write | Open security issues and scan reports |
-| Pull requests | Read & Write | Open and manage fix PRs |
-| Checks | Read & Write | Report scan status on commits |
-| Workflows | Read | Scan GitHub Actions workflow files |
-| Members | Read | Detect non-org branch creation |
+| Permission          | Access       | Reason                                |
+| ------------------- | ------------ | ------------------------------------- |
+| Repository contents | Read & Write | Scan files and commit patches         |
+| Issues              | Read & Write | Open security issues and scan reports |
+| Pull requests       | Read & Write | Open and manage fix PRs               |
+| Checks              | Read & Write | Report scan status on commits         |
+| Workflows           | Read         | Scan GitHub Actions workflow files    |
+| Members             | Read         | Detect non-org branch creation        |
 
 ---
 
@@ -175,14 +176,14 @@ npx smee-client --url https://smee.io/your-channel --target http://localhost:300
 
 ## API Endpoints
 
-| Endpoint | Method | Description |
-|----------|--------|-------------|
-| `/` | GET | Health check |
-| `/health` | GET | App status and version |
-| `/api/webhook` | POST | GitHub webhook receiver |
-| `/api/scans` | GET | List recent scans (paginated) |
-| `/api/scans/:scanId/findings` | GET | Findings for a specific scan |
-| `/auth/callback` | GET | GitHub App OAuth callback |
+| Endpoint                      | Method | Description                   |
+| ----------------------------- | ------ | ----------------------------- |
+| `/`                           | GET    | Health check                  |
+| `/health`                     | GET    | App status and version        |
+| `/api/webhook`                | POST   | GitHub webhook receiver       |
+| `/api/scans`                  | GET    | List recent scans (paginated) |
+| `/api/scans/:scanId/findings` | GET    | Findings for a specific scan  |
+| `/auth/callback`              | GET    | GitHub App OAuth callback     |
 
 ---
 
@@ -199,7 +200,7 @@ npx smee-client --url https://smee.io/your-channel --target http://localhost:300
 
 ## Contributing
 
-RepoGuard is currently in active development and not accepting external contributions at this time. 
+RepoGuard is currently in active development and not accepting external contributions at this time.
 
 If you've found a bug or have a feature request, please [open an issue](https://github.com/ALADETAN-IFE/repoguard/issues).
 
