@@ -89,6 +89,29 @@ export const SECRET_RULES = new Set([
   "workflow-exfiltrate-secrets",
 ]);
 
+// ─── Rules that RepoGuard patches deterministically without AI ────────────────
+export const DETERMINISTIC_RULES = new Set([
+  "curl-pipe-bash",
+  "wget-pipe-shell",
+  "reverse-shell",
+  "obfuscated-base64",
+  "obfuscated-malware-pattern",
+  "js-obfuscated-charcode",
+  "js-obfuscated-constructors",
+  "js-obfuscated-hex",
+  "python-exec-compile",
+  "python-obfuscated-base64-exec",
+  "python-subprocess-network",
+  "powershell-encoded-command",
+  "crypto-miner-keywords",
+  "suspicious-gitignore-entry",
+  "npm-typosquatted-package",
+  "pypi-typosquatted-package",
+  "workflow-unpinned-action",
+  "suspicious-npm-script-hijack",
+  "suspicious-npm-postinstall",
+]);
+
 export async function openFixPR(
   octokit: OctokitClient,
   { owner, repo, findings, issueNumber }: OpenFixPROptions,
@@ -217,8 +240,8 @@ export async function openFixPR(
     allUnpatchedFindings.push(...findingsWithoutFiles);
 
     // ── 1.1 Cross-File Remediation: package.json script cleanup ──────────────
-    // If any file was flagged for deletion (e.g. api.js), OR if package.json was not
-    // yet included in filesToPatch, inspect package.json on the target branch.
+    // Only inspect package.json if another file was flagged for deletion (e.g. dropper script)
+    // and package.json is not yet in filesToPatch.
     const deletedFileNames = filesToPatch
       .filter((f) => f.shouldDelete)
       .map((f) => f.filePath.split("/").pop() ?? "")
@@ -228,7 +251,7 @@ export async function openFixPR(
       (f) => f.filePath === "package.json",
     );
 
-    if (!isPackageJsonAlreadyQueued) {
+    if (!isPackageJsonAlreadyQueued && deletedFileNames.length > 0) {
       try {
         const { data: pkgData } = await octokit.request(
           "GET /repos/{owner}/{repo}/contents/{path}",
@@ -250,20 +273,16 @@ export async function openFixPR(
           ).toString("utf8");
           const pkgSha: string = pkgData.sha;
 
-          // Check if package.json contains references to deleted droppers OR chained node execution
+          // Check if package.json contains references to deleted droppers
           const hasDeletedRef = deletedFileNames.some((name) =>
             new RegExp(`\\bnode\\s+[\\w./\\\\-]*${name}\\b`, "i").test(
               originalPkgContent,
             ),
           );
-          const hasHijackedScript =
-            /\bnode\s+[\w./\\-]+\.js\s*(&&|;|\|\|)\s*/i.test(
-              originalPkgContent,
-            );
 
-          if (hasDeletedRef || hasHijackedScript) {
+          if (hasDeletedRef) {
             logger.info(
-              `[pr] package.json has hijacked scripts or references to deleted malware (${deletedFileNames.join(", ")}) — queuing for cleanup`,
+              `[pr] package.json has references to deleted malware (${deletedFileNames.join(", ")}) — queuing for cleanup`,
             );
             const syntheticFinding: Finding = {
               rule: "suspicious-npm-script-hijack",
@@ -402,12 +421,26 @@ export async function openFixPR(
         }
       }
 
+      // Resolve the actual latest commit SHA on the PR branch so inline comments are attached to the valid head commit
+      let existingHeadSha: string = existingPR.head?.sha || "";
+      if (!existingHeadSha) {
+        try {
+          const { data: branchData } = await octokit.request(
+            "GET /repos/{owner}/{repo}/git/ref/{ref}",
+            { owner, repo, ref: `heads/${branch}` },
+          );
+          existingHeadSha = branchData.object.sha;
+        } catch {
+          existingHeadSha = existingPR.head?.ref || branch;
+        }
+      }
+
       await postReviewComments(
         octokit,
         owner,
         repo,
         existingPR.number,
-        existingPR.head?.ref || branch,
+        existingHeadSha,
         findings,
         patchedMap,
         allPatchedFindings,
@@ -555,12 +588,26 @@ export async function openFixPR(
       }
     }
 
+    // Resolve the actual latest commit SHA on the newly created PR branch
+    let prHeadSha: string = pr.head?.sha || "";
+    if (!prHeadSha) {
+      try {
+        const { data: branchData } = await octokit.request(
+          "GET /repos/{owner}/{repo}/git/ref/{ref}",
+          { owner, repo, ref: `heads/${branch}` },
+        );
+        prHeadSha = branchData.object.sha;
+      } catch {
+        prHeadSha = baseSha;
+      }
+    }
+
     await postReviewComments(
       octokit,
       owner,
       repo,
       pr.number,
-      pr.head?.sha || baseSha,
+      prHeadSha,
       findings,
       patchedMap,
       allPatchedFindings,
@@ -1105,18 +1152,45 @@ export async function applyPatches(
   }
 
   const aiSuggestions = new Map<number, string>();
+  const isPackageJson = filePath.endsWith("package.json");
+
+  // Filter findings:
+  // - Findings already patched deterministically above are in `patchedFindings`
+  // - Deterministic rules must NEVER be sent to AI (RepoGuard fixes them itself)
+  // - Secret rules must NEVER be auto-committed to code files
+  const remainingUnpatched = findings.filter(
+    (f) => !patchedFindings.includes(f),
+  );
+  const remainingAIEigible = remainingUnpatched.filter(
+    (f) => !DETERMINISTIC_RULES.has(f.rule) && !SECRET_RULES.has(f.rule),
+  );
+  const secretFindings = findings.filter((f) => SECRET_RULES.has(f.rule));
 
   // ── AI Surgical Patch & Suggestion Generation ──────────────────────────────
-  if (patchedFindings.length < findings.length && isAIEnabled()) {
+  // AI is only invoked if:
+  // 1. AI is enabled
+  // 2. The file is NOT package.json (manifest files must only be patched deterministically)
+  // 3. There are either remaining AI-eligible findings (to patch on top of deterministic fixes)
+  //    or secret findings (to generate review comment suggestions)
+  if (
+    isAIEnabled() &&
+    !isPackageJson &&
+    (remainingAIEigible.length > 0 || secretFindings.length > 0)
+  ) {
     try {
-      const aiPatch = await generateAIPatch(content, filePath, findings);
+      // If we only have secret findings and no AI-eligible code findings:
+      // we only ask AI for review comment line suggestions, not to rewrite the file.
+      const findingsForAI =
+        remainingAIEigible.length > 0 ? remainingAIEigible : secretFindings;
+      // Pass `patched` (the content with deterministic fixes already applied) instead of raw `content`
+      const aiPatch = await generateAIPatch(patched, filePath, findingsForAI);
+
       if (aiPatch) {
-        // Collect suggestions for secret lines from AI
-        logger.info(
-          `[pr] AI generated patch analysis for ${filePath} — extracting remediation suggestions`,
-        );
-        const secretFindings = findings.filter((f) => SECRET_RULES.has(f.rule));
+        // Collect suggestions for secret lines from AI (for review comments only)
         if (secretFindings.length > 0) {
+          logger.info(
+            `[pr] Extracting AI remediation suggestions for secrets in ${filePath}`,
+          );
           const origLines = content.split("\n");
           const patchedLines = (aiPatch.patchedContent || "").split("\n");
 
@@ -1142,53 +1216,30 @@ export async function applyPatches(
           }
         }
 
-        const nonSecretFindings = findings.filter(
-          (f) => !SECRET_RULES.has(f.rule),
-        );
+        // Only apply AI patches to file content if there were actual AI-eligible findings
+        if (remainingAIEigible.length > 0) {
+          if (
+            aiPatch.shouldDelete &&
+            findings.length === remainingAIEigible.length
+          ) {
+            logger.info(
+              `[pr] AI classified ${filePath} as standalone malware — flagging for deletion`,
+            );
+            return {
+              patchedContent: "",
+              patchedFindings: [...patchedFindings, ...remainingAIEigible],
+              shouldDelete: true,
+              aiSuggestions,
+            };
+          }
 
-        // If the file consists entirely of secret findings, do NOT auto-patch directly.
-        // The AI suggestion is presented as an Actionable PR Review Comment suggestion instead!
-        if (nonSecretFindings.length === 0) {
-          logger.info(
-            `[pr] ${filePath} contains only secret findings — holding auto-commit; attaching AI suggestion to PR review comment`,
-          );
-          return {
-            patchedContent: content,
-            patchedFindings: [],
-            shouldDelete: false,
-            aiSuggestions,
-          };
-        }
-
-        if (
-          aiPatch.shouldDelete &&
-          nonSecretFindings.length === findings.length
-        ) {
-          logger.info(
-            `[pr] AI classified ${filePath} as standalone malware — flagging for deletion`,
-          );
-          return {
-            patchedContent: "",
-            patchedFindings: nonSecretFindings,
-            shouldDelete: true,
-            aiSuggestions,
-          };
-        }
-
-        if (aiPatch.patchedContent && aiPatch.patchedContent !== content) {
-          logger.info(
-            `[pr] AI successfully generated surgical patch for ${filePath}: ${aiPatch.reasoning}`,
-          );
-          const formatted = await formatContent(
-            aiPatch.patchedContent,
-            filePath,
-          );
-          return {
-            patchedContent: formatted,
-            patchedFindings: nonSecretFindings,
-            shouldDelete: false,
-            aiSuggestions,
-          };
+          if (aiPatch.patchedContent && aiPatch.patchedContent !== patched) {
+            logger.info(
+              `[pr] AI successfully generated surgical patch on top of deterministic fixes for ${filePath}: ${aiPatch.reasoning}`,
+            );
+            patched = await formatContent(aiPatch.patchedContent, filePath);
+            patchedFindings.push(...remainingAIEigible);
+          }
         }
       }
     } catch (aiErr) {
@@ -1561,6 +1612,7 @@ interface GitHubPullRequest {
   html_url?: string;
   head: {
     ref: string;
+    sha?: string;
   };
 }
 

@@ -103,9 +103,9 @@ export function scrubPotentialSecrets(code: string): string {
       // Facebook App Secrets
       .replace(/[0-9a-f]{32}/gi, "[SCRUBBED_FACEBOOK_SECRET]")
 
-      // JWT variations (shorter or longer)
+      // JWT variations (require at least 16 chars per segment to avoid matching semver like 0.1.0)
       .replace(
-        /[A-Za-z0-9-_]+\.[A-Za-z0-9-_]+\.[A-Za-z0-9-_]+/g,
+        /[A-Za-z0-9_-]{16,}\.[A-Za-z0-9_-]{16,}\.[A-Za-z0-9_-]{16,}/g,
         "[SCRUBBED_JWT]",
       )
 

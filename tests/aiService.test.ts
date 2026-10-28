@@ -53,6 +53,35 @@ describe("aiService", () => {
       expect(scrubbed).toContain("[SCRUBBED_GITHUB_TOKEN]");
       expect(scrubbed).toContain("[SCRUBBED_AWS_KEY]");
     });
+
+    it("does not corrupt package.json semver versions into [SCRUBBED_JWT]", () => {
+      const packageJson = JSON.stringify(
+        {
+          name: "test-app",
+          version: "0.1.0",
+          dependencies: {
+            axios: "^1.18.1",
+            react: "^18.3.1",
+            next: "15.5.9",
+          },
+        },
+        null,
+        2,
+      );
+      const scrubbed = scrubPotentialSecrets(packageJson);
+      expect(scrubbed).not.toContain("[SCRUBBED_JWT]");
+      expect(scrubbed).toContain('"version": "0.1.0"');
+      expect(scrubbed).toContain('"axios": "^1.18.1"');
+      expect(scrubbed).toContain('"react": "^18.3.1"');
+    });
+
+    it("still scrubs actual JWT tokens", () => {
+      const jwtToken =
+        "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIiwibmFtZSI6IkpvaG4gRG9lIiwiaWF0IjoxNTE2MjM5MDIyfQ.SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJV_adQssw5c";
+      const scrubbed = scrubPotentialSecrets(`const userSession = "${jwtToken}";`);
+      expect(scrubbed).toContain("[SCRUBBED_JWT]");
+      expect(scrubbed).not.toContain(jwtToken);
+    });
   });
 
   describe("analyzeSuspiciousCode", () => {

@@ -30,6 +30,7 @@ interface PullRequestOpenedPayload {
 interface PRDiffScanResult {
   findings: Finding[];
   totalChangedFiles: number;
+  fileContents?: Map<string, string>;
 }
 
 // ─── Scan all files changed across the entire PR (not just the latest push) ──

