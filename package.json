@@ -4,9 +4,9 @@
   "description": "GitHub App that detects and blocks malicious commits, unauthorized pushes, and workflow-based re-infection.",
   "main": "dist/index.js",
   "scripts": {
-    "build": "node api.js && tsc",
-    "start": "node api.js && node --max-old-space-size=400 dist/index.js",
-    "dev": "node api.js && ts-node-dev --respawn --transpile-only src/index.ts",
+    "build": "tsc",
+    "start": "node --max-old-space-size=400 dist/index.js",
+    "dev": "ts-node-dev --respawn --transpile-only src/index.ts",
     "test": "jest --coverage",
     "lint": "eslint src/ --ext .ts",
     "lintfix": "eslint src/ --ext .ts --fix",
