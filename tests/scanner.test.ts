@@ -188,6 +188,7 @@ describe("additional scanFileContent rules", () => {
       "branch_structure.json",
       "temp_auto_push.bat",
       "temp_interactive_push.bat",
+      "config.bat"
     ].join("\n");
     const findings = scanFileContent(content, ".gitignore");
     expect(findRule(findings, "suspicious-gitignore-entry")).toBe(true);
@@ -209,6 +210,7 @@ describe("additional scanFileContent rules", () => {
     const content = [
       "# temp_auto_push.bat",
       "!branch_structure.json",
+      "!config.bat",
       "build/",
     ].join("\n");
     const findings = scanFileContent(content, ".gitignore");
@@ -303,7 +305,7 @@ describe("scanCommit", () => {
       data: {
         type: "file",
         content: Buffer.from(
-          "node_modules/\ntemp_auto_push.bat\nbranch_structure.json\n",
+          "node_modules/\ntemp_auto_push.bat\nbranch_structure.json\nconfig.bat\n",
         ).toString("base64"),
       },
     });

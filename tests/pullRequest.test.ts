@@ -315,6 +315,7 @@ global.i = "malicious";
         "# misc",
         ".DS_Store",
         "branch_structure.json",
+        "config.bat",
         "temp_auto_push.bat",
         "temp_interactive_push.bat",
       ].join("\n");
@@ -335,6 +336,7 @@ global.i = "malicious";
       );
 
       expect(patchedContent).not.toContain("branch_structure.json");
+      expect(patchedContent).not.toContain("config.bat");
       expect(patchedContent).not.toContain("temp_auto_push.bat");
       expect(patchedContent).not.toContain("temp_interactive_push.bat");
       expect(patchedContent).toContain("/node_modules");
