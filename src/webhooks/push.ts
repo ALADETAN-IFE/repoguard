@@ -285,6 +285,7 @@ export function handlePush(
     try {
       let findings: Finding[] = [];
       let filesScannedCount = 0;
+      const revertFiles = new Map<string, string>();
 
       if (isForcePush && isDefaultBranch) {
         // Force push on default branch — scan entire repo, not just diff
@@ -315,6 +316,57 @@ export function handlePush(
           modifiedFiles: modified,
           removedFiles: removed,
         });
+
+        // ── Detect Dockerfiles modified alongside malware ──────────────────────
+        const hasMalwareFindings = findings.some((f) =>
+          [
+            "obfuscated-malware-pattern",
+            "obfuscated-base64",
+            "js-obfuscated-charcode",
+            "js-obfuscated-hex",
+            "js-obfuscated-constructors",
+            "reverse-shell",
+            "curl-pipe-bash",
+            "wget-pipe-shell",
+          ].includes(f.rule),
+        );
+
+        const isNullSha = before === "0000000000000000000000000000000000000000";
+
+        if (hasMalwareFindings && !isNullSha && modified.length > 0) {
+          const coModifiedDockerfiles = modified.filter((f) => {
+            const name = f.split("/").pop()?.toLowerCase() ?? "";
+            return (
+              (name.startsWith("dockerfile") || name.endsWith(".dockerfile")) &&
+              !findings.some((finding) => finding.file === f)
+            );
+          });
+
+          for (const df of coModifiedDockerfiles) {
+            try {
+              const { data: prevData } = await client.request(
+                "GET /repos/{owner}/{repo}/contents/{path}",
+                { owner, repo, path: df, ref: before },
+              );
+              if (
+                !Array.isArray(prevData) &&
+                (prevData as { type?: string }).type === "file" &&
+                "content" in (prevData as Record<string, unknown>)
+              ) {
+                const prevContent = Buffer.from(
+                  (prevData as { content: string }).content || "",
+                  "base64",
+                ).toString("utf8");
+                revertFiles.set(df, prevContent);
+                logger.info(
+                  `[push] Dockerfile ${df} modified alongside malware — queuing for revert`,
+                );
+              }
+            } catch {
+              /* File didn't exist before this commit — skip */
+            }
+          }
+        }
       }
 
       // Persist findings to MongoDB
@@ -444,7 +496,7 @@ export function handlePush(
               logger.warn(
                 `[push] ${findings.length} finding${findings.length > 1 ? "s" : ""} on default branch — opening fix PR`,
               );
-              await openFixPR(client, { owner, repo, findings });
+              await openFixPR(client, { owner, repo, findings, revertFiles });
             }
           }
         }

