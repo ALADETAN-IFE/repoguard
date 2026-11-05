@@ -161,67 +161,106 @@ export function handlePullRequestOpened(
     const isFixBranch = pull_request.head.ref.startsWith("repoguard/fixes-");
 
     // ── Safeguard: Prevent unauthorized tampering with RepoGuard Fix PRs ────────
-    if (
-      isFixBranch &&
-      isSynchronize &&
-      payload.sender &&
-      !isAuthorizedFixBranchPusher(
+    if (isFixBranch && isSynchronize && payload.sender) {
+      const senderLogin = payload.sender.login;
+      const isBot = isAuthorizedFixBranchPusher(
         undefined,
-        payload.sender.login,
+        senderLogin,
         payload.sender.type,
-      )
-    ) {
-      logger.warn(
-        `[pr] TAMPERING DETECTED: Unauthorized synchronize on fix PR #${prNumber} (${pull_request.head.ref}) by "${payload.sender.login}" in ${owner}/${repo}`,
       );
+      // Repo owner is allowed to push (e.g. to refine the patch),
+      // but we post a warning so they know the automated state may be invalidated.
+      const isRepoOwner =
+        senderLogin.toLowerCase() ===
+        (payload.repository?.owner?.login || "").toLowerCase();
 
-      try {
-        await client.request(
-          "POST /repos/{owner}/{repo}/issues/{issue_number}/comments",
-          {
-            owner,
-            repo,
-            issue_number: prNumber,
-            body: [
-              "🚨 **RepoGuard Security Alert: Fix Branch Tampering Detected**",
-              "",
-              `An unauthorized synchronize/push event was initiated by **${payload.sender.login}** on automated remediation branch \`${pull_request.head.ref}\`.`,
-              "",
-              "RepoGuard fix branches are exclusively managed by the RepoGuard bot to prevent unverified code injections.",
-              "Closing this PR and deleting the branch to protect repository integrity.",
-            ].join("\n"),
-          },
-        );
-
-        await client.request(
-          "PATCH /repos/{owner}/{repo}/pulls/{pull_number}",
-          {
-            owner,
-            repo,
-            pull_number: prNumber,
-            state: "closed",
-          },
+      if (!isBot && isRepoOwner) {
+        // Owner push on fix PR — warn but allow; continue to scan below
+        logger.warn(
+          `[pr] Owner push to fix PR #${prNumber} (${pull_request.head.ref}) by "${senderLogin}" in ${owner}/${repo} — warning posted`,
         );
 
         try {
-          await client.request("DELETE /repos/{owner}/{repo}/git/refs/{ref}", {
-            owner,
-            repo,
-            ref: `heads/${pull_request.head.ref}`,
-          });
-          logger.info(
-            `[pr] Deleted tampered branch ${pull_request.head.ref} in ${owner}/${repo}`,
+          await client.request(
+            "POST /repos/{owner}/{repo}/issues/{issue_number}/comments",
+            {
+              owner,
+              repo,
+              issue_number: prNumber,
+              body: [
+                "⚠️ **RepoGuard Notice: Owner Push on Automated Remediation Branch**",
+                "",
+                `Repository owner **${senderLogin}** pushed directly to this automated remediation branch (\`${pull_request.head.ref}\`).`,
+                "",
+                "This is allowed, but manual changes may alter the security patch and invalidate the automated remediation state.",
+                "",
+                "**Please review the diff carefully before merging.** If you want a fresh automated fix, close this PR and let RepoGuard regenerate it.",
+              ].join("\n"),
+            },
           );
-        } catch {
-          // ignore
+        } catch (warnErr) {
+          logger.warn(
+            `[pr] Could not post owner-push warning on PR #${prNumber}: ${String(warnErr)}`,
+          );
         }
-      } catch (err) {
+        // Fall through — scan the updated PR diff normally
+      } else if (!isBot && !isRepoOwner) {
+        // Unauthorized third party — block
         logger.warn(
-          `[pr] Could not close tampered PR #${prNumber}: ${String(err)}`,
+          `[pr] TAMPERING DETECTED: Unauthorized synchronize on fix PR #${prNumber} (${pull_request.head.ref}) by "${senderLogin}" in ${owner}/${repo}`,
         );
-      }
 
-      return;
+        try {
+          await client.request(
+            "POST /repos/{owner}/{repo}/issues/{issue_number}/comments",
+            {
+              owner,
+              repo,
+              issue_number: prNumber,
+              body: [
+                "🚨 **RepoGuard Security Alert: Fix Branch Tampering Detected**",
+                "",
+                `An unauthorized synchronize/push event was initiated by **${senderLogin}** on automated remediation branch \`${pull_request.head.ref}\`.`,
+                "",
+                "RepoGuard fix branches are exclusively managed by the RepoGuard bot to prevent unverified code injections.",
+                "Closing this PR and deleting the branch to protect repository integrity.",
+              ].join("\n"),
+            },
+          );
+
+          await client.request(
+            "PATCH /repos/{owner}/{repo}/pulls/{pull_number}",
+            {
+              owner,
+              repo,
+              pull_number: prNumber,
+              state: "closed",
+            },
+          );
+
+          try {
+            await client.request(
+              "DELETE /repos/{owner}/{repo}/git/refs/{ref}",
+              {
+                owner,
+                repo,
+                ref: `heads/${pull_request.head.ref}`,
+              },
+            );
+            logger.info(
+              `[pr] Deleted tampered branch ${pull_request.head.ref} in ${owner}/${repo}`,
+            );
+          } catch {
+            // ignore
+          }
+        } catch (err) {
+          logger.warn(
+            `[pr] Could not close tampered PR #${prNumber}: ${String(err)}`,
+          );
+        }
+
+        return;
+      }
     }
 
     try {

@@ -4,7 +4,9 @@ import { updateCheckRun } from "../src/checks";
 
 jest.mock("prettier", () => ({
   getFileInfo: jest.fn().mockResolvedValue({ inferredParser: null }),
-  format: jest.fn().mockImplementation((content: string) => Promise.resolve(content)),
+  format: jest
+    .fn()
+    .mockImplementation((content: string) => Promise.resolve(content)),
 }));
 
 jest.mock("../src/utils/writeQueue", () => ({
@@ -22,7 +24,9 @@ jest.mock("../src/alerts", () => ({
 
 jest.mock("../src/models", () => ({
   Scan: {
-    create: jest.fn().mockResolvedValue({ _id: { toHexString: () => "mockScanId" } }),
+    create: jest
+      .fn()
+      .mockResolvedValue({ _id: { toHexString: () => "mockScanId" } }),
     findByIdAndUpdate: jest.fn().mockResolvedValue(undefined),
   },
   Installation: {
@@ -40,7 +44,9 @@ jest.mock("../src/pullRequest", () => ({
 
 jest.mock("../src/webhooks/installation", () => ({
   scanFullRepoForPush: jest.fn().mockResolvedValue([]),
-  scanFullRepoWithDetails: jest.fn().mockResolvedValue({ findings: [], filesScanned: 0 }),
+  scanFullRepoWithDetails: jest
+    .fn()
+    .mockResolvedValue({ findings: [], filesScanned: 0 }),
 }));
 
 describe("botAuth utility & Fix PR Safeguards", () => {
@@ -48,18 +54,28 @@ describe("botAuth utility & Fix PR Safeguards", () => {
     it("recognizes exact known bot logins", () => {
       expect(isAuthorizedFixBranchPusher("repoguard-ifecodes[bot]")).toBe(true);
       expect(isAuthorizedFixBranchPusher("repoguard[bot]")).toBe(true);
-      expect(isAuthorizedFixBranchPusher(undefined, "repoguard-ifecodes[bot]")).toBe(true);
-      expect(isAuthorizedFixBranchPusher(undefined, "repoguard[bot]")).toBe(true);
+      expect(
+        isAuthorizedFixBranchPusher(undefined, "repoguard-ifecodes[bot]"),
+      ).toBe(true);
+      expect(isAuthorizedFixBranchPusher(undefined, "repoguard[bot]")).toBe(
+        true,
+      );
     });
 
     it("recognizes bot logins ending with [bot] containing repoguard", () => {
       expect(isAuthorizedFixBranchPusher("my-repoguard-app[bot]")).toBe(true);
-      expect(isAuthorizedFixBranchPusher(undefined, "repoguard-staging[bot]")).toBe(true);
+      expect(
+        isAuthorizedFixBranchPusher(undefined, "repoguard-staging[bot]"),
+      ).toBe(true);
     });
 
     it("recognizes sender with bot type containing repoguard", () => {
       expect(
-        isAuthorizedFixBranchPusher("repoguard-action", "repoguard-action", "Bot"),
+        isAuthorizedFixBranchPusher(
+          "repoguard-action",
+          "repoguard-action",
+          "Bot",
+        ),
       ).toBe(true);
     });
 
@@ -72,7 +88,9 @@ describe("botAuth utility & Fix PR Safeguards", () => {
     it("rejects unauthorized human users and attackers", () => {
       expect(isAuthorizedFixBranchPusher("malicious-actor")).toBe(false);
       expect(isAuthorizedFixBranchPusher("octocat")).toBe(false);
-      expect(isAuthorizedFixBranchPusher(undefined, "random-contributor")).toBe(false);
+      expect(isAuthorizedFixBranchPusher(undefined, "random-contributor")).toBe(
+        false,
+      );
       expect(isAuthorizedFixBranchPusher("dependabot[bot]")).toBe(false);
       expect(isAuthorizedFixBranchPusher("renovate[bot]")).toBe(false);
     });
@@ -86,13 +104,21 @@ describe("botAuth utility & Fix PR Safeguards", () => {
   describe("handlePullRequestOpened Safeguards", () => {
     it("detects tampering on fix branch during synchronize and closes PR", async () => {
       const requestMock = jest.fn().mockImplementation((endpoint: string) => {
-        if (endpoint.startsWith("POST /repos/{owner}/{repo}/issues/{issue_number}/comments")) {
+        if (
+          endpoint.startsWith(
+            "POST /repos/{owner}/{repo}/issues/{issue_number}/comments",
+          )
+        ) {
           return Promise.resolve({ data: {} });
         }
-        if (endpoint.startsWith("PATCH /repos/{owner}/{repo}/pulls/{pull_number}")) {
+        if (
+          endpoint.startsWith("PATCH /repos/{owner}/{repo}/pulls/{pull_number}")
+        ) {
           return Promise.resolve({ data: {} });
         }
-        if (endpoint.startsWith("DELETE /repos/{owner}/{repo}/git/refs/{ref}")) {
+        if (
+          endpoint.startsWith("DELETE /repos/{owner}/{repo}/git/refs/{ref}")
+        ) {
           return Promise.resolve({ data: {} });
         }
         return Promise.resolve({ data: {} });
@@ -131,16 +157,28 @@ describe("botAuth utility & Fix PR Safeguards", () => {
 
     it("detects obsolete Fix PR with 0 diff and auto-closes it", async () => {
       const requestMock = jest.fn().mockImplementation((endpoint: string) => {
-        if (endpoint.startsWith("GET /repos/{owner}/{repo}/pulls/{pull_number}/files")) {
+        if (
+          endpoint.startsWith(
+            "GET /repos/{owner}/{repo}/pulls/{pull_number}/files",
+          )
+        ) {
           return Promise.resolve({ data: [] }); // 0 changed files!
         }
-        if (endpoint.startsWith("POST /repos/{owner}/{repo}/issues/{issue_number}/comments")) {
+        if (
+          endpoint.startsWith(
+            "POST /repos/{owner}/{repo}/issues/{issue_number}/comments",
+          )
+        ) {
           return Promise.resolve({ data: {} });
         }
-        if (endpoint.startsWith("PATCH /repos/{owner}/{repo}/pulls/{pull_number}")) {
+        if (
+          endpoint.startsWith("PATCH /repos/{owner}/{repo}/pulls/{pull_number}")
+        ) {
           return Promise.resolve({ data: {} });
         }
-        if (endpoint.startsWith("DELETE /repos/{owner}/{repo}/git/refs/{ref}")) {
+        if (
+          endpoint.startsWith("DELETE /repos/{owner}/{repo}/git/refs/{ref}")
+        ) {
           return Promise.resolve({ data: {} });
         }
         return Promise.resolve({ data: {} });
@@ -176,6 +214,75 @@ describe("botAuth utility & Fix PR Safeguards", () => {
         expect.objectContaining({ ref: "heads/repoguard/fixes-99999" }),
       );
     });
+
+    it("allows repo owner to push to fix branch during synchronize and posts warning comment without closing PR", async () => {
+      const requestMock = jest.fn().mockImplementation((endpoint: string) => {
+        if (
+          endpoint.startsWith(
+            "GET /repos/{owner}/{repo}/pulls/{pull_number}/files",
+          )
+        ) {
+          return Promise.resolve({
+            data: [
+              {
+                filename: "src/index.ts",
+                status: "modified",
+                patch: "@@ -1,2 +1,2 @@\n-const a = 1;\n+const a = 2;",
+              },
+            ],
+          });
+        }
+        if (
+          endpoint.startsWith(
+            "POST /repos/{owner}/{repo}/issues/{issue_number}/comments",
+          )
+        ) {
+          return Promise.resolve({ data: {} });
+        }
+        return Promise.resolve({ data: {} });
+      });
+
+      const octokit = { request: requestMock } as any;
+      const handler = handlePullRequestOpened({} as any);
+
+      await handler({
+        octokit,
+        payload: {
+          action: "synchronize",
+          pull_request: {
+            number: 42,
+            head: { sha: "owner123", ref: "repoguard/fixes-12345" },
+            changed_files: 1,
+          },
+          repository: {
+            name: "test-repo",
+            owner: { login: "test-owner" },
+          },
+          sender: { login: "test-owner", type: "User" },
+        },
+      });
+
+      // Verify warning comment was posted
+      expect(requestMock).toHaveBeenCalledWith(
+        "POST /repos/{owner}/{repo}/issues/{issue_number}/comments",
+        expect.objectContaining({
+          issue_number: 42,
+          body: expect.stringContaining(
+            "⚠️ **RepoGuard Notice: Owner Push on Automated Remediation Branch**",
+          ),
+        }),
+      );
+
+      // Verify PR was NOT closed and branch was NOT deleted
+      expect(requestMock).not.toHaveBeenCalledWith(
+        "PATCH /repos/{owner}/{repo}/pulls/{pull_number}",
+        expect.objectContaining({ state: "closed" }),
+      );
+      expect(requestMock).not.toHaveBeenCalledWith(
+        "DELETE /repos/{owner}/{repo}/git/refs/{ref}",
+        expect.anything(),
+      );
+    });
   });
 
   describe("handlePush Safeguards", () => {
@@ -194,13 +301,21 @@ describe("botAuth utility & Fix PR Safeguards", () => {
             data: [{ number: 55, head: { ref: "repoguard/fixes-5555" } }],
           });
         }
-        if (endpoint.startsWith("POST /repos/{owner}/{repo}/issues/{issue_number}/comments")) {
+        if (
+          endpoint.startsWith(
+            "POST /repos/{owner}/{repo}/issues/{issue_number}/comments",
+          )
+        ) {
           return Promise.resolve({ data: {} });
         }
-        if (endpoint.startsWith("PATCH /repos/{owner}/{repo}/pulls/{pull_number}")) {
+        if (
+          endpoint.startsWith("PATCH /repos/{owner}/{repo}/pulls/{pull_number}")
+        ) {
           return Promise.resolve({ data: {} });
         }
-        if (endpoint.startsWith("DELETE /repos/{owner}/{repo}/git/refs/{ref}")) {
+        if (
+          endpoint.startsWith("DELETE /repos/{owner}/{repo}/git/refs/{ref}")
+        ) {
           return Promise.resolve({ data: {} });
         }
         return Promise.resolve({ data: {} });
@@ -239,6 +354,81 @@ describe("botAuth utility & Fix PR Safeguards", () => {
       expect(requestMock).toHaveBeenCalledWith(
         "DELETE /repos/{owner}/{repo}/git/refs/{ref}",
         expect.objectContaining({ ref: "heads/repoguard/fixes-5555" }),
+      );
+    });
+
+    it("allows repo owner to push to fix branch, posts warning comment, does not close PR or delete branch", async () => {
+      const { handlePush } = await import("../src/webhooks/push");
+
+      const requestMock = jest.fn().mockImplementation((endpoint: string) => {
+        if (endpoint === "POST /repos/{owner}/{repo}/check-runs") {
+          return Promise.resolve({ data: { id: 888 } });
+        }
+        if (endpoint.startsWith("PATCH /repos/{owner}/{repo}/check-runs/")) {
+          return Promise.resolve({ data: {} });
+        }
+        if (endpoint.startsWith("GET /repos/{owner}/{repo}/pulls")) {
+          return Promise.resolve({
+            data: [{ number: 56, head: { ref: "repoguard/fixes-6666" } }],
+          });
+        }
+        if (
+          endpoint.startsWith(
+            "POST /repos/{owner}/{repo}/issues/{issue_number}/comments",
+          )
+        ) {
+          return Promise.resolve({ data: {} });
+        }
+        if (endpoint.startsWith("GET /repos/{owner}/{repo}/commits/")) {
+          return Promise.resolve({
+            data: { files: [] },
+          });
+        }
+        return Promise.resolve({ data: {} });
+      });
+
+      const octokit = { request: requestMock } as any;
+      const handler = handlePush({} as any);
+
+      await handler({
+        octokit,
+        payload: {
+          ref: "refs/heads/repoguard/fixes-6666",
+          before: "old123",
+          after: "new456",
+          forced: false,
+          commits: [],
+          pusher: { name: "test-owner" },
+          sender: { login: "test-owner", type: "User" },
+          repository: {
+            name: "test-repo",
+            owner: { login: "test-owner" },
+            default_branch: "main",
+          },
+        },
+      });
+
+      // Verify warning comment was posted to the PR
+      expect(requestMock).toHaveBeenCalledWith(
+        "POST /repos/{owner}/{repo}/issues/{issue_number}/comments",
+        expect.objectContaining({
+          issue_number: 56,
+          body: expect.stringContaining(
+            "⚠️ **RepoGuard Notice: Owner Push on Automated Remediation Branch**",
+          ),
+        }),
+      );
+
+      // Verify PR was NOT closed
+      expect(requestMock).not.toHaveBeenCalledWith(
+        "PATCH /repos/{owner}/{repo}/pulls/{pull_number}",
+        expect.objectContaining({ state: "closed" }),
+      );
+
+      // Verify branch was NOT deleted
+      expect(requestMock).not.toHaveBeenCalledWith(
+        "DELETE /repos/{owner}/{repo}/git/refs/{ref}",
+        expect.anything(),
       );
     });
   });
