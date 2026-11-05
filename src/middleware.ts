@@ -69,13 +69,14 @@ const createRedisStore = (): RedisStore | undefined => {
 // ─── Security: simple in-memory rate limiter for the webhook endpoint ─────────
 
 const RATE_LIMIT_WINDOW_MS = 60_000;
-const RATE_LIMIT_MAX = 60;
+const RATE_LIMIT_MAX = 600; // Raised to 600 req/min to handle webhook delivery bursts
 
 export const webhookRateLimit: RequestHandler = rateLimit({
   windowMs: RATE_LIMIT_WINDOW_MS, // 1 minute
-  max: RATE_LIMIT_MAX, // Max 60 requests per window per IP
+  max: RATE_LIMIT_MAX, // Max 600 requests per window per IP
   standardHeaders: true,
   legacyHeaders: false,
+  keyGenerator: (req) => getClientIp(req),
   store: createRedisStore(),
 
   handler: (req, res, _next, options) => {

@@ -1,33 +1,39 @@
 import type { Request } from "express";
-import logger from "./logger";
+import net from "net";
 
 /**
- * Extracts the real client IP from a request.
- *
- * Railway (and most reverse proxies) append IPs to x-forwarded-for as:
- *   client-ip, proxy1-ip, proxy2-ip
- *
- * The leftmost value is always the original client IP.
- * req.ip with trust proxy can return the wrong value when there are
- * multiple hops in the chain.
+ * Extracts the real client IP from a request safely.
+ * When Express has "trust proxy" enabled (as in src/index.ts), req.ip
+ * returns the trusted client address according to proxy hops.
  */
 export function getClientIp(req: Request): string {
-  const forwarded = req.headers["x-forwarded-for"];
-
-  if (forwarded) {
-    const ips = Array.isArray(forwarded) ? forwarded[0] : forwarded;
-
-    logger.info(`[IP] All available Ip's ${ips}`);
-
-    // Take the first (leftmost) IP — that's the real client
-    const clientIp = ips.split(",")[0]?.trim();
-    if (clientIp) return clientIp;
+  // 1. Prefer Express's trusted req.ip when available
+  if (req.ip && net.isIP(req.ip)) {
+    return req.ip;
   }
 
-  // Fallback chain
-  return (
-    (req.headers["x-real-ip"] as string | undefined) ??
-    req.socket.remoteAddress ??
-    "unknown"
-  );
+  // 2. Check x-real-ip
+  const realIp = req.headers["x-real-ip"];
+  if (typeof realIp === "string" && net.isIP(realIp.trim())) {
+    return realIp.trim();
+  }
+
+  // 3. Fallback: Parse x-forwarded-for and ensure it is a valid IP address
+  const forwarded = req.headers["x-forwarded-for"];
+  if (forwarded) {
+    const rawIps = Array.isArray(forwarded) ? forwarded[0] : forwarded;
+    const ips = rawIps.split(",").map((s) => s.trim());
+    for (const ip of ips) {
+      if (net.isIP(ip)) {
+        return ip;
+      }
+    }
+  }
+
+  // 4. Socket remote address fallback
+  if (req.socket?.remoteAddress && net.isIP(req.socket.remoteAddress)) {
+    return req.socket.remoteAddress;
+  }
+
+  return "unknown";
 }

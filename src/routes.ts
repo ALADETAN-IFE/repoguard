@@ -53,8 +53,8 @@ router.get("/", (_req: Request, res: Response) => {
 router.use(
   "/api/webhook",
   raw({ type: "application/json" }), // ← raw buffer, not parsed JSON
-  webhookRateLimit,
-  requireWebhookSignature,
+  requireWebhookSignature, // Check signature first to drop unsigned junk immediately
+  webhookRateLimit, // Rate limit verified/signed requests
   handleWebhook,
 );
 
