@@ -9,7 +9,10 @@ import {
 import { postReviewComments, getOpenRepoGuardIssue } from "../pullRequest";
 import { normaliseOctokit } from "../utils/normaliseOctokit";
 import logger from "../utils/logger";
-import { isAuthorizedFixBranchPusher } from "../utils/botAuth";
+import {
+  hasFixBranchWritePermission,
+  isAuthorizedFixBranchPusher,
+} from "../utils/botAuth";
 import type { WebhookEvent, Finding, OctokitClient } from "../types/index";
 
 interface PullRequestOpenedPayload {
@@ -168,16 +171,14 @@ export function handlePullRequestOpened(
         senderLogin,
         payload.sender.type,
       );
-      // Repo owner is allowed to push (e.g. to refine the patch),
-      // but we post a warning so they know the automated state may be invalidated.
-      const isRepoOwner =
-        senderLogin.toLowerCase() ===
-        (payload.repository?.owner?.login || "").toLowerCase();
+      const hasWriteAccess =
+        isBot ||
+        (await hasFixBranchWritePermission(client, owner, repo, senderLogin));
 
-      if (!isBot && isRepoOwner) {
-        // Owner push on fix PR — warn but allow; continue to scan below
+      if (!isBot && hasWriteAccess) {
+        // Authorized repository user — warn but allow; continue to scan below
         logger.warn(
-          `[pr] Owner push to fix PR #${prNumber} (${pull_request.head.ref}) by "${senderLogin}" in ${owner}/${repo} — warning posted`,
+          `[pr] Authorized user push to fix PR #${prNumber} (${pull_request.head.ref}) by "${senderLogin}" in ${owner}/${repo} — warning posted`,
         );
 
         try {
@@ -220,7 +221,7 @@ export function handlePullRequestOpened(
           );
         }
         // Fall through — scan the updated PR diff normally
-      } else if (!isBot && !isRepoOwner) {
+      } else if (!isBot && !hasWriteAccess) {
         // Unauthorized third party — block
         logger.warn(
           `[pr] TAMPERING DETECTED: Unauthorized synchronize on fix PR #${prNumber} (${pull_request.head.ref}) by "${senderLogin}" in ${owner}/${repo}`,

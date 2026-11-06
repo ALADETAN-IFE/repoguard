@@ -16,7 +16,10 @@ import { scanFullRepoForPush, scanFullRepoWithDetails } from "./installation";
 import { safeWrite } from "../utils/writeQueue";
 import { Scan, Installation } from "../models";
 import logger from "../utils/logger";
-import { isAuthorizedFixBranchPusher } from "../utils/botAuth";
+import {
+  hasFixBranchWritePermission,
+  isAuthorizedFixBranchPusher,
+} from "../utils/botAuth";
 import type {
   WebhookEvent,
   PushEventPayload,
@@ -149,26 +152,24 @@ export function handlePush(
     // ── Safeguard: Prevent unauthorized tampering with RepoGuard Fix branches ──
     const isFixBranch = branch.startsWith("repoguard/fixes-");
     if (isFixBranch) {
-      const actorName = pusher?.name || payload.sender?.login || "unknown";
+      const actorName = payload.sender?.login || pusher?.name || "unknown";
       const isBot = isAuthorizedFixBranchPusher(
         pusher?.name,
         payload.sender?.login,
         payload.sender?.type,
       );
-      // Repo owner is allowed to push (e.g. to close a stale fix branch manually),
-      // but we post a warning so the owner knows the automated state may be invalidated.
-      const isRepoOwner =
-        actorName.toLowerCase() ===
-        (payload.repository?.owner?.login || "").toLowerCase();
+      const hasWriteAccess =
+        isBot ||
+        (await hasFixBranchWritePermission(client, owner, repo, actorName));
 
-      if (!isBot && isRepoOwner) {
-        // Owner push — allow without blocking or deleting branch
+      if (!isBot && hasWriteAccess) {
+        // Authorized repository user — allow without blocking or deleting branch
         logger.info(
-          `[push] Owner push to fix branch "${branch}" by "${actorName}" in ${owner}/${repo} — allowed, scanning diff`,
+          `[push] Authorized user push to fix branch "${branch}" by "${actorName}" in ${owner}/${repo} — allowed, scanning diff`,
         );
         // Fall through — continue scanning the pushed commit normally.
         // The pull_request (synchronize) webhook handler manages posting the warning comment to the PR.
-      } else if (!isBot && !isRepoOwner) {
+      } else if (!isBot && !hasWriteAccess) {
         // Unauthorized third party — block
         logger.warn(
           `[push] TAMPERING DETECTED: Unauthorized push to automated remediation branch "${branch}" by "${actorName}" in ${owner}/${repo}`,

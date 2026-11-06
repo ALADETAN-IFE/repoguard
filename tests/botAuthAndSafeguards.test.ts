@@ -1,4 +1,7 @@
-import { isAuthorizedFixBranchPusher } from "../src/utils/botAuth";
+import {
+  hasFixBranchWritePermission,
+  isAuthorizedFixBranchPusher,
+} from "../src/utils/botAuth";
 import { handlePullRequestOpened } from "../src/webhooks/pullRequest";
 import { updateCheckRun } from "../src/checks";
 
@@ -98,6 +101,60 @@ describe("botAuth utility & Fix PR Safeguards", () => {
     it("handles undefined, null, or empty values safely", () => {
       expect(isAuthorizedFixBranchPusher()).toBe(false);
       expect(isAuthorizedFixBranchPusher("", "", "")).toBe(false);
+    });
+
+    it("allows organization members and collaborators with maintain or admin permissions", async () => {
+      const request = jest.fn().mockResolvedValue({
+        data: { permission: "maintain" },
+      });
+
+      await expect(
+        hasFixBranchWritePermission(
+          { request } as any,
+          "example-org",
+          "repo",
+          "org-member",
+        ),
+      ).resolves.toBe(true);
+      expect(request).toHaveBeenCalledWith(
+        "GET /repos/{owner}/{repo}/collaborators/{username}/permission",
+        { owner: "example-org", repo: "repo", username: "org-member" },
+      );
+    });
+
+    it("rejects write and read-only collaborators and permission lookup failures", async () => {
+      const readOnlyRequest = jest.fn().mockResolvedValue({
+        data: { permission: "read" },
+      });
+      const writeRequest = jest.fn().mockResolvedValue({
+        data: { permission: "write" },
+      });
+      const failingRequest = jest.fn().mockRejectedValue(new Error("forbidden"));
+
+      await expect(
+        hasFixBranchWritePermission(
+          { request: readOnlyRequest } as any,
+          "example-org",
+          "repo",
+          "reader",
+        ),
+      ).resolves.toBe(false);
+      await expect(
+        hasFixBranchWritePermission(
+          { request: writeRequest } as any,
+          "example-org",
+          "repo",
+          "writer",
+        ),
+      ).resolves.toBe(false);
+      await expect(
+        hasFixBranchWritePermission(
+          { request: failingRequest } as any,
+          "example-org",
+          "repo",
+          "unknown-user",
+        ),
+      ).resolves.toBe(false);
     });
   });
 
