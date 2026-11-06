@@ -181,23 +181,39 @@ export function handlePullRequestOpened(
         );
 
         try {
-          await client.request(
-            "POST /repos/{owner}/{repo}/issues/{issue_number}/comments",
-            {
-              owner,
-              repo,
-              issue_number: prNumber,
-              body: [
-                "⚠️ **RepoGuard Notice: Owner Push on Automated Remediation Branch**",
-                "",
-                `Repository owner **${senderLogin}** pushed directly to this automated remediation branch (\`${pull_request.head.ref}\`).`,
-                "",
-                "This is allowed, but manual changes may alter the security patch and invalidate the automated remediation state.",
-                "",
-                "**Please review the diff carefully before merging.** If you want a fresh automated fix, close this PR and let RepoGuard regenerate it.",
-              ].join("\n"),
-            },
+          // Check recent comments to prevent duplicate warnings
+          const { data: comments } = await client.request(
+            "GET /repos/{owner}/{repo}/issues/{issue_number}/comments",
+            { owner, repo, issue_number: prNumber, per_page: 10 },
           );
+          const alreadyWarned =
+            Array.isArray(comments) &&
+            comments.some(
+              (c: { body?: string; created_at?: string }) =>
+                typeof c?.body === "string" &&
+                c.body.includes("RepoGuard Notice: Owner Push") &&
+                Date.now() - new Date(c.created_at || 0).getTime() < 300_000,
+            );
+
+          if (!alreadyWarned) {
+            await client.request(
+              "POST /repos/{owner}/{repo}/issues/{issue_number}/comments",
+              {
+                owner,
+                repo,
+                issue_number: prNumber,
+                body: [
+                  "⚠️ **RepoGuard Notice: Owner Push on Automated Remediation Branch**",
+                  "",
+                  `Repository owner **${senderLogin}** pushed directly to this automated remediation branch (\`${pull_request.head.ref}\`).`,
+                  "",
+                  "This is allowed, but manual changes may alter the security patch and invalidate the automated remediation state.",
+                  "",
+                  "**Please review the diff carefully before merging.** If you want a fresh automated fix, close this PR and let RepoGuard regenerate it.",
+                ].join("\n"),
+              },
+            );
+          }
         } catch (warnErr) {
           logger.warn(
             `[pr] Could not post owner-push warning on PR #${prNumber}: ${String(warnErr)}`,

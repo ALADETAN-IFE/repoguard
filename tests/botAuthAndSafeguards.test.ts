@@ -234,6 +234,13 @@ describe("botAuth utility & Fix PR Safeguards", () => {
         }
         if (
           endpoint.startsWith(
+            "GET /repos/{owner}/{repo}/issues/{issue_number}/comments",
+          )
+        ) {
+          return Promise.resolve({ data: [] });
+        }
+        if (
+          endpoint.startsWith(
             "POST /repos/{owner}/{repo}/issues/{issue_number}/comments",
           )
         ) {
@@ -280,6 +287,74 @@ describe("botAuth utility & Fix PR Safeguards", () => {
       );
       expect(requestMock).not.toHaveBeenCalledWith(
         "DELETE /repos/{owner}/{repo}/git/refs/{ref}",
+        expect.anything(),
+      );
+    });
+
+    it("deduplicates owner warning comment on PR synchronize if a warning was already posted recently", async () => {
+      const requestMock = jest.fn().mockImplementation((endpoint: string) => {
+        if (
+          endpoint.startsWith(
+            "GET /repos/{owner}/{repo}/pulls/{pull_number}/files",
+          )
+        ) {
+          return Promise.resolve({
+            data: [
+              {
+                filename: "src/index.ts",
+                status: "modified",
+                patch: "@@ -1,2 +1,2 @@\n-const a = 1;\n+const a = 2;",
+              },
+            ],
+          });
+        }
+        if (
+          endpoint.startsWith(
+            "GET /repos/{owner}/{repo}/issues/{issue_number}/comments",
+          )
+        ) {
+          return Promise.resolve({
+            data: [
+              {
+                body: "⚠️ **RepoGuard Notice: Owner Push on Automated Remediation Branch**",
+                created_at: new Date().toISOString(),
+              },
+            ],
+          });
+        }
+        if (
+          endpoint.startsWith(
+            "POST /repos/{owner}/{repo}/issues/{issue_number}/comments",
+          )
+        ) {
+          return Promise.resolve({ data: {} });
+        }
+        return Promise.resolve({ data: {} });
+      });
+
+      const octokit = { request: requestMock } as any;
+      const handler = handlePullRequestOpened({} as any);
+
+      await handler({
+        octokit,
+        payload: {
+          action: "synchronize",
+          pull_request: {
+            number: 42,
+            head: { sha: "owner123", ref: "repoguard/fixes-12345" },
+            changed_files: 1,
+          },
+          repository: {
+            name: "test-repo",
+            owner: { login: "test-owner" },
+          },
+          sender: { login: "test-owner", type: "User" },
+        },
+      });
+
+      // Verify duplicate warning comment was NOT posted
+      expect(requestMock).not.toHaveBeenCalledWith(
+        "POST /repos/{owner}/{repo}/issues/{issue_number}/comments",
         expect.anything(),
       );
     });
@@ -357,7 +432,7 @@ describe("botAuth utility & Fix PR Safeguards", () => {
       );
     });
 
-    it("allows repo owner to push to fix branch, posts warning comment, does not close PR or delete branch", async () => {
+    it("allows repo owner to push to fix branch without closing PR or deleting branch (delegates PR warning comment to PR synchronize)", async () => {
       const { handlePush } = await import("../src/webhooks/push");
 
       const requestMock = jest.fn().mockImplementation((endpoint: string) => {
@@ -371,13 +446,6 @@ describe("botAuth utility & Fix PR Safeguards", () => {
           return Promise.resolve({
             data: [{ number: 56, head: { ref: "repoguard/fixes-6666" } }],
           });
-        }
-        if (
-          endpoint.startsWith(
-            "POST /repos/{owner}/{repo}/issues/{issue_number}/comments",
-          )
-        ) {
-          return Promise.resolve({ data: {} });
         }
         if (endpoint.startsWith("GET /repos/{owner}/{repo}/commits/")) {
           return Promise.resolve({
@@ -408,17 +476,6 @@ describe("botAuth utility & Fix PR Safeguards", () => {
         },
       });
 
-      // Verify warning comment was posted to the PR
-      expect(requestMock).toHaveBeenCalledWith(
-        "POST /repos/{owner}/{repo}/issues/{issue_number}/comments",
-        expect.objectContaining({
-          issue_number: 56,
-          body: expect.stringContaining(
-            "⚠️ **RepoGuard Notice: Owner Push on Automated Remediation Branch**",
-          ),
-        }),
-      );
-
       // Verify PR was NOT closed
       expect(requestMock).not.toHaveBeenCalledWith(
         "PATCH /repos/{owner}/{repo}/pulls/{pull_number}",
@@ -428,6 +485,12 @@ describe("botAuth utility & Fix PR Safeguards", () => {
       // Verify branch was NOT deleted
       expect(requestMock).not.toHaveBeenCalledWith(
         "DELETE /repos/{owner}/{repo}/git/refs/{ref}",
+        expect.anything(),
+      );
+
+      // Verify push event does not duplicate PR comment (delegated to PR synchronize handler)
+      expect(requestMock).not.toHaveBeenCalledWith(
+        "POST /repos/{owner}/{repo}/issues/{issue_number}/comments",
         expect.anything(),
       );
     });

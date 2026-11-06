@@ -162,42 +162,12 @@ export function handlePush(
         (payload.repository?.owner?.login || "").toLowerCase();
 
       if (!isBot && isRepoOwner) {
-        // Owner push — warn but allow
-        logger.warn(
-          `[push] Owner push to fix branch "${branch}" by "${actorName}" in ${owner}/${repo} — warning posted`,
+        // Owner push — allow without blocking or deleting branch
+        logger.info(
+          `[push] Owner push to fix branch "${branch}" by "${actorName}" in ${owner}/${repo} — allowed, scanning diff`,
         );
-
-        try {
-          const { data: pulls } = await client.request(
-            "GET /repos/{owner}/{repo}/pulls",
-            { owner, repo, state: "open", head: `${owner}:${branch}` },
-          );
-          if ((pulls as unknown[]).length > 0) {
-            const pr = (pulls as Array<{ number: number }>)[0];
-            await client.request(
-              "POST /repos/{owner}/{repo}/issues/{issue_number}/comments",
-              {
-                owner,
-                repo,
-                issue_number: pr.number,
-                body: [
-                  "⚠️ **RepoGuard Notice: Owner Push on Automated Remediation Branch**",
-                  "",
-                  `Repository owner **${actorName}** pushed directly to the automated remediation branch \`${branch}\`.`,
-                  "",
-                  "This is allowed, but be aware that manual changes to a RepoGuard fix branch may alter the security patch and invalidate the automated remediation state.",
-                  "",
-                  "**Please review the diff carefully before merging.** If you want a fresh automated fix, close this PR and let RepoGuard regenerate it.",
-                ].join("\n"),
-              },
-            );
-          }
-        } catch (warnErr) {
-          logger.warn(
-            `[push] Could not post owner-push warning: ${warnErr instanceof Error ? warnErr.message : String(warnErr)}`,
-          );
-        }
-        // Fall through — continue scanning the pushed commit normally
+        // Fall through — continue scanning the pushed commit normally.
+        // The pull_request (synchronize) webhook handler manages posting the warning comment to the PR.
       } else if (!isBot && !isRepoOwner) {
         // Unauthorized third party — block
         logger.warn(
