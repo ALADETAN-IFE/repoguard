@@ -257,84 +257,102 @@ export async function openFixPR(
     // ── 1.1 Cross-File Remediation: package.json script cleanup ──────────────
     // Only inspect package.json if another file was flagged for deletion (e.g. dropper script)
     // and package.json is not yet in filesToPatch.
-    const deletedFileNames = filesToPatch
-      .filter((f) => f.shouldDelete)
-      .map((f) => f.filePath.split("/").pop() ?? "")
-      .filter(Boolean);
-
-    const isPackageJsonAlreadyQueued = filesToPatch.some(
-      (f) => f.filePath === "package.json",
+    const filesFlaggedForDeletion = filesToPatch.filter((f) => f.shouldDelete);
+    const deletedTargets: string[] = [];
+    for (const f of filesFlaggedForDeletion) {
+      const base = f.filePath.split("/").pop() ?? "";
+      const withoutExt = base.replace(/\.[^.]+$/, "");
+      deletedTargets.push(f.filePath, base);
+      if (withoutExt) deletedTargets.push(withoutExt);
+    }
+    const uniqueDeletedTargets = Array.from(
+      new Set(deletedTargets.filter(Boolean)),
     );
 
-    if (!isPackageJsonAlreadyQueued && deletedFileNames.length > 0) {
-      try {
-        const { data: pkgData } = await octokit.request(
-          "GET /repos/{owner}/{repo}/contents/{path}",
-          {
-            owner,
-            repo,
-            path: "package.json",
-            ...(existingPR ? { ref: branch } : {}),
-          },
-        );
-        if (
-          !Array.isArray(pkgData) &&
-          pkgData.type === "file" &&
-          "content" in pkgData
-        ) {
-          const originalPkgContent = Buffer.from(
-            pkgData.content || "",
-            "base64",
-          ).toString("utf8");
-          const pkgSha: string = pkgData.sha;
+    // Collect candidate package.json paths: root and any parent directories of deleted files
+    const candidatePkgPaths = new Set<string>(["package.json"]);
+    for (const f of filesFlaggedForDeletion) {
+      const parts = f.filePath.split("/");
+      while (parts.length > 1) {
+        parts.pop();
+        candidatePkgPaths.add(parts.join("/") + "/package.json");
+      }
+    }
 
-          // Check if package.json contains references to deleted droppers
-          const hasDeletedRef = deletedFileNames.some((name) =>
-            new RegExp(`\\bnode\\s+[\\w./\\\\-]*${name}\\b`, "i").test(
-              originalPkgContent,
-            ),
+    if (uniqueDeletedTargets.length > 0) {
+      for (const pkgPath of candidatePkgPaths) {
+        if (filesToPatch.some((f) => f.filePath === pkgPath)) continue;
+        try {
+          const { data: pkgData } = await octokit.request(
+            "GET /repos/{owner}/{repo}/contents/{path}",
+            {
+              owner,
+              repo,
+              path: pkgPath,
+              ...(existingPR ? { ref: branch } : {}),
+            },
           );
+          if (
+            !Array.isArray(pkgData) &&
+            pkgData.type === "file" &&
+            "content" in pkgData
+          ) {
+            const originalPkgContent = Buffer.from(
+              pkgData.content || "",
+              "base64",
+            ).toString("utf8");
+            const pkgSha: string = pkgData.sha;
 
-          if (hasDeletedRef) {
-            logger.info(
-              `[pr] package.json has references to deleted malware (${deletedFileNames.join(", ")}) — queuing for cleanup`,
-            );
-            const syntheticFinding: Finding = {
-              rule: "suspicious-npm-script-hijack",
-              severity: "critical",
-              message:
-                "package.json script hijacked to execute arbitrary JS file or chained payload",
-              file: "package.json",
-              line: 1,
-            };
+            // Check if package.json contains references to deleted droppers
+            const hasDeletedRef = uniqueDeletedTargets.some((target) => {
+              const escaped = target.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+              return new RegExp(
+                `[\\w./\\\\-]*${escaped}(?:\\.js)?\\b`,
+                "i",
+              ).test(originalPkgContent);
+            });
 
-            const { patchedContent, patchedFindings } = await applyPatches(
-              originalPkgContent,
-              [syntheticFinding],
-              "package.json",
-              octokit,
-            );
+            if (hasDeletedRef) {
+              logger.info(
+                `[pr] ${pkgPath} has references to deleted malware (${uniqueDeletedTargets.join(", ")}) — queuing for cleanup`,
+              );
+              const syntheticFinding: Finding = {
+                rule: "suspicious-npm-script-hijack",
+                severity: "critical",
+                message: `${pkgPath} script hijacked to execute arbitrary JS file or chained payload`,
+                file: pkgPath,
+                line: 1,
+              };
 
-            if (
-              patchedFindings.length > 0 &&
-              patchedContent !== originalPkgContent
-            ) {
-              findings.push(syntheticFinding);
-              allPatchedFindings.push(syntheticFinding);
-              filesToPatch.push({
-                filePath: "package.json",
-                originalContent: originalPkgContent,
-                patchedContent,
-                fileSha: pkgSha,
-                fileFindings: [syntheticFinding],
-                patchedFindings,
-                shouldDelete: false,
-              });
+              const { patchedContent, patchedFindings } = await applyPatches(
+                originalPkgContent,
+                [syntheticFinding],
+                pkgPath,
+                octokit,
+                uniqueDeletedTargets,
+              );
+
+              if (
+                patchedFindings.length > 0 &&
+                patchedContent !== originalPkgContent
+              ) {
+                findings.push(syntheticFinding);
+                allPatchedFindings.push(syntheticFinding);
+                filesToPatch.push({
+                  filePath: pkgPath,
+                  originalContent: originalPkgContent,
+                  patchedContent,
+                  fileSha: pkgSha,
+                  fileFindings: [syntheticFinding],
+                  patchedFindings,
+                  shouldDelete: false,
+                });
+              }
             }
           }
+        } catch {
+          /* package.json not found in repo or inaccessible — skip */
         }
-      } catch {
-        /* package.json not found in repo or inaccessible — skip */
       }
     }
 
@@ -818,6 +836,7 @@ export async function applyPatches(
   findings: Finding[],
   filePath: string,
   octokit?: OctokitClient,
+  deletedTargets?: string[],
 ): Promise<{
   patchedContent: string;
   patchedFindings: Finding[];
@@ -971,10 +990,34 @@ export async function applyPatches(
           /\n?const\s+require\s*=\s*createRequire\s*\(\s*import\.meta\.url\s*\);?/g,
           "// REMOVED BY REPOGUARD: require definition for malware",
         );
-        // Injected malware payload starting with init() call
+        // Injected malware payload starting with init() call or var z = ...
         nextPatched = nextPatched.replace(
-          /(?:^|[\n;\s])init\s*\(\s*\);?\s*(?:var|let|const)\s+z\s*=[\s\S]*/gm,
-          "\n// REMOVED BY REPOGUARD: obfuscated malware payload",
+          /(?:^|[\n\r])([ \t]*)([^\n\r]*?)\binit\s*\(\s*\);?\s*(?:var|let|const)\s+z\s*=[\s\S]*/gm,
+          (
+            _match: string,
+            _newline: string,
+            _indent: string,
+            prefix: string,
+          ) => {
+            const cleanPrefix = (prefix || "").trimEnd();
+            return cleanPrefix
+              ? `${cleanPrefix}\n// REMOVED BY REPOGUARD: obfuscated malware payload`
+              : "// REMOVED BY REPOGUARD: obfuscated malware payload";
+          },
+        );
+        nextPatched = nextPatched.replace(
+          /(?:^|[\n\r])([ \t]*)([^\n\r]*?)\b(?:var|let|const)\s+z\s*=\s*['"][^'"]*['"]\s*;\s*(?:var|let|const)\s+[a-zA-Z0-9_$]+\s*=\s*\[[\d\s^,]{10,}\][\s\S]*/gm,
+          (
+            _match: string,
+            _newline: string,
+            _indent: string,
+            prefix: string,
+          ) => {
+            const cleanPrefix = (prefix || "").trimEnd();
+            return cleanPrefix
+              ? `${cleanPrefix}\n// REMOVED BY REPOGUARD: obfuscated malware payload`
+              : "// REMOVED BY REPOGUARD: obfuscated malware payload";
+          },
         );
         // XOR-based permutation / unscrambler functions (e.g. spin, splitLane, peel, y7)
         nextPatched = nextPatched.replace(
@@ -1087,6 +1130,14 @@ export async function applyPatches(
                 line,
               );
             if (hasMalwareSignals) {
+              // If there is legitimate code on the same line before the malware payload (e.g. `];`), preserve it
+              const malwareMatch = line.match(
+                /^(.*?)(\b(?:var|let|const)\s+z\s*=|\binit\s*\(|\b(?:var|let|const)\s+[a-zA-Z0-9_$]+\s*=\s*\[[\d\s^,]{10,}\]|\bfunction\s+(?:spin|splitLane|peel|y7)\b|!function\b|global\[|\/\*\s*REMOVED|(\\(?:x[0-9a-fA-F]{2}|u[0-9a-fA-F]{4})){4,})/,
+              );
+              if (malwareMatch && malwareMatch[1].trim()) {
+                const prefix = malwareMatch[1].trimEnd();
+                return `${prefix}\n// REMOVED BY REPOGUARD: obfuscated malware payload`;
+              }
               return "// REMOVED BY REPOGUARD: obfuscated malware payload";
             }
             return line.replace(
@@ -1248,17 +1299,60 @@ export async function applyPatches(
               let modified = false;
               for (const [key, val] of Object.entries(pkg.scripts)) {
                 if (typeof val === "string") {
-                  // Strip chained "node [file].js && " or "node [file].js ; " prefix
-                  let cleaned = val
-                    .replace(/\bnode\s+[\w./\\-]+\.js\s*(&&|;|\|\|)\s*/gi, "")
+                  let cleaned = val;
+
+                  // 1. Strip chained prefixes: "node path/to/file[.js] && " or "... ; " or "... || "
+                  cleaned = cleaned
+                    .replace(/\bnode\s+[\w./\\-]+\s*(&&|;|\|\|)\s*/gi, "")
                     .trim();
-                  // Strip standalone inline curl / wget / powershell / node -e
+
+                  // 2. Strip chained suffixes: " && node path/to/file[.js]" or " ; node ..."
+                  cleaned = cleaned
+                    .replace(/\s*(&&|;|\|\|)\s*node\s+[\w./\\-]+/gi, "")
+                    .trim();
+
+                  // 3. Strip any references matching deleted droppers
+                  if (deletedTargets && deletedTargets.length > 0) {
+                    for (const target of deletedTargets) {
+                      const escaped = target.replace(
+                        /[.*+?^${}()|[\]\\]/g,
+                        "\\$&",
+                      );
+                      cleaned = cleaned
+                        .replace(
+                          new RegExp(
+                            `(?:\\bnode\\s+)?[\\w./\\\\-]*${escaped}(?:\\.js)?\\s*(&&|;|\\|\\|)\\s*`,
+                            "gi",
+                          ),
+                          "",
+                        )
+                        .replace(
+                          new RegExp(
+                            `\\s*(&&|;|\\|\\|)\\s*(?:\\bnode\\s+)?[\\w./\\\\-]*${escaped}(?:\\.js)?`,
+                            "gi",
+                          ),
+                          "",
+                        )
+                        .replace(
+                          new RegExp(
+                            `^\\s*(?:node\\s+)?[\\w./\\\\-]*${escaped}(?:\\.js)?\\s*$`,
+                            "gi",
+                          ),
+                          "",
+                        )
+                        .trim();
+                    }
+                  }
+
+                  // 4. Strip standalone inline curl / wget / powershell / node execution
                   if (
                     /\b(?:curl|wget|powershell|node\s+-e)\b/i.test(cleaned) ||
-                    /\bnode\s+(?:\.\/)?[\w-]+\.js\b/i.test(cleaned)
+                    /^\s*node\s+[\w./\\-]+\s*$/i.test(cleaned) ||
+                    /^\s*[\w./\\-]*\binit(?:\.js)?\s*$/i.test(cleaned)
                   ) {
                     cleaned = "";
                   }
+
                   if (cleaned !== val) {
                     if (cleaned) {
                       pkg.scripts[key] = cleaned;
@@ -1274,10 +1368,9 @@ export async function applyPatches(
               }
             }
           } catch {
-            nextPatched = nextPatched.replace(
-              /\bnode\s+[\w./\\-]+\.js\s*(&&|;|\|\|)\s*/g,
-              "",
-            );
+            nextPatched = nextPatched
+              .replace(/\bnode\s+[\w./\\-]+\s*(&&|;|\|\|)\s*/g, "")
+              .replace(/\s*(&&|;|\|\|)\s*node\s+[\w./\\-]+/g, "");
           }
         }
         break;

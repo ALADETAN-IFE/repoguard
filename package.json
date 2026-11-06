@@ -10,7 +10,7 @@
     "test": "jest --coverage",
     "lint": "eslint src/ --ext .ts",
     "lintfix": "eslint src/ --ext .ts --fix",
-    "typecheck": "tsc --noEmit",
+    "typecheck": "node --max-old-space-size=2048 ./node_modules/typescript/bin/tsc --noEmit",
     "format": "prettier --write \"src/**/*.{ts,json}\"",
     "check-format": "prettier --check \"src/**/*.{ts,json}\"",
     "prepare": "husky"
