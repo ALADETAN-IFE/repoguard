@@ -21,8 +21,9 @@ export interface AIPatchResult {
 /**
  * Checks if an AI provider API key is configured and optionally checks tenant opt-in.
  */
-export function isAIEnabled(tenantOptIn = true): boolean {
-  if (!tenantOptIn) return false;
+export function isAIEnabled(tenantOptIn = false): boolean {
+  const isOptedIn = tenantOptIn || process.env.AI_DEFAULT_OPT_IN === "true";
+  if (!isOptedIn) return false;
   return !!(process.env.GEMINI_API_KEY || process.env.OPENAI_API_KEY);
 }
 
@@ -47,10 +48,13 @@ async function callGemini(
 
   for (const candidate of uniqueCandidates) {
     try {
-      const url = `https://generativelanguage.googleapis.com/v1beta/models/${candidate}:generateContent?key=${apiKey}`;
+      const url = `https://generativelanguage.googleapis.com/v1beta/models/${candidate}:generateContent`;
       const response = await fetch(url, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          "x-goog-api-key": apiKey,
+        },
         body: JSON.stringify({
           contents: [{ role: "user", parts: [{ text: prompt }] }],
           generationConfig: {

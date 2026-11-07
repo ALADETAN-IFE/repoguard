@@ -2,12 +2,65 @@ import { type Request, type Response } from "express";
 import crypto from "crypto";
 import { Installation } from "../models";
 import logger from "../utils/logger";
+import { generateSessionId, saveServerSession } from "../services/sessionStore";
 
-const JWT_SECRET = process.env.SESSION_SECRET!;
+if (!process.env.SESSION_SECRET && process.env.NODE_ENV !== "test") {
+  throw new Error("FATAL: SESSION_SECRET environment variable is missing.");
+}
+const JWT_SECRET =
+  process.env.SESSION_SECRET || "test-jwt-secret-key-32-chars-long!!";
+
 const FRONTEND_URL = (
   process.env.FRONTEND_URL || "http://localhost:3000"
 ).replace(/\/$/, "");
-const ADMIN_LOGINS = (process.env.ADMIN_GITHUB_LOGINS || "").toLowerCase();
+
+const ADMIN_LOGINS_SET = new Set(
+  (process.env.ADMIN_GITHUB_LOGINS || "")
+    .split(",")
+    .map((s) => s.trim().toLowerCase())
+    .filter(Boolean),
+);
+
+export function isSystemAdminLogin(login?: string | null): boolean {
+  if (!login) return false;
+  return ADMIN_LOGINS_SET.has(login.trim().toLowerCase());
+}
+
+export function parseCookies(req: Request): Record<string, string> {
+  const header = req.headers.cookie;
+  if (!header) return {};
+  const cookies: Record<string, string> = {};
+  for (const pair of header.split(";")) {
+    const trimmed = pair.trim();
+    if (!trimmed) continue;
+    const eqIdx = trimmed.indexOf("=");
+    if (eqIdx !== -1) {
+      const key = trimmed.slice(0, eqIdx).trim();
+      const val = trimmed.slice(eqIdx + 1).trim();
+      cookies[key] = decodeURIComponent(val);
+    }
+  }
+  return cookies;
+}
+
+export function isAuthorizedForOwner(
+  session: SessionPayload | undefined | null,
+  owner: string,
+): boolean {
+  if (!session || !session.user || !owner) return false;
+  if (session.user.isSystemAdmin) return true;
+  const target = owner.trim().toLowerCase();
+  if (session.user.login && session.user.login.toLowerCase() === target) {
+    return true;
+  }
+  if (
+    Array.isArray(session.accounts) &&
+    session.accounts.some((a) => a.login && a.login.toLowerCase() === target)
+  ) {
+    return true;
+  }
+  return false;
+}
 
 interface GitHubUserResponse {
   id: number;
@@ -50,6 +103,7 @@ export interface AccountContext {
 }
 
 export interface SessionPayload {
+  sessionId?: string;
   user: {
     id: number;
     login: string;
@@ -70,8 +124,10 @@ export interface SessionPayload {
 /**
  * Sign a base64url encoded HMAC-SHA256 session token
  */
-export function signSessionToken(payload: Omit<SessionPayload, "exp">): string {
-  const exp = Math.floor(Date.now() / 1000) + 60 * 60 * 24 * 7; // 7 days
+export function signSessionToken(
+  payload: Omit<SessionPayload, "exp"> & { exp?: number },
+): string {
+  const exp = payload.exp || Math.floor(Date.now() / 1000) + 60 * 60 * 24 * 7; // 7 days
   const data = JSON.stringify({ ...payload, exp });
   const dataB64 = Buffer.from(data).toString("base64url");
   const signature = crypto
@@ -149,7 +205,7 @@ export async function refreshAccessToken(refreshToken: string): Promise<{
 }
 
 /**
- * Verify and decode an HMAC-SHA256 session token
+ * Verify and decode an HMAC-SHA256 session token with timing-safe comparison
  */
 export function verifySessionToken(token: string): SessionPayload | null {
   try {
@@ -161,13 +217,21 @@ export function verifySessionToken(token: string): SessionPayload | null {
       .update(dataB64)
       .digest("base64url");
 
-    if (signature !== expectedSig) return null;
+    const sigBuf = Buffer.from(signature);
+    const expBuf = Buffer.from(expectedSig);
+    if (
+      sigBuf.length !== expBuf.length ||
+      !crypto.timingSafeEqual(sigBuf, expBuf)
+    ) {
+      return null;
+    }
 
     const payload = JSON.parse(
       Buffer.from(dataB64, "base64url").toString("utf8"),
     ) as SessionPayload;
-    if (payload.exp && payload.exp < Math.floor(Date.now() / 1000)) {
-      return null; // Expired
+
+    if (payload.exp && Date.now() / 1000 >= payload.exp) {
+      return null;
     }
 
     return payload;
@@ -178,17 +242,15 @@ export function verifySessionToken(token: string): SessionPayload | null {
 
 /**
  * GET /auth/github
- * Initiates GitHub OAuth sign-in flow
+ * Initiates GitHub OAuth sign-in flow with state CSRF protection
  */
 export const initiateGitHubOAuth = (req: Request, res: Response): void => {
   logger.info("[auth/github] Initiating GitHub OAuth sign-in flow");
 
   const clientId = process.env.GITHUB_CLIENT_ID;
   if (!clientId) {
-    logger.warn(
-      "[auth/github] GITHUB_CLIENT_ID not configured, redirecting to frontend",
-    );
-    res.redirect(`${FRONTEND_URL}/dashboard`);
+    logger.error("[auth/github] GITHUB_CLIENT_ID is not configured");
+    res.status(500).json({ error: "GitHub OAuth is not configured" });
     return;
   }
 
@@ -197,15 +259,23 @@ export const initiateGitHubOAuth = (req: Request, res: Response): void => {
     process.env.GITHUB_CALLBACK_URL ||
     `${req.protocol}://${req.get("host")}/auth/github/callback`;
 
-  const scope = "read:user user:email read:org repo";
-  const state = crypto.randomBytes(16).toString("hex");
+  // Do not request unnecessary "repo" scope — read:user, user:email, and read:org are sufficient
+  const scope = "read:user user:email read:org";
+  const state = crypto.randomBytes(32).toString("hex");
+
+  res.cookie("oauth_state", state, {
+    httpOnly: true,
+    secure: process.env.NODE_ENV === "production",
+    sameSite: "lax",
+    maxAge: 10 * 60 * 1000,
+  });
 
   let authUrl = `https://github.com/login/oauth/authorize?client_id=${clientId}&scope=${encodeURIComponent(
     scope,
   )}&state=${state}`;
 
   // If callbackUrl is not explicitly set to 'default' or 'none', include it
-  if (callbackUrl && callbackUrl !== "none" && callbackUrl !== "default") {
+  if (callbackUrl && callbackUrl !== "default" && callbackUrl !== "none") {
     authUrl += `&redirect_uri=${encodeURIComponent(callbackUrl)}`;
   }
 
@@ -217,7 +287,7 @@ export const initiateGitHubOAuth = (req: Request, res: Response): void => {
 
 /**
  * GET /auth/github/callback
- * Handles OAuth callback from GitHub, fetches user profile & installs, signs session token
+ * Handles OAuth callback from GitHub, fetches user profile & installs, saves server session & signs token
  */
 export const handleGitHubOAuthCallback = async (
   req: Request,
@@ -226,7 +296,7 @@ export const handleGitHubOAuthCallback = async (
   logger.info("[auth/github/callback] Received OAuth callback from GitHub");
 
   try {
-    const { code, error, error_description } = req.query;
+    const { code, state, error, error_description } = req.query;
     if (error) {
       const errStr = typeof error === "string" ? error : JSON.stringify(error);
       const descStr =
@@ -237,6 +307,33 @@ export const handleGitHubOAuthCallback = async (
       res.redirect(
         `${FRONTEND_URL}/auth/login?error=${encodeURIComponent(errStr)}`,
       );
+      return;
+    }
+
+    // CSRF verification: validate incoming OAuth state against httpOnly cookie
+    const cookies = parseCookies(req);
+    const expectedState = cookies["oauth_state"];
+    const incomingState = typeof state === "string" ? state : "";
+
+    res.clearCookie("oauth_state", {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === "production",
+      sameSite: "lax",
+    });
+
+    if (
+      !expectedState ||
+      !incomingState ||
+      Buffer.byteLength(expectedState) !== Buffer.byteLength(incomingState) ||
+      !crypto.timingSafeEqual(
+        Buffer.from(expectedState),
+        Buffer.from(incomingState),
+      )
+    ) {
+      logger.warn(
+        `[auth/github/callback] Invalid or missing OAuth state CSRF token (state: ${incomingState ? "provided" : "missing"})`,
+      );
+      res.redirect(`${FRONTEND_URL}/auth/login?error=invalid_oauth_state`);
       return;
     }
 
@@ -404,7 +501,7 @@ export const handleGitHubOAuthCallback = async (
       uninstalledAt: null,
     }).lean();
 
-    const isSystemAdmin = ADMIN_LOGINS.includes(ghUser.login.toLowerCase());
+    const isSystemAdmin = isSystemAdminLogin(ghUser.login);
 
     // 5. Build per-account context with accurate role resolution
     const accounts: AccountContext[] = allAccountLogins.map((login) => {
@@ -451,8 +548,12 @@ export const handleGitHubOAuthCallback = async (
         ? "org_admin"
         : "member";
 
-    // 6. Sign Session Token
-    const sessionToken = signSessionToken({
+    // 6. Generate server-side session and sign client token (without tokens)
+    const sessionId = generateSessionId();
+    const sessionExp = Math.floor(Date.now() / 1000) + 7 * 24 * 3600; // 7 days
+
+    await saveServerSession(sessionId, {
+      sessionId,
       user: {
         id: ghUser.id,
         login: ghUser.login,
@@ -466,13 +567,36 @@ export const handleGitHubOAuthCallback = async (
         accessTokenExpiresAt,
       },
       accounts,
+      exp: sessionExp,
+    });
+
+    const sessionToken = signSessionToken({
+      sessionId,
+      user: {
+        id: ghUser.id,
+        login: ghUser.login,
+        name: ghUser.name || ghUser.login,
+        email: userEmail,
+        avatarUrl: ghUser.avatar_url,
+        isSystemAdmin,
+        role: defaultRole,
+      },
+      accounts,
+      exp: sessionExp,
+    });
+
+    res.cookie("repoguard_session", sessionToken, {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === "production",
+      sameSite: "lax",
+      maxAge: 7 * 24 * 3600 * 1000,
     });
 
     logger.info(
       `[auth/github/callback] SUCCESS: Authenticated @${ghUser.login} (SystemAdmin: ${isSystemAdmin}, Role: ${defaultRole}, Accounts: ${accounts.length})`,
     );
 
-    // Redirect to frontend dashboard with session token
+    // Redirect to frontend dashboard with session token in query for seamless frontend compatibility
     res.redirect(`${FRONTEND_URL}/dashboard?token=${sessionToken}`);
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
@@ -490,13 +614,14 @@ export const handleGitHubOAuthCallback = async (
 export const getCurrentUser = (req: Request, res: Response): void => {
   try {
     const authHeader = req.headers.authorization;
+    const cookies = parseCookies(req);
     const token = authHeader?.startsWith("Bearer ")
       ? authHeader.substring(7)
-      : (req.query.token as string) || null;
+      : (req.query.token as string) || cookies["repoguard_session"] || null;
 
     if (!token) {
       logger.warn(
-        "[auth/me] Rejected: No session token provided in header or query",
+        "[auth/me] Rejected: No session token provided in header, query, or cookie",
       );
       res.status(401).json({ error: "No session token provided" });
       return;
@@ -509,10 +634,19 @@ export const getCurrentUser = (req: Request, res: Response): void => {
       return;
     }
 
+    // Ensure tokens are never leaked to client
+    const sanitizedUser = { ...session.user };
+    delete (sanitizedUser as Record<string, unknown>).accessToken;
+    delete (sanitizedUser as Record<string, unknown>).refreshToken;
+    delete (sanitizedUser as Record<string, unknown>).accessTokenExpiresAt;
+
     logger.info(
       `[auth/me] Validated session for @${session.user.login} (${session.user.role})`,
     );
-    res.json(session);
+    res.json({
+      ...session,
+      user: sanitizedUser,
+    });
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     logger.error(`[auth/me] ERROR: ${message}`);

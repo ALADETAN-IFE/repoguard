@@ -3,6 +3,7 @@ import { normaliseOctokit } from "../utils/normaliseOctokit";
 import { scanFullRepoForPush } from "./installation";
 import { openFixPR } from "../pullRequest";
 import logger from "../utils/logger";
+import { redis } from "../config/redis";
 import type { WebhookEvent } from "../types/index";
 
 export interface IssuesOpenedPayload {
@@ -13,6 +14,7 @@ export interface IssuesOpenedPayload {
     body?: string;
     user?: { login: string };
     html_url?: string;
+    author_association?: string;
   };
   repository: {
     owner: { login: string };
@@ -51,22 +53,84 @@ export function handleIssuesOpened(
 
     const octokit = normaliseOctokit(rawOctokit);
 
-    // 1. Initial scanning comment
-    try {
-      await octokit.request(
-        "POST /repos/{owner}/{repo}/issues/{issue_number}/comments",
-        {
-          owner,
-          repo,
-          issue_number: issueNumber,
-          body: "🔍 **RepoGuard scanning triggered!** Scanning codebase...",
-        },
+    // Authorization check: Only repository owner, member, or collaborator can trigger scans
+    const authorAssociation = payload.issue.author_association;
+    const isAuthorized =
+      authorAssociation &&
+      ["OWNER", "MEMBER", "COLLABORATOR"].includes(
+        authorAssociation.toUpperCase(),
       );
-    } catch {
-      /* ignore initial comment error if any */
+
+    if (!isAuthorized) {
+      logger.warn(
+        `[issue-scan] Unauthorized scan request from user ${payload.issue.user?.login} (association: ${authorAssociation}) on ${owner}/${repo}#${issueNumber}`,
+      );
+      try {
+        await octokit.request(
+          "POST /repos/{owner}/{repo}/issues/{issue_number}/comments",
+          {
+            owner,
+            repo,
+            issue_number: issueNumber,
+            body: "⚠️ **RepoGuard Notice:** Only repository owners, members, or collaborators are authorized to trigger scans.",
+          },
+        );
+      } catch {
+        /* ignore */
+      }
+      return;
+    }
+
+    // Per-repo concurrency lock with Redis
+    const lockKey = `repoguard:lock:scan:${owner}:${repo}`;
+    let lockAcquired = true;
+    if (redis) {
+      try {
+        const res = await redis.set(lockKey, "1", "EX", 60, "NX");
+        if (!res) {
+          lockAcquired = false;
+        }
+      } catch (err) {
+        logger.warn(`[issue-scan] Redis lock check failed: ${String(err)}`);
+      }
+    }
+
+    if (!lockAcquired) {
+      logger.info(
+        `[issue-scan] Scan already in progress for ${owner}/${repo} — skipping`,
+      );
+      try {
+        await octokit.request(
+          "POST /repos/{owner}/{repo}/issues/{issue_number}/comments",
+          {
+            owner,
+            repo,
+            issue_number: issueNumber,
+            body: "⚠️ **RepoGuard Notice:** A scan is already in progress for this repository. Please wait for it to complete.",
+          },
+        );
+      } catch {
+        /* ignore */
+      }
+      return;
     }
 
     try {
+      // 1. Initial scanning comment
+      try {
+        await octokit.request(
+          "POST /repos/{owner}/{repo}/issues/{issue_number}/comments",
+          {
+            owner,
+            repo,
+            issue_number: issueNumber,
+            body: "🔍 **RepoGuard scanning triggered!** Scanning codebase...",
+          },
+        );
+      } catch {
+        /* ignore initial comment error if any */
+      }
+
       // 2. Scan full repo
       const findings = await scanFullRepoForPush(octokit, owner, repo);
 
@@ -119,11 +183,15 @@ export function handleIssuesOpened(
             owner,
             repo,
             issue_number: issueNumber,
-            body: `⚠️ **RepoGuard Error:** Failed to execute scan: ${message}`,
+            body: "⚠️ **RepoGuard Error:** An error occurred while executing the scan. Please check your repository permissions or try again later.",
           },
         );
       } catch {
         /* ignore */
+      }
+    } finally {
+      if (redis && lockAcquired) {
+        await redis.del(lockKey).catch(() => {});
       }
     }
   };

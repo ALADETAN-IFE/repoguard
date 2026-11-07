@@ -11,7 +11,14 @@ import {
   verifySessionToken,
   refreshAccessToken,
   signSessionToken,
+  isAuthorizedForOwner,
 } from "./auth";
+import {
+  getServerSession,
+  updateServerSessionTokens,
+} from "../services/sessionStore";
+import { isAuthorizedFixBranchPusher } from "../utils/botAuth";
+import type { AuthenticatedRequest } from "../middleware";
 import type { GitHubInstallationRepository } from "../types";
 
 /**
@@ -269,6 +276,18 @@ export const scanSingleRepository = async (
   logger.info(
     `[api/repos/scan] On-demand scan requested for '${owner}/${repo}'`,
   );
+
+  const session = (req as AuthenticatedRequest).userSession;
+  if (session && !isAuthorizedForOwner(session, owner)) {
+    logger.warn(
+      `[api/repos/scan] Unauthorized scan attempt for owner '${owner}' by @${session.user?.login}`,
+    );
+    res.status(403).json({
+      error:
+        "Access denied. You do not have permission for this repository owner.",
+    });
+    return;
+  }
 
   try {
     const installation = await Installation.findOne({
@@ -713,11 +732,35 @@ export const approveFixPR = async (
     const token = authHeader?.startsWith("Bearer ")
       ? authHeader.substring(7)
       : null;
-    const session = token ? verifySessionToken(token) : null;
+    const session =
+      (req as AuthenticatedRequest).userSession ||
+      (token ? verifySessionToken(token) : null);
+
+    if (session && !isAuthorizedForOwner(session, owner)) {
+      logger.warn(
+        `[api/repos/pulls/approve] Unauthorized approve attempt for '${owner}/${repo}' by @${session.user?.login}`,
+      );
+      res.status(403).json({
+        error:
+          "Access denied. You do not have permission for this repository owner.",
+      });
+      return;
+    }
+
     let userAccessToken = session?.user?.accessToken;
     const userLogin = session?.user?.login;
     let currentRefreshToken = session?.user?.refreshToken;
     let hasRefreshed = false;
+
+    // Check server-side session store if session has a sessionId
+    if (session?.sessionId) {
+      const serverSession = await getServerSession(session.sessionId);
+      if (serverSession) {
+        userAccessToken = serverSession.user.accessToken || userAccessToken;
+        currentRefreshToken =
+          serverSession.user.refreshToken || currentRefreshToken;
+      }
+    }
 
     // 1. Pre-emptive refresh if access token is known to be expired or expiring within 5 minutes
     if (session?.user && currentRefreshToken) {
@@ -736,6 +779,10 @@ export const approveFixPR = async (
           userAccessToken = refreshed.accessToken;
           currentRefreshToken = refreshed.refreshToken;
           hasRefreshed = true;
+
+          if (session.sessionId) {
+            await updateServerSessionTokens(session.sessionId, refreshed);
+          }
 
           const newSessionToken = signSessionToken({
             ...session,
@@ -802,6 +849,10 @@ export const approveFixPR = async (
             userAccessToken = refreshed.accessToken;
             currentRefreshToken = refreshed.refreshToken;
             hasRefreshed = true;
+
+            if (session.sessionId) {
+              await updateServerSessionTokens(session.sessionId, refreshed);
+            }
 
             const newSessionToken = signSessionToken({
               ...session,
@@ -919,6 +970,18 @@ export const mergeFixPR = async (
     `[api/repos/pulls/merge] Squashing & merging Fix PR #${pullNumber} in '${owner}/${repo}'`,
   );
 
+  const session = (req as AuthenticatedRequest).userSession;
+  if (session && !isAuthorizedForOwner(session, owner)) {
+    logger.warn(
+      `[api/repos/pulls/merge] Unauthorized merge attempt for '${owner}/${repo}' by @${session.user?.login}`,
+    );
+    res.status(403).json({
+      error:
+        "Access denied. You do not have permission for this repository owner.",
+    });
+    return;
+  }
+
   try {
     const installation = await Installation.findOne({
       owner: new RegExp(`^${owner}$`, "i"),
@@ -939,6 +1002,31 @@ export const mergeFixPR = async (
       installation.installationId,
     );
     const client = normaliseOctokit(octokit);
+
+    const { data: pull } = await client.request(
+      "GET /repos/{owner}/{repo}/pulls/{pull_number}",
+      {
+        owner,
+        repo,
+        pull_number: pullNumber,
+      },
+    );
+
+    const isFixBranch = pull.head?.ref?.startsWith("repoguard/fixes-");
+    const isBotAuthor =
+      pull.user?.type === "Bot" ||
+      pull.user?.login?.endsWith("[bot]") ||
+      isAuthorizedFixBranchPusher(undefined, pull.user?.login);
+
+    if (!isFixBranch || !isBotAuthor) {
+      logger.warn(
+        `[api/repos/pulls/merge] Rejected merge on non-bot or non-fix PR #${pullNumber} in ${owner}/${repo} (branch: ${pull.head?.ref}, author: ${pull.user?.login})`,
+      );
+      res.status(400).json({
+        error: "PR is not an authorized RepoGuard Fix PR",
+      });
+      return;
+    }
 
     const { data: mergeResult } = await client.request(
       "PUT /repos/{owner}/{repo}/pulls/{pull_number}/merge",
@@ -987,6 +1075,18 @@ export const closeFixPR = async (
     `[api/repos/pulls/close] Closing Fix PR #${pullNumber} in '${owner}/${repo}'`,
   );
 
+  const session = (req as AuthenticatedRequest).userSession;
+  if (session && !isAuthorizedForOwner(session, owner)) {
+    logger.warn(
+      `[api/repos/pulls/close] Unauthorized close attempt for '${owner}/${repo}' by @${session.user?.login}`,
+    );
+    res.status(403).json({
+      error:
+        "Access denied. You do not have permission for this repository owner.",
+    });
+    return;
+  }
+
   try {
     const installation = await Installation.findOne({
       owner: new RegExp(`^${owner}$`, "i"),
@@ -1007,6 +1107,25 @@ export const closeFixPR = async (
       installation.installationId,
     );
     const client = normaliseOctokit(octokit);
+
+    const { data: pull } = await client.request(
+      "GET /repos/{owner}/{repo}/pulls/{pull_number}",
+      {
+        owner,
+        repo,
+        pull_number: pullNumber,
+      },
+    );
+
+    if (!pull.head?.ref?.startsWith("repoguard/fixes-")) {
+      logger.warn(
+        `[api/repos/pulls/close] Rejected close on non-fix PR #${pullNumber} in ${owner}/${repo} (branch: ${pull.head?.ref})`,
+      );
+      res.status(400).json({
+        error: "PR is not a RepoGuard Fix PR",
+      });
+      return;
+    }
 
     await client.request("PATCH /repos/{owner}/{repo}/pulls/{pull_number}", {
       owner,
@@ -1055,10 +1174,29 @@ export const getFindings = async (
   );
 
   try {
+    const session = (req as AuthenticatedRequest).userSession;
     const filter: Record<string, unknown> = {};
 
     if (owner) {
+      if (session && !isAuthorizedForOwner(session, owner)) {
+        logger.warn(
+          `[api/findings] Unauthorized findings request for owner '${owner}' by @${session.user?.login}`,
+        );
+        res.status(403).json({
+          error:
+            "Access denied. You do not have permission for this repository owner.",
+        });
+        return;
+      }
       filter.owner = new RegExp(`^${owner}$`, "i");
+    } else if (session && !session.user?.isSystemAdmin) {
+      const allowedOwners = [
+        session.user.login,
+        ...(session.accounts || []).map((a) => a.login),
+      ].filter(Boolean);
+      filter.owner = {
+        $in: allowedOwners.map((o) => new RegExp(`^${o}$`, "i")),
+      };
     }
 
     if (repo) {

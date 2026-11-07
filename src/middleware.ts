@@ -145,22 +145,39 @@ function safeCompare(input: string, secret: string): boolean {
 
 // ─── Route Guards ─────────────────────────────────────────────────────────────
 
-import { verifySessionToken, type SessionPayload } from "./controllers/auth";
+import {
+  verifySessionToken,
+  parseCookies,
+  type SessionPayload,
+} from "./controllers/auth";
+import { getServerSession } from "./services/sessionStore";
 
 export interface AuthenticatedRequest extends Request {
   userSession?: SessionPayload;
 }
 
-export function requireAuthOrApiKey(
+export async function requireAuthOrApiKey(
   req: Request,
   res: Response,
   next: NextFunction,
-): void {
-  // 1. Check for Bearer token from authenticated user session
+): Promise<void> {
+  // 1. Check for Bearer token, query param token, or repoguard_session cookie
   const authHeader = req.headers.authorization;
-  if (authHeader?.startsWith("Bearer ")) {
-    const token = authHeader.substring(7);
-    const session = verifySessionToken(token);
+  const tokenFromQuery =
+    typeof req.query.token === "string" ? req.query.token : undefined;
+  const cookies = parseCookies(req);
+  const token = authHeader?.startsWith("Bearer ")
+    ? authHeader.substring(7)
+    : tokenFromQuery || cookies["repoguard_session"];
+
+  if (token) {
+    let session = verifySessionToken(token);
+    if (!session) {
+      const serverSession = await getServerSession(token);
+      if (serverSession) {
+        session = serverSession;
+      }
+    }
     if (session) {
       (req as AuthenticatedRequest).userSession = session;
       next();
@@ -186,21 +203,28 @@ export function requireAuthOrApiKey(
   });
 }
 
-export function requireAdminUserOrSecret(
+export async function requireAdminUserOrSecret(
   req: Request,
   res: Response,
   next: NextFunction,
-): void {
-  // 1. Check for Bearer token or query param token (for EventSource SSE) with isSystemAdmin privilege
+): Promise<void> {
+  // 1. Check for Bearer token, query param token (for EventSource SSE), or cookie with isSystemAdmin privilege
   const authHeader = req.headers.authorization;
   const tokenFromQuery =
     typeof req.query.token === "string" ? req.query.token : undefined;
+  const cookies = parseCookies(req);
   const token = authHeader?.startsWith("Bearer ")
     ? authHeader.substring(7)
-    : tokenFromQuery;
+    : tokenFromQuery || cookies["repoguard_session"];
 
   if (token) {
-    const session = verifySessionToken(token);
+    let session = verifySessionToken(token);
+    if (!session) {
+      const serverSession = await getServerSession(token);
+      if (serverSession) {
+        session = serverSession;
+      }
+    }
     if (session && session.user.isSystemAdmin) {
       (req as AuthenticatedRequest).userSession = session;
       next();
@@ -230,7 +254,7 @@ export function requireApiKey(
   res: Response,
   next: NextFunction,
 ): void {
-  requireAuthOrApiKey(req, res, next);
+  void requireAuthOrApiKey(req, res, next);
 }
 
 export function requireRescanSecret(
@@ -238,5 +262,5 @@ export function requireRescanSecret(
   res: Response,
   next: NextFunction,
 ): void {
-  requireAdminUserOrSecret(req, res, next);
+  void requireAdminUserOrSecret(req, res, next);
 }

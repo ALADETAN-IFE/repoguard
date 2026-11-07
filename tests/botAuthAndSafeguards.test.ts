@@ -65,27 +65,17 @@ describe("botAuth utility & Fix PR Safeguards", () => {
       );
     });
 
-    it("recognizes bot logins ending with [bot] containing repoguard", () => {
-      expect(isAuthorizedFixBranchPusher("my-repoguard-app[bot]")).toBe(true);
+    it("rejects loose bot names not matching configured bots", () => {
+      expect(isAuthorizedFixBranchPusher("my-repoguard-app[bot]")).toBe(false);
       expect(
         isAuthorizedFixBranchPusher(undefined, "repoguard-staging[bot]"),
-      ).toBe(true);
+      ).toBe(false);
     });
 
-    it("recognizes sender with bot type containing repoguard", () => {
-      expect(
-        isAuthorizedFixBranchPusher(
-          "repoguard-action",
-          "repoguard-action",
-          "Bot",
-        ),
-      ).toBe(true);
-    });
-
-    it("recognizes GitHub App slug names", () => {
-      expect(isAuthorizedFixBranchPusher("repoguard")).toBe(true);
-      expect(isAuthorizedFixBranchPusher("repoguard-ifecodes")).toBe(true);
-      expect(isAuthorizedFixBranchPusher(undefined, "repoguard")).toBe(true);
+    it("rejects non-bot usernames even if they match app slug", () => {
+      expect(isAuthorizedFixBranchPusher("repoguard")).toBe(false);
+      expect(isAuthorizedFixBranchPusher("repoguard-ifecodes")).toBe(false);
+      expect(isAuthorizedFixBranchPusher(undefined, "repoguard")).toBe(false);
     });
 
     it("rejects unauthorized human users and attackers", () => {

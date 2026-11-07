@@ -42,6 +42,7 @@ import {
   initiateGitHubOAuth,
   handleGitHubOAuthCallback,
   getCurrentUser,
+  isAuthorizedForOwner,
 } from "./controllers/auth";
 
 const router = express.Router();
@@ -125,15 +126,34 @@ const getScans = async (req: Request, res: Response): Promise<void> => {
     const skip = (pageNum - 1) * limitNum;
 
     const authReq = req as AuthenticatedRequest;
-    const targetOwner =
-      (typeof owner === "string" && owner.trim()) ||
-      authReq.userSession?.user?.login ||
-      "";
+    const session = authReq.userSession;
+    const requestedOwner =
+      typeof owner === "string" && owner.trim() ? owner.trim() : "";
 
     const filter: Record<string, unknown> = {};
-    if (targetOwner) {
-      filter.owner = new RegExp(`^${targetOwner}$`, "i");
+
+    if (requestedOwner) {
+      if (session && !isAuthorizedForOwner(session, requestedOwner)) {
+        logger.warn(
+          `[scans] Unauthorized scans request for owner '${requestedOwner}' by @${session.user?.login}`,
+        );
+        res.status(403).json({
+          error:
+            "Access denied. You do not have permission for this repository owner.",
+        });
+        return;
+      }
+      filter.owner = new RegExp(`^${requestedOwner}$`, "i");
+    } else if (session && !session.user?.isSystemAdmin) {
+      const allowedOwners = [
+        session.user.login,
+        ...(session.accounts || []).map((a) => a.login),
+      ].filter(Boolean);
+      filter.owner = {
+        $in: allowedOwners.map((o) => new RegExp(`^${o}$`, "i")),
+      };
     }
+
     if (repo && typeof repo === "string" && repo.trim()) {
       filter.repo = new RegExp(`^${repo.trim()}$`, "i");
     }
@@ -199,13 +219,31 @@ router.get("/api/scans", authRateLimit, requireApiKey, (req, res) => {
 // Returns findings for a specific scan
 const getScanFindings = async (req: Request, res: Response): Promise<void> => {
   try {
+    const scan = await Scan.findById(req.params.scanId).lean();
+    if (!scan) {
+      res.status(404).json({ error: "Scan not found" });
+      return;
+    }
+
+    const session = (req as AuthenticatedRequest).userSession;
+    if (session && !isAuthorizedForOwner(session, scan.owner)) {
+      logger.warn(
+        `[scans] Unauthorized scan findings access for scan ${req.params.scanId} (owner '${scan.owner}') by @${session.user?.login}`,
+      );
+      res.status(403).json({
+        error:
+          "Access denied. You do not have permission for this repository owner.",
+      });
+      return;
+    }
+
     const findings = await Finding.find({ scanId: req.params.scanId })
       .sort({ severity: 1 })
       .lean();
     res.json({ findings });
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
-    logger.error(`[scans] Failed to fetch scans: ${message}`);
+    logger.error(`[scans] Failed to fetch scan findings: ${message}`);
     res.status(500).json({ error: "Internal server error" });
   }
 };
