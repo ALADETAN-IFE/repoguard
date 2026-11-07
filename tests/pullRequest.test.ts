@@ -757,6 +757,7 @@ global.i = "malicious";
 
     it("does not call AI for deterministic rules that RepoGuard patches itself", async () => {
       const originalEnv = process.env.GEMINI_API_KEY;
+      const originalOptIn = process.env.AI_DEFAULT_OPT_IN;
       process.env.GEMINI_API_KEY = "mock-key";
       const generateAIPatchSpy = jest.spyOn(aiService, "generateAIPatch");
 
@@ -786,11 +787,17 @@ global.i = "malicious";
         } else {
           delete process.env.GEMINI_API_KEY;
         }
+        if (originalOptIn !== undefined) {
+          process.env.AI_DEFAULT_OPT_IN = originalOptIn;
+        } else {
+          delete process.env.AI_DEFAULT_OPT_IN;
+        }
       }
     });
 
     it("never calls AI on package.json even if an unpatched finding exists", async () => {
       const originalEnv = process.env.GEMINI_API_KEY;
+      const originalOptIn = process.env.AI_DEFAULT_OPT_IN;
       process.env.GEMINI_API_KEY = "mock-key";
       const generateAIPatchSpy = jest.spyOn(aiService, "generateAIPatch");
 
@@ -823,11 +830,17 @@ global.i = "malicious";
         } else {
           delete process.env.GEMINI_API_KEY;
         }
+        if (originalOptIn !== undefined) {
+          process.env.AI_DEFAULT_OPT_IN = originalOptIn;
+        } else {
+          delete process.env.AI_DEFAULT_OPT_IN;
+        }
       }
     });
 
     it("never calls AI on Dockerfile for container security rules (docker-no-user-directive, etc.)", async () => {
       const originalEnv = process.env.GEMINI_API_KEY;
+      const originalOptIn = process.env.AI_DEFAULT_OPT_IN;
       process.env.GEMINI_API_KEY = "mock-key";
       const generateAIPatchSpy = jest.spyOn(aiService, "generateAIPatch");
 
@@ -864,11 +877,17 @@ global.i = "malicious";
         } else {
           delete process.env.GEMINI_API_KEY;
         }
+        if (originalOptIn !== undefined) {
+          process.env.AI_DEFAULT_OPT_IN = originalOptIn;
+        } else {
+          delete process.env.AI_DEFAULT_OPT_IN;
+        }
       }
     });
 
     it("patches docker-curl-pipe-bash deterministically without calling AI", async () => {
       const originalEnv = process.env.GEMINI_API_KEY;
+      const originalOptIn = process.env.AI_DEFAULT_OPT_IN;
       process.env.GEMINI_API_KEY = "mock-key";
       const generateAIPatchSpy = jest.spyOn(aiService, "generateAIPatch");
 
@@ -904,12 +923,19 @@ global.i = "malicious";
         } else {
           delete process.env.GEMINI_API_KEY;
         }
+        if (originalOptIn !== undefined) {
+          process.env.AI_DEFAULT_OPT_IN = originalOptIn;
+        } else {
+          delete process.env.AI_DEFAULT_OPT_IN;
+        }
       }
     });
 
     it("layers deterministic and AI patches by passing already-patched content to AI and preserving deterministic fixes", async () => {
       const originalEnv = process.env.GEMINI_API_KEY;
+      const originalOptIn = process.env.AI_DEFAULT_OPT_IN;
       process.env.GEMINI_API_KEY = "mock-key";
+      process.env.AI_DEFAULT_OPT_IN = "true";
       const generateAIPatchSpy = jest
         .spyOn(aiService, "generateAIPatch")
         .mockResolvedValueOnce({
@@ -968,6 +994,11 @@ global.i = "malicious";
           process.env.GEMINI_API_KEY = originalEnv;
         } else {
           delete process.env.GEMINI_API_KEY;
+        }
+        if (originalOptIn !== undefined) {
+          process.env.AI_DEFAULT_OPT_IN = originalOptIn;
+        } else {
+          delete process.env.AI_DEFAULT_OPT_IN;
         }
       }
     });

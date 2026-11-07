@@ -13,6 +13,7 @@ describe("aiService", () => {
   beforeEach(() => {
     jest.resetModules();
     process.env = { ...originalEnv };
+    process.env.AI_DEFAULT_OPT_IN = "true";
     delete process.env.GEMINI_API_KEY;
     delete process.env.OPENAI_API_KEY;
     global.fetch = jest.fn();
@@ -27,18 +28,22 @@ describe("aiService", () => {
       expect(isAIEnabled()).toBe(false);
     });
 
-    it("returns true when GEMINI_API_KEY is present", () => {
+    it("returns true when GEMINI_API_KEY is present and opt-in is enabled", () => {
       process.env.GEMINI_API_KEY = "test-gemini-key";
+      expect(isAIEnabled(true)).toBe(true);
       expect(isAIEnabled()).toBe(true);
     });
 
     it("returns false when tenantOptIn is explicitly false even with key", () => {
       process.env.GEMINI_API_KEY = "test-gemini-key";
+      delete process.env.AI_DEFAULT_OPT_IN;
       expect(isAIEnabled(false)).toBe(false);
+      expect(isAIEnabled()).toBe(false);
     });
 
-    it("returns true when OPENAI_API_KEY is present", () => {
+    it("returns true when OPENAI_API_KEY is present and opt-in is enabled", () => {
       process.env.OPENAI_API_KEY = "test-openai-key";
+      expect(isAIEnabled(true)).toBe(true);
       expect(isAIEnabled()).toBe(true);
     });
   });

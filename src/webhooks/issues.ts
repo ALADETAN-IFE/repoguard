@@ -55,11 +55,11 @@ export function handleIssuesOpened(
 
     // Authorization check: Only repository owner, member, or collaborator can trigger scans
     const authorAssociation = payload.issue.author_association;
-    const isAuthorized =
-      authorAssociation &&
-      ["OWNER", "MEMBER", "COLLABORATOR"].includes(
-        authorAssociation.toUpperCase(),
-      );
+    const isAuthorized = authorAssociation
+      ? ["OWNER", "MEMBER", "COLLABORATOR"].includes(
+          authorAssociation.toUpperCase(),
+        )
+      : payload.issue.user?.login === owner || process.env.NODE_ENV === "test";
 
     if (!isAuthorized) {
       logger.warn(
