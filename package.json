@@ -5,12 +5,12 @@
   "main": "dist/index.js",
   "scripts": {
     "build": "tsc",
-    "start": "node --max-old-space-size=400 dist/index.js",
+    "start": "node dist/index.js",
     "dev": "ts-node-dev --respawn --transpile-only src/index.ts",
     "test": "jest --coverage",
     "lint": "eslint src/ --ext .ts",
     "lintfix": "eslint src/ --ext .ts --fix",
-    "typecheck": "node --max-old-space-size=2048 ./node_modules/typescript/bin/tsc --noEmit",
+    "typecheck": "tsc --noEmit",
     "format": "prettier --write \"src/**/*.{ts,json}\"",
     "check-format": "prettier --check \"src/**/*.{ts,json}\"",
     "prepare": "husky"
