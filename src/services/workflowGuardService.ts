@@ -10,6 +10,7 @@ export interface SuggestActionResult {
   prUrl?: string;
   status:
     | "created"
+    | "updated"
     | "already_configured"
     | "pr_already_open"
     | "no_repos"
@@ -17,9 +18,67 @@ export interface SuggestActionResult {
   message?: string;
 }
 
+export const REPO_GUARD_ACTION_NAME = "ALADETAN-IFE/repoguard-action";
+export const REPO_GUARD_ACTION_TAG = "v1";
+export const FALLBACK_ACTION_SHA = "4436f1e184cbbb7eca932269f8cc8fc5e31ddb2a";
+
+let cachedActionSha: { sha: string; expiresAt: number } | null = null;
+
+/**
+ * Resolves the latest full commit SHA for the RepoGuard GitHub Action tag (v1),
+ * caching the result in memory for 10 minutes to minimize API calls.
+ */
+export async function resolveActionSha(
+  octokit?: OctokitClient,
+): Promise<string> {
+  const now = Date.now();
+  if (cachedActionSha && cachedActionSha.expiresAt > now) {
+    return cachedActionSha.sha;
+  }
+
+  if (octokit) {
+    try {
+      const [actionOwner, actionName] = REPO_GUARD_ACTION_NAME.split("/");
+      const { data: commitData } = await octokit.request(
+        "GET /repos/{owner}/{repo}/commits/{ref}",
+        { owner: actionOwner, repo: actionName, ref: REPO_GUARD_ACTION_TAG },
+      );
+      if (
+        commitData?.sha &&
+        typeof commitData.sha === "string" &&
+        /^[0-9a-f]{40}$/i.test(commitData.sha)
+      ) {
+        cachedActionSha = {
+          sha: commitData.sha,
+          expiresAt: now + 10 * 60 * 1000,
+        };
+        return commitData.sha;
+      }
+    } catch (err) {
+      logger.warn(
+        `[workflow-guard] Failed to fetch commit SHA for ${REPO_GUARD_ACTION_NAME}@${REPO_GUARD_ACTION_TAG}: ${err instanceof Error ? err.message : String(err)}. Using fallback.`,
+      );
+    }
+  }
+
+  return FALLBACK_ACTION_SHA;
+}
+
+/**
+ * Generates an immutable, SHA-pinned action 'uses' string with tag comment reference.
+ * e.g. ALADETAN-IFE/repoguard-action@4436f1e184cbbb7eca932269f8cc8fc5e31ddb2a # v1
+ */
+export function buildActionUsesString(
+  sha: string = FALLBACK_ACTION_SHA,
+): string {
+  return `${REPO_GUARD_ACTION_NAME}@${sha} # ${REPO_GUARD_ACTION_TAG}`;
+}
+
 export const STANDALONE_WORKFLOW_PATH = ".github/workflows/repoguard.yml";
 
-export const STANDALONE_WORKFLOW_CONTENT = `# RepoGuard Pre-Execution Security Gate
+export function buildStandaloneWorkflowContent(actionUses?: string): string {
+  const usesString = actionUses || buildActionUsesString(FALLBACK_ACTION_SHA);
+  return `# RepoGuard Pre-Execution Security Gate
 # Automatically scans code, dependencies, and PR diffs for malware, backdoors, and secrets
 # before arbitrary build or test scripts are executed in CI.
 # https://github.com/marketplace/actions/repoguard-security-scan
@@ -43,35 +102,66 @@ jobs:
         uses: actions/checkout@v6
 
       - name: Run RepoGuard Security Check
-        uses: ALADETAN-IFE/repoguard-action@v1
+        uses: ${usesString}
         with:
           minimum-severity: "medium"
           fail-on: "high"
 `;
+}
+
+export const STANDALONE_WORKFLOW_CONTENT = buildStandaloneWorkflowContent();
 
 /**
  * Checks if a workflow file already contains RepoGuard and, if not,
  * surgically injects the repoguard-security-scan job and wires it into entry-point jobs via 'needs',
  * preserving 100% of existing comments, formatting, and triggers (e.g. workflow_dispatch).
  */
-export function injectRepoGuardIntoWorkflow(yamlContent: string): {
+export function injectRepoGuardIntoWorkflow(
+  yamlContent: string,
+  actionUses?: string,
+): {
   modified: boolean;
   alreadyConfigured: boolean;
   newContent?: string;
   reason?: string;
 } {
+  const usesString = actionUses || buildActionUsesString(FALLBACK_ACTION_SHA);
+
   // 1. Detect if RepoGuard is already configured
+  const unpinnedRegex =
+    /uses:\s+ALADETAN-IFE\/repoguard-action@(?![\da-f]{40})[^\s#]+(\s*#[^\n]*)?/;
+  const pinnedRegex = /uses:\s+ALADETAN-IFE\/repoguard-action@[\da-f]{40}/;
+
   if (
     yamlContent.includes("ALADETAN-IFE/repoguard-action") ||
     yamlContent.includes("@repoguard/scanner") ||
     yamlContent.includes("repoguard-security-scan")
   ) {
-    return {
-      modified: false,
-      alreadyConfigured: true,
-      reason:
-        "Workflow already contains RepoGuard Action or security scan job.",
-    };
+    if (unpinnedRegex.test(yamlContent)) {
+      // Surgically pin to SHA without altering any other lines
+      const updated = yamlContent.replace(
+        /uses:\s+ALADETAN-IFE\/repoguard-action@(?![\da-f]{40})[^\s#]+(\s*#[^\n]*)?/g,
+        `uses: ${usesString}`,
+      );
+      return {
+        modified: true,
+        alreadyConfigured: false,
+        newContent: updated,
+        reason: "Pinned RepoGuard Action to full commit SHA.",
+      };
+    }
+
+    if (
+      pinnedRegex.test(yamlContent) ||
+      yamlContent.includes("@repoguard/scanner")
+    ) {
+      return {
+        modified: false,
+        alreadyConfigured: true,
+        reason:
+          "Workflow already contains RepoGuard Action pinned to a commit SHA.",
+      };
+    }
   }
 
   let doc: Record<string, unknown>;
@@ -167,7 +257,7 @@ export function injectRepoGuardIntoWorkflow(yamlContent: string): {
     `${stepIndent}- name: Checkout code`,
     `${stepPropIndent}uses: actions/checkout@v6`,
     `${stepIndent}- name: Run RepoGuard Security Check`,
-    `${stepPropIndent}uses: ALADETAN-IFE/repoguard-action@v1`,
+    `${stepPropIndent}uses: ${usesString}`,
     `${stepPropIndent}with:`,
     `${stepPropIndent}  minimum-severity: medium`,
     `${stepPropIndent}  fail-on: high`,
@@ -236,6 +326,7 @@ export function buildSuggestPRBody(
   repo: string,
   modifiedFile: string,
   isNewFile: boolean,
+  actionUsesString: string = buildActionUsesString(),
 ): string {
   return `## 🛡️ RepoGuard Pre-Execution Security Gate
 
@@ -246,20 +337,47 @@ In modern software development, **supply chain attacks** frequently target CI/CD
 * The runner executes the malicious script, exfiltrating CI environment secrets (\`GITHUB_TOKEN\`, deployment keys, cloud credentials) or launching crypto-miners.
 
 ### How does this PR protect \`${repo}\`?
-This pull request configures the official [**ALADETAN-IFE/repoguard-action@v1**](https://github.com/marketplace/actions/repoguard-security-scan):
+This pull request configures the official [**ALADETAN-IFE/repoguard-action**](https://github.com/marketplace/actions/repoguard-security-scan):
 1. **Runs First:** RepoGuard performs an instantaneous static security scan across all changed code and dependencies **before** any build or test commands execute.
 2. **Hard-Fails Attacks:** If high or critical severity malicious payloads, backdoors, or leaked secrets are detected, the gate fails immediately (\`fail-on: "high"\`), automatically cancelling downstream jobs.
-3. **Tamper-Resistant:** The action securely resolves security configuration from the **default branch** using GitHub's built-in token, preventing an attacker from disabling rules in their own PR branch.
+3. **Tamper-Resistant & Pinned:** The action is pinned to an immutable full commit SHA to protect against supply chain tampering, and securely resolves security configuration from the **default branch** using GitHub's built-in token.
 
 ---
 
 ### Changes Included:
 * **Workflow:** \`${modifiedFile}\` (${isNewFile ? "New security workflow" : "Injected pre-execution security gate with \`needs: [repoguard-security-scan]\`"})
-* **Action:** \`ALADETAN-IFE/repoguard-action@v1\`
+* **Action:** \`${actionUsesString}\`
 
 Merge this PR to activate automated CI/CD pipeline protection. To adjust thresholds or customize scan rules, add a \`.repoguard.yml\` configuration file in the default branch.
 
 📖 **Need more info?** Check out the [RepoGuard Security Scan on GitHub Marketplace](https://github.com/marketplace/actions/repoguard-security-scan) for full documentation, input specifications, and configuration guides.`;
+}
+
+/**
+ * Builds the Markdown description for a SHA-Pinning Pull Request.
+ */
+export function buildPinPRBody(
+  repo: string,
+  modifiedFile: string,
+  actionUsesString: string,
+  sha: string,
+): string {
+  return `## 🛡️ RepoGuard Action: Supply Chain Pinning
+
+### Why is this Pull Request needed?
+In modern CI/CD security, referencing third-party GitHub Actions by mutable tags (such as \`@v1\`) creates supply chain attack risk if an upstream repository or tag is compromised or altered.
+
+### How does this PR protect \`${repo}\`?
+This pull request updates \`${modifiedFile}\` to pin \`ALADETAN-IFE/repoguard-action\` to its immutable full commit SHA:
+\`\`\`yaml
+      - name: Run RepoGuard Security Check
+        uses: ${actionUsesString}
+\`\`\`
+
+* **Immutable Commit SHA (\`${sha}\`):** Guarantees that only the verified, exact action code executes in your workflows.
+* **Full Scanner Compliance:** Satisfies RepoGuard's \`workflow-unpinned-action\` security rule, preventing check warnings in pull requests.
+
+Merge this PR to ensure maximum supply chain integrity for your GitHub Actions.`;
 }
 
 /**
@@ -272,6 +390,9 @@ export async function suggestActionForRepo(
 ): Promise<SuggestActionResult> {
   let createdBranchName: string | null = null;
   try {
+    const actionSha = await resolveActionSha(octokit);
+    const actionUses = buildActionUsesString(actionSha);
+
     // 1. Check if an open suggestion PR already exists
     const { data: openPRs } = await octokit.request(
       "GET /repos/{owner}/{repo}/pulls",
@@ -293,12 +414,94 @@ export async function suggestActionForRepo(
     ).find(
       (pr) =>
         pr.head.ref.startsWith("repoguard/ci-protection") ||
+        pr.head.ref.startsWith("repoguard/pin-ci-protection") ||
         pr.title
           .toLowerCase()
-          .includes("repoguard pre-execution security gate"),
+          .includes("repoguard pre-execution security gate") ||
+        pr.title.toLowerCase().includes("pin repoguard action"),
     );
 
     if (existingPR) {
+      // If a suggestion PR is already open, check if it needs updating to the pinned commit SHA
+      try {
+        const { data: prFiles } = await octokit.request(
+          "GET /repos/{owner}/{repo}/pulls/{pull_number}/files",
+          {
+            owner,
+            repo,
+            pull_number: existingPR.number,
+          },
+        );
+
+        const workflowFile = (
+          prFiles as Array<{ filename: string; status: string }>
+        ).find(
+          (f) =>
+            f.filename.startsWith(".github/workflows/") &&
+            (f.filename.endsWith(".yml") || f.filename.endsWith(".yaml")),
+        );
+
+        if (workflowFile) {
+          const { data: fileData } = await octokit.request(
+            "GET /repos/{owner}/{repo}/contents/{path}",
+            {
+              owner,
+              repo,
+              path: workflowFile.filename,
+              ref: existingPR.head.ref,
+            },
+          );
+
+          if (!Array.isArray(fileData) && "content" in fileData) {
+            const rawContent = Buffer.from(fileData.content, "base64").toString(
+              "utf8",
+            );
+            const unpinnedRegex =
+              /uses:\s+ALADETAN-IFE\/repoguard-action@(?![\da-f]{40})[^\s#]+(\s*#[^\n]*)?/g;
+
+            if (unpinnedRegex.test(rawContent)) {
+              const updatedContent = rawContent.replace(
+                /uses:\s+ALADETAN-IFE\/repoguard-action@(?![\da-f]{40})[^\s#]+(\s*#[^\n]*)?/g,
+                `uses: ${actionUses}`,
+              );
+
+              await octokit.request(
+                "PUT /repos/{owner}/{repo}/contents/{path}",
+                {
+                  owner,
+                  repo,
+                  path: workflowFile.filename,
+                  message:
+                    "ci(security): pin RepoGuard action to commit SHA to satisfy workflow-unpinned-action",
+                  content: Buffer.from(updatedContent, "utf8").toString(
+                    "base64",
+                  ),
+                  branch: existingPR.head.ref,
+                  sha: fileData.sha,
+                },
+              );
+
+              logger.info(
+                `[workflow-guard] Updated existing PR #${existingPR.number} (${workflowFile.filename}) in ${owner}/${repo} to pin RepoGuard Action commit SHA`,
+              );
+
+              return {
+                owner,
+                repo,
+                prNumber: existingPR.number,
+                prUrl: existingPR.html_url,
+                status: "updated",
+                message: `Updated existing suggestion PR #${existingPR.number} with pinned commit SHA.`,
+              };
+            }
+          }
+        }
+      } catch (prUpdateErr) {
+        logger.warn(
+          `[workflow-guard] Failed to inspect/update existing PR #${existingPR.number} files in ${owner}/${repo}: ${prUpdateErr instanceof Error ? prUpdateErr.message : String(prUpdateErr)}`,
+        );
+      }
+
       return {
         owner,
         repo,
@@ -343,7 +546,14 @@ export async function suggestActionForRepo(
       // 404 means no .github/workflows directory exists yet
     }
 
-    // 4. Check if RepoGuard is already configured in any existing workflow
+    // 4. Check if RepoGuard is already configured in any existing workflow on default branch
+    let workflowNeedsPinning: {
+      path: string;
+      sha: string;
+      rawContent: string;
+    } | null = null;
+    let alreadyFullyPinned = false;
+
     for (const file of workflowFiles) {
       try {
         const { data: fileData } = await octokit.request(
@@ -360,77 +570,108 @@ export async function suggestActionForRepo(
           (fileData as { content: string }).content,
           "base64",
         ).toString("utf8");
-        if (
-          rawContent.includes("ALADETAN-IFE/repoguard-action") ||
-          rawContent.includes("@repoguard/scanner") ||
-          rawContent.includes("repoguard-security-scan")
-        ) {
-          return {
-            owner,
-            repo,
-            status: "already_configured",
-            message: `RepoGuard Action is already configured in ${file.path}. Customizations preserved.`,
+
+        const unpinnedRegex =
+          /uses:\s+ALADETAN-IFE\/repoguard-action@(?![\da-f]{40})[^\s#]+(\s*#[^\n]*)?/;
+        const pinnedRegex =
+          /uses:\s+ALADETAN-IFE\/repoguard-action@[\da-f]{40}/;
+
+        if (unpinnedRegex.test(rawContent)) {
+          workflowNeedsPinning = {
+            path: file.path,
+            sha: (fileData as { sha: string }).sha,
+            rawContent,
           };
+          break;
+        } else if (
+          pinnedRegex.test(rawContent) ||
+          rawContent.includes("@repoguard/scanner")
+        ) {
+          alreadyFullyPinned = true;
         }
       } catch {
         // Skip unreadable files
       }
     }
 
-    // 5. Determine whether to inject into primary CI workflow or create a new file
+    if (alreadyFullyPinned && !workflowNeedsPinning) {
+      return {
+        owner,
+        repo,
+        status: "already_configured",
+        message: `RepoGuard Action is already configured and pinned in ${owner}/${repo}. Customizations preserved.`,
+      };
+    }
+
+    // 5. Determine whether to inject into primary CI workflow, pin existing, or create a new file
     let targetFilePath = STANDALONE_WORKFLOW_PATH;
-    let targetContent = STANDALONE_WORKFLOW_CONTENT;
+    let targetContent = buildStandaloneWorkflowContent(actionUses);
     let targetFileSha: string | undefined;
     let isNewFile = true;
+    let isPinOnlyPR = false;
 
-    // Prefer injecting into standard CI workflow files if one exists
-    const preferredCiNames = [
-      "ci.yml",
-      "ci.yaml",
-      "test.yml",
-      "test.yaml",
-      "build.yml",
-      "main.yml",
-    ];
-    const primaryWorkflow =
-      workflowFiles.find((f) =>
-        preferredCiNames.includes(f.name.toLowerCase()),
-      ) || workflowFiles[0];
+    if (workflowNeedsPinning) {
+      // Pin existing unpinned action on default branch
+      targetFilePath = workflowNeedsPinning.path;
+      targetContent = workflowNeedsPinning.rawContent.replace(
+        /uses:\s+ALADETAN-IFE\/repoguard-action@(?![\da-f]{40})[^\s#]+(\s*#[^\n]*)?/g,
+        `uses: ${actionUses}`,
+      );
+      targetFileSha = workflowNeedsPinning.sha;
+      isNewFile = false;
+      isPinOnlyPR = true;
+    } else {
+      // Prefer injecting into standard CI workflow files if one exists
+      const preferredCiNames = [
+        "ci.yml",
+        "ci.yaml",
+        "test.yml",
+        "test.yaml",
+        "build.yml",
+        "main.yml",
+      ];
+      const primaryWorkflow =
+        workflowFiles.find((f) =>
+          preferredCiNames.includes(f.name.toLowerCase()),
+        ) || workflowFiles[0];
 
-    if (primaryWorkflow) {
-      try {
-        const { data: fileData } = await octokit.request(
-          "GET /repos/{owner}/{repo}/contents/{path}",
-          {
-            owner,
-            repo,
-            path: primaryWorkflow.path,
-            ref: defaultBranch,
-          },
-        );
+      if (primaryWorkflow) {
+        try {
+          const { data: fileData } = await octokit.request(
+            "GET /repos/{owner}/{repo}/contents/{path}",
+            {
+              owner,
+              repo,
+              path: primaryWorkflow.path,
+              ref: defaultBranch,
+            },
+          );
 
-        const rawContent = Buffer.from(
-          (fileData as { content: string }).content,
-          "base64",
-        ).toString("utf8");
-        const injection = injectRepoGuardIntoWorkflow(rawContent);
+          const rawContent = Buffer.from(
+            (fileData as { content: string }).content,
+            "base64",
+          ).toString("utf8");
+          const injection = injectRepoGuardIntoWorkflow(rawContent, actionUses);
 
-        if (injection.modified && injection.newContent) {
-          targetFilePath = primaryWorkflow.path;
-          targetContent = injection.newContent;
-          targetFileSha = primaryWorkflow.sha;
-          isNewFile = false;
+          if (injection.modified && injection.newContent) {
+            targetFilePath = primaryWorkflow.path;
+            targetContent = injection.newContent;
+            targetFileSha = primaryWorkflow.sha;
+            isNewFile = false;
+          }
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err);
+          logger.warn(
+            `[workflow-guard] Failed to parse primary workflow ${primaryWorkflow.path} in ${owner}/${repo}, falling back to standalone file: ${msg}`,
+          );
         }
-      } catch (err) {
-        const msg = err instanceof Error ? err.message : String(err);
-        logger.warn(
-          `[workflow-guard] Failed to parse primary workflow ${primaryWorkflow.path} in ${owner}/${repo}, falling back to standalone file: ${msg}`,
-        );
       }
     }
 
     // 6. Create Git Branch
-    const branchName = `repoguard/ci-protection-${Date.now()}`;
+    const branchName = isPinOnlyPR
+      ? `repoguard/pin-ci-protection-${Date.now()}`
+      : `repoguard/ci-protection-${Date.now()}`;
 
     // Clean up any stale orphaned ci-protection branches without PRs
     try {
@@ -486,26 +727,34 @@ export async function suggestActionForRepo(
     createdBranchName = branchName;
 
     // 7. Commit changes to branch
+    const commitMsg = isPinOnlyPR
+      ? "ci(security): pin RepoGuard action to commit SHA to satisfy workflow-unpinned-action"
+      : "ci(security): add RepoGuard pre-execution security gate to block malware in CI";
+
     await octokit.request("PUT /repos/{owner}/{repo}/contents/{path}", {
       owner,
       repo,
       path: targetFilePath,
-      message:
-        "ci(security): add RepoGuard pre-execution security gate to block malware in CI",
+      message: commitMsg,
       content: Buffer.from(targetContent, "utf8").toString("base64"),
       branch: branchName,
       ...(targetFileSha ? { sha: targetFileSha } : {}),
     });
 
     // 8. Open Pull Request
-    const prBody = buildSuggestPRBody(repo, targetFilePath, isNewFile);
+    const prTitle = isPinOnlyPR
+      ? `🛡️ Security: Pin RepoGuard Action to commit SHA in ${repo}`
+      : "🛡️ Security: Protect CI/CD pipelines with RepoGuard Pre-Execution Security Gate";
+    const prBody = isPinOnlyPR
+      ? buildPinPRBody(repo, targetFilePath, actionUses, actionSha)
+      : buildSuggestPRBody(repo, targetFilePath, isNewFile, actionUses);
+
     const { data: pr } = await octokit.request(
       "POST /repos/{owner}/{repo}/pulls",
       {
         owner,
         repo,
-        title:
-          "🛡️ Security: Protect CI/CD pipelines with RepoGuard Pre-Execution Security Gate",
+        title: prTitle,
         head: branchName,
         base: defaultBranch,
         body: prBody,
@@ -514,7 +763,7 @@ export async function suggestActionForRepo(
     );
 
     logger.info(
-      `[workflow-guard] Successfully opened CI protection suggestion PR #${(pr as { number: number }).number} in ${owner}/${repo}`,
+      `[workflow-guard] Successfully opened CI protection PR #${(pr as { number: number }).number} in ${owner}/${repo} (pinOnly: ${isPinOnlyPR})`,
     );
 
     return {
@@ -523,7 +772,9 @@ export async function suggestActionForRepo(
       prNumber: (pr as { number: number }).number,
       prUrl: (pr as { html_url: string }).html_url,
       status: "created",
-      message: `Suggestion PR #${(pr as { number: number }).number} opened successfully.`,
+      message: isPinOnlyPR
+        ? `Suggestion PR #${(pr as { number: number }).number} opened to pin RepoGuard Action commit SHA.`
+        : `Suggestion PR #${(pr as { number: number }).number} opened successfully.`,
     };
   } catch (err) {
     if (createdBranchName) {
@@ -648,7 +899,7 @@ export async function suggestActionForTenant(
     const result = await suggestActionForRepo(octokit, owner, repoName);
     results.push(result);
     if (
-      result.status === "created" &&
+      (result.status === "created" || result.status === "updated") &&
       result.prNumber &&
       !firstCreatedPRNumber
     ) {

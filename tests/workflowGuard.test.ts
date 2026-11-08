@@ -26,7 +26,7 @@ jest.mock("../src/utils/logger", () => ({
 
 describe("workflowGuardService", () => {
   describe("injectRepoGuardIntoWorkflow", () => {
-    it("should detect when RepoGuard action is already configured and skip modification", () => {
+    it("should detect when RepoGuard action is already configured with pinned SHA and skip modification", () => {
       const existingWorkflow = `
 name: CI
 on: [push]
@@ -34,14 +34,35 @@ jobs:
   security:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: ALADETAN-IFE/repoguard-action@v1
+      - uses: actions/checkout@v6
+      - uses: ALADETAN-IFE/repoguard-action@4436f1e184cbbb7eca932269f8cc8fc5e31ddb2a # v1
         with:
           fail-on: high
 `;
       const result = injectRepoGuardIntoWorkflow(existingWorkflow);
       expect(result.alreadyConfigured).toBe(true);
       expect(result.modified).toBe(false);
+    });
+
+    it("should pin unpinned @v1 action in existing workflow", () => {
+      const existingWorkflow = `
+name: CI
+on: [push]
+jobs:
+  security:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: ALADETAN-IFE/repoguard-action@v1
+        with:
+          fail-on: high
+`;
+      const result = injectRepoGuardIntoWorkflow(existingWorkflow);
+      expect(result.alreadyConfigured).toBe(false);
+      expect(result.modified).toBe(true);
+      expect(result.newContent).toContain(
+        "uses: ALADETAN-IFE/repoguard-action@4436f1e184cbbb7eca932269f8cc8fc5e31ddb2a # v1",
+      );
     });
 
     it("should inject repoguard-security-scan job and attach needs to all root jobs", () => {
@@ -83,8 +104,8 @@ jobs:
       expect(parsed.jobs["repoguard-security-scan"].steps[0].uses).toBe(
         "actions/checkout@v6",
       );
-      expect(parsed.jobs["repoguard-security-scan"].steps[1].uses).toBe(
-        "ALADETAN-IFE/repoguard-action@v1",
+      expect(parsed.jobs["repoguard-security-scan"].steps[1].uses).toContain(
+        "ALADETAN-IFE/repoguard-action@4436f1e184cbbb7eca932269f8cc8fc5e31ddb2a",
       );
 
       // Root jobs (lint, test) should now have needs: [repoguard-security-scan]
@@ -184,7 +205,7 @@ jobs:
         false,
       );
       expect(body).toContain("RepoGuard Pre-Execution Security Gate");
-      expect(body).toContain("ALADETAN-IFE/repoguard-action@v1");
+      expect(body).toContain("ALADETAN-IFE/repoguard-action");
       expect(body).toContain("my-repo");
       expect(body).toContain("supply chain attacks");
       expect(body).toContain('fail-on: "high"');
@@ -204,16 +225,39 @@ jobs:
       };
     });
 
-    it("should return pr_already_open if a suggestion PR is already open", async () => {
-      mockOctokit.request.mockResolvedValueOnce({
-        data: [
-          {
-            number: 99,
-            html_url: "https://github.com/org/repo/pull/99",
-            head: { ref: "repoguard/ci-protection-12345" },
-            title: "🛡️ Security: Protect CI/CD pipelines with RepoGuard",
-          },
-        ],
+    it("should return pr_already_open if a suggestion PR is already open and pinned", async () => {
+      mockOctokit.request.mockImplementation((route: string) => {
+        if (route === "GET /repos/{owner}/{repo}/pulls") {
+          return Promise.resolve({
+            data: [
+              {
+                number: 99,
+                html_url: "https://github.com/org/repo/pull/99",
+                head: { ref: "repoguard/ci-protection-12345" },
+                title:
+                  "🛡️ Security: Protect CI/CD pipelines with RepoGuard Pre-Execution Security Gate",
+              },
+            ],
+          });
+        }
+        if (route === "GET /repos/{owner}/{repo}/pulls/{pull_number}/files") {
+          return Promise.resolve({
+            data: [
+              { filename: ".github/workflows/ci_cd.yml", status: "modified" },
+            ],
+          });
+        }
+        if (route === "GET /repos/{owner}/{repo}/contents/{path}") {
+          return Promise.resolve({
+            data: {
+              content: Buffer.from(
+                "uses: ALADETAN-IFE/repoguard-action@4436f1e184cbbb7eca932269f8cc8fc5e31ddb2a # v1\n",
+              ).toString("base64"),
+              sha: "file-sha",
+            },
+          });
+        }
+        return Promise.resolve({ data: [] });
       });
 
       const res = await suggestActionForRepo(mockOctokit as any, "org", "repo");
@@ -221,28 +265,146 @@ jobs:
       expect(res.prNumber).toBe(99);
     });
 
-    it("should return already_configured if any workflow already includes repoguard action", async () => {
-      // 1. Open PRs
-      mockOctokit.request.mockResolvedValueOnce({ data: [] });
-      // 2. Repo info
-      mockOctokit.request.mockResolvedValueOnce({
-        data: { default_branch: "main" },
+    it("should update existing open PR if it contains unpinned @v1", async () => {
+      mockOctokit.request.mockImplementation((route: string) => {
+        if (route === "GET /repos/{owner}/{repo}/pulls") {
+          return Promise.resolve({
+            data: [
+              {
+                number: 99,
+                html_url: "https://github.com/org/repo/pull/99",
+                head: { ref: "repoguard/ci-protection-12345" },
+                title:
+                  "🛡️ Security: Protect CI/CD pipelines with RepoGuard Pre-Execution Security Gate",
+              },
+            ],
+          });
+        }
+        if (route === "GET /repos/{owner}/{repo}/pulls/{pull_number}/files") {
+          return Promise.resolve({
+            data: [
+              { filename: ".github/workflows/ci_cd.yml", status: "modified" },
+            ],
+          });
+        }
+        if (route === "GET /repos/{owner}/{repo}/contents/{path}") {
+          return Promise.resolve({
+            data: {
+              content: Buffer.from(
+                "uses: ALADETAN-IFE/repoguard-action@v1\n",
+              ).toString("base64"),
+              sha: "file-sha",
+            },
+          });
+        }
+        if (route === "PUT /repos/{owner}/{repo}/contents/{path}") {
+          return Promise.resolve({ data: {} });
+        }
+        return Promise.resolve({ data: [] });
       });
-      // 3. Workflow list
-      mockOctokit.request.mockResolvedValueOnce({
-        data: [
-          { name: "ci.yml", path: ".github/workflows/ci.yml", sha: "sha-ci" },
-        ],
+
+      const res = await suggestActionForRepo(mockOctokit as any, "org", "repo");
+      expect(res.status).toBe("updated");
+      expect(res.prNumber).toBe(99);
+      expect(mockOctokit.request).toHaveBeenCalledWith(
+        "PUT /repos/{owner}/{repo}/contents/{path}",
+        expect.objectContaining({
+          branch: "repoguard/ci-protection-12345",
+          message: expect.stringContaining("pin RepoGuard action to commit SHA"),
+        }),
+      );
+    });
+
+    it("should return already_configured if any workflow already includes repoguard action pinned to SHA", async () => {
+      mockOctokit.request.mockImplementation((route: string, params?: any) => {
+        if (route === "GET /repos/{owner}/{repo}/pulls") {
+          return Promise.resolve({ data: [] });
+        }
+        if (route === "GET /repos/{owner}/{repo}") {
+          return Promise.resolve({ data: { default_branch: "main" } });
+        }
+        if (route === "GET /repos/{owner}/{repo}/contents/{path}") {
+          if (params?.path === ".github/workflows") {
+            return Promise.resolve({
+              data: [
+                {
+                  name: "ci.yml",
+                  path: ".github/workflows/ci.yml",
+                  sha: "sha-ci",
+                },
+              ],
+            });
+          }
+          return Promise.resolve({
+            data: {
+              content: Buffer.from(
+                "uses: ALADETAN-IFE/repoguard-action@4436f1e184cbbb7eca932269f8cc8fc5e31ddb2a # v1\n",
+              ).toString("base64"),
+              sha: "sha-ci",
+            },
+          });
+        }
+        return Promise.resolve({ data: [] });
       });
-      // 4. File content
-      const content = Buffer.from(
-        "uses: ALADETAN-IFE/repoguard-action@v1",
-      ).toString("base64");
-      mockOctokit.request.mockResolvedValueOnce({ data: { content } });
 
       const res = await suggestActionForRepo(mockOctokit as any, "org", "repo");
       expect(res.status).toBe("already_configured");
-      expect(res.message).toContain("already configured");
+      expect(res.message).toContain("already configured and pinned");
+    });
+
+    it("should open PR to pin action if default branch has unpinned @v1", async () => {
+      mockOctokit.request.mockImplementation((route: string, params?: any) => {
+        if (route === "GET /repos/{owner}/{repo}/pulls") {
+          return Promise.resolve({ data: [] });
+        }
+        if (route === "GET /repos/{owner}/{repo}") {
+          return Promise.resolve({ data: { default_branch: "main" } });
+        }
+        if (route === "GET /repos/{owner}/{repo}/contents/{path}") {
+          if (params?.path === ".github/workflows") {
+            return Promise.resolve({
+              data: [
+                {
+                  name: "ci.yml",
+                  path: ".github/workflows/ci.yml",
+                  sha: "sha-unpinned",
+                },
+              ],
+            });
+          }
+          return Promise.resolve({
+            data: {
+              content: Buffer.from(
+                "uses: ALADETAN-IFE/repoguard-action@v1\n",
+              ).toString("base64"),
+              sha: "sha-unpinned",
+            },
+          });
+        }
+        if (route === "GET /repos/{owner}/{repo}/git/ref/{ref}") {
+          return Promise.resolve({ data: { object: { sha: "base-sha" } } });
+        }
+        if (route === "POST /repos/{owner}/{repo}/git/refs") {
+          return Promise.resolve({ data: {} });
+        }
+        if (route === "PUT /repos/{owner}/{repo}/contents/{path}") {
+          return Promise.resolve({ data: {} });
+        }
+        if (route === "POST /repos/{owner}/{repo}/pulls") {
+          return Promise.resolve({
+            data: {
+              number: 102,
+              html_url: "https://github.com/org/repo/pull/102",
+            },
+          });
+        }
+        return Promise.resolve({ data: [] });
+      });
+
+      const res = await suggestActionForRepo(mockOctokit as any, "org", "repo");
+      expect(res.status).toBe("created");
+      expect(res.prNumber).toBe(102);
+      expect(res.message).toContain("to pin RepoGuard Action commit SHA");
     });
 
     it("should create branch, commit standalone workflow, and open PR when no workflows exist", async () => {
