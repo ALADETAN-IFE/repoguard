@@ -80,6 +80,9 @@ jobs:
 
       const parsed = yaml.load(result.newContent!) as any;
       expect(parsed.jobs["repoguard-security-scan"]).toBeDefined();
+      expect(parsed.jobs["repoguard-security-scan"].steps[0].uses).toBe(
+        "actions/checkout@v6",
+      );
       expect(parsed.jobs["repoguard-security-scan"].steps[1].uses).toBe(
         "ALADETAN-IFE/repoguard-action@v1",
       );
@@ -90,6 +93,62 @@ jobs:
 
       // Downstream job (deploy) should retain its original needs
       expect(parsed.jobs.deploy.needs).toEqual(["test"]);
+    });
+
+    it("should surgically preserve comments, workflow_dispatch without null, and custom triggers", () => {
+      const complexCi = `# -----------------------------
+# FRONTEND CI/CD PIPELINE
+# -----------------------------
+name: Frontend CI/CD Pipeline
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+      - staging
+
+jobs:
+
+  # BUILD & CHECK JOB
+  compile-app:
+    name: Build Frontend
+    runs-on: ubuntu-latest
+    steps:
+      - run: pnpm build
+
+  deploy-app:
+    needs: [compile-app]
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo deploy
+`;
+
+      const result = injectRepoGuardIntoWorkflow(complexCi);
+      expect(result.modified).toBe(true);
+      expect(result.newContent).toBeDefined();
+
+      // Comments must be preserved
+      expect(result.newContent).toContain("# FRONTEND CI/CD PIPELINE");
+      expect(result.newContent).toContain("# BUILD & CHECK JOB");
+
+      // workflow_dispatch must NOT have ': null'
+      expect(result.newContent).toContain("workflow_dispatch:");
+      expect(result.newContent).not.toContain("workflow_dispatch: null");
+
+      // 'on:' must not be quoted
+      expect(result.newContent).toContain("\non:\n");
+      expect(result.newContent).not.toContain("'on':");
+
+      // checkout should use v6
+      expect(result.newContent).toContain("uses: actions/checkout@v6");
+
+      // compile-app (the root job) should have needs: [repoguard-security-scan]
+      const parsed = yaml.load(result.newContent!) as any;
+      expect(parsed.jobs["compile-app"].needs).toEqual([
+        "repoguard-security-scan",
+      ]);
+      expect(parsed.jobs["deploy-app"].needs).toEqual(["compile-app"]);
     });
 
     it("should handle single job workflows gracefully", () => {

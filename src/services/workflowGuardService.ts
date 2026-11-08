@@ -22,7 +22,7 @@ export const STANDALONE_WORKFLOW_PATH = ".github/workflows/repoguard.yml";
 export const STANDALONE_WORKFLOW_CONTENT = `# RepoGuard Pre-Execution Security Gate
 # Automatically scans code, dependencies, and PR diffs for malware, backdoors, and secrets
 # before arbitrary build or test scripts are executed in CI.
-# https://github.com/ALADETAN-IFE/repoguard-action
+# https://github.com/marketplace/actions/repoguard-security-scan
 
 name: "RepoGuard Security Gate"
 
@@ -40,7 +40,7 @@ jobs:
       contents: read
     steps:
       - name: Checkout Code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Run RepoGuard Security Check
         uses: ALADETAN-IFE/repoguard-action@v1
@@ -51,7 +51,8 @@ jobs:
 
 /**
  * Checks if a workflow file already contains RepoGuard and, if not,
- * injects the repoguard-security-scan job and wires it into entry-point jobs via 'needs'.
+ * surgically injects the repoguard-security-scan job and wires it into entry-point jobs via 'needs',
+ * preserving 100% of existing comments, formatting, and triggers (e.g. workflow_dispatch).
  */
 export function injectRepoGuardIntoWorkflow(yamlContent: string): {
   modified: boolean;
@@ -114,30 +115,8 @@ export function injectRepoGuardIntoWorkflow(yamlContent: string): {
 
   const gateJobId = "repoguard-security-scan";
 
-  const gateJobDefinition: Record<string, unknown> = {
-    name: "RepoGuard Pre-Execution Security Gate",
-    "runs-on": "ubuntu-latest",
-    permissions: {
-      contents: "read",
-    },
-    steps: [
-      {
-        name: "Checkout code",
-        uses: "actions/checkout@v4",
-      },
-      {
-        name: "Run RepoGuard Security Check",
-        uses: "ALADETAN-IFE/repoguard-action@v1",
-        with: {
-          "minimum-severity": "medium",
-          "fail-on": "high",
-        },
-      },
-    ],
-  };
-
-  // Find root entry-point jobs: jobs without a 'needs' or with an empty 'needs' array
-  let entryPointCount = 0;
+  // Find all root entry-point jobs dynamically (any job without 'needs' or with empty 'needs')
+  const rootJobNames: string[] = [];
   for (const [id, jobDef] of jobEntries) {
     if (id === gateJobId || !jobDef || typeof jobDef !== "object") continue;
 
@@ -145,28 +124,108 @@ export function injectRepoGuardIntoWorkflow(yamlContent: string): {
       !jobDef.needs ||
       (Array.isArray(jobDef.needs) && jobDef.needs.length === 0)
     ) {
-      jobDef.needs = [gateJobId];
-      entryPointCount++;
+      rootJobNames.push(id);
     }
   }
 
-  // Prepend the security gate job to doc.jobs
-  doc.jobs = {
-    [gateJobId]: gateJobDefinition,
-    ...jobs,
-  };
+  if (rootJobNames.length === 0 && jobEntries.length > 0) {
+    rootJobNames.push(jobEntries[0][0]);
+  }
 
-  const newContent = yaml.dump(doc, {
-    lineWidth: -1,
-    noRefs: true,
-    indent: 2,
-  });
+  const lines = yamlContent.split(/\r?\n/);
+  const jobsLineIndex = lines.findIndex((l) => /^\s*jobs:\s*$/.test(l));
+
+  if (jobsLineIndex === -1) {
+    return {
+      modified: false,
+      alreadyConfigured: false,
+      reason: "Could not locate 'jobs:' block in workflow text.",
+    };
+  }
+
+  // Determine standard indentation under jobs: (inspect first job line indentation or default to 2 spaces)
+  let jobIndent = "  ";
+  for (let i = jobsLineIndex + 1; i < lines.length; i++) {
+    const m = lines[i].match(/^(\s+)[a-zA-Z0-9_-]+:\s*$/);
+    if (m && !lines[i].trim().startsWith("#")) {
+      jobIndent = m[1];
+      break;
+    }
+  }
+
+  const propIndent = jobIndent + "  ";
+  const stepIndent = propIndent + "  ";
+  const stepPropIndent = stepIndent + "  ";
+
+  const securityJobLines = [
+    `${jobIndent}repoguard-security-scan:`,
+    `${propIndent}name: RepoGuard Pre-Execution Security Gate`,
+    `${propIndent}runs-on: ubuntu-latest`,
+    `${propIndent}permissions:`,
+    `${stepIndent}contents: read`,
+    `${propIndent}steps:`,
+    `${stepIndent}- name: Checkout code`,
+    `${stepPropIndent}uses: actions/checkout@v6`,
+    `${stepIndent}- name: Run RepoGuard Security Check`,
+    `${stepPropIndent}uses: ALADETAN-IFE/repoguard-action@v1`,
+    `${stepPropIndent}with:`,
+    `${stepPropIndent}  minimum-severity: medium`,
+    `${stepPropIndent}  fail-on: high`,
+  ];
+
+  // Insert the security scan job right after `jobs:`
+  lines.splice(jobsLineIndex + 1, 0, ...securityJobLines);
+
+  // Attach `needs: [repoguard-security-scan]` to each detected root job surgically
+  let attachedCount = 0;
+  for (const rootJob of rootJobNames) {
+    const escaped = rootJob.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const jobRegex = new RegExp(`^(\\s*)['"]?${escaped}['"]?:\\s*$`);
+
+    const startIndex = jobsLineIndex + 1 + securityJobLines.length;
+    for (let i = startIndex; i < lines.length; i++) {
+      const match = lines[i].match(jobRegex);
+      if (match) {
+        const currentJobIndent = match[1];
+        const innerPropIndent = currentJobIndent + "  ";
+
+        let foundExistingEmptyNeeds = false;
+        for (let j = i + 1; j < Math.min(i + 10, lines.length); j++) {
+          const trimmed = lines[j].trim();
+          if (!trimmed || trimmed.startsWith("#")) continue;
+          if (
+            new RegExp(`^${innerPropIndent}needs:\\s*(\\[\\s*\\])?$`).test(
+              lines[j],
+            )
+          ) {
+            lines[j] = `${innerPropIndent}needs: [repoguard-security-scan]`;
+            foundExistingEmptyNeeds = true;
+            attachedCount++;
+            break;
+          }
+          if (lines[j].startsWith(innerPropIndent)) break;
+        }
+
+        if (!foundExistingEmptyNeeds) {
+          lines.splice(
+            i + 1,
+            0,
+            `${innerPropIndent}needs: [repoguard-security-scan]`,
+          );
+          attachedCount++;
+        }
+        break;
+      }
+    }
+  }
+
+  const newContent = lines.join("\n");
 
   return {
     modified: true,
     alreadyConfigured: false,
     newContent,
-    reason: `Injected security gate and attached needs to ${entryPointCount} entry job(s).`,
+    reason: `Injected security gate and attached needs to ${attachedCount} entry job(s).`,
   };
 }
 
