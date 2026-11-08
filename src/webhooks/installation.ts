@@ -431,6 +431,20 @@ export function handleInstallation(
       allRepos.map((r) => r.full_name),
     );
 
+    // Automatically suggest RepoGuard GitHub Actions CI protection for the newly onboarded tenant
+    void (async (): Promise<void> => {
+      try {
+        const { suggestActionForTenant } =
+          await import("../services/workflowGuardService");
+        await suggestActionForTenant(client, owner);
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        logger.warn(
+          `[installation] Automatic action suggestion skipped for ${owner}: ${msg}`,
+        );
+      }
+    })();
+
     await scanRepoList(client, installationKey, owner, allRepos);
   };
 }

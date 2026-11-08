@@ -37,6 +37,7 @@ import {
   getAdminAuditLogs,
   getAdminStream,
   rescanTenant,
+  suggestRepoGuardAction,
 } from "./controllers/admin";
 import {
   initiateGitHubOAuth,
@@ -492,6 +493,16 @@ router.post(
   requireRescanSecret,
   (req, res) => {
     void rescanTenant(req, res);
+  },
+);
+
+// Admin Suggest RepoGuard Action
+router.post(
+  "/api/admin/installations/suggest-action",
+  apiRateLimit,
+  requireRescanSecret,
+  (req, res) => {
+    void suggestRepoGuardAction(req, res);
   },
 );
 

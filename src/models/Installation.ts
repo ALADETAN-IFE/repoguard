@@ -14,6 +14,8 @@ export interface IInstallation extends Document {
   marketplaceUpdatedAt: Date | null;
   marketplaceCancelledAt: Date | null;
   enableAiAnalysis: boolean;
+  actionSuggestedAt?: Date | null;
+  actionPRNumber?: number | null;
 }
 
 const InstallationSchema = new Schema<IInstallation>(
@@ -70,6 +72,14 @@ const InstallationSchema = new Schema<IInstallation>(
     enableAiAnalysis: {
       type: Boolean,
       default: true,
+    },
+    actionSuggestedAt: {
+      type: Date,
+      default: null,
+    },
+    actionPRNumber: {
+      type: Number,
+      default: null,
     },
   },
   { timestamps: true },
