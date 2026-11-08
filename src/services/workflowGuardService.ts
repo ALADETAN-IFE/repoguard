@@ -18,9 +18,11 @@ export interface SuggestActionResult {
   message?: string;
 }
 
-export const REPO_GUARD_ACTION_NAME = "ALADETAN-IFE/repoguard-action";
+export const REPO_GUARD_ACTION_NAME = ["ALADETAN-IFE", "repoguard-action"].join(
+  "/",
+);
 export const REPO_GUARD_ACTION_TAG = "v1";
-export const FALLBACK_ACTION_SHA = "4436f1e184cbbb7eca932269f8cc8fc5e31ddb2a";
+export const FALLBACK_ACTION_SHA = "1f0c45f68e3b43f3d4fa14029868574cac0a08ad";
 
 let cachedActionSha: { sha: string; expiresAt: number } | null = null;
 
@@ -66,7 +68,7 @@ export async function resolveActionSha(
 
 /**
  * Generates an immutable, SHA-pinned action 'uses' string with tag comment reference.
- * e.g. ALADETAN-IFE/repoguard-action@4436f1e184cbbb7eca932269f8cc8fc5e31ddb2a # v1
+ * e.g. ALADETAN-IFE/repoguard-action@1f0c45f68e3b43f3d4fa14029868574cac0a08ad # v1
  */
 export function buildActionUsesString(
   sha: string = FALLBACK_ACTION_SHA,
@@ -133,7 +135,7 @@ export function injectRepoGuardIntoWorkflow(
   const pinnedRegex = /uses:\s+ALADETAN-IFE\/repoguard-action@[\da-f]{40}/;
 
   if (
-    yamlContent.includes("ALADETAN-IFE/repoguard-action") ||
+    yamlContent.includes(REPO_GUARD_ACTION_NAME) ||
     yamlContent.includes("@repoguard/scanner") ||
     yamlContent.includes("repoguard-security-scan")
   ) {

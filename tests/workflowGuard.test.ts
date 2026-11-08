@@ -5,6 +5,7 @@ import {
   suggestActionForRepo,
   suggestActionForTenant,
   STANDALONE_WORKFLOW_PATH,
+  FALLBACK_ACTION_SHA,
 } from "../src/services/workflowGuardService";
 import { Installation } from "../src/models";
 
@@ -35,7 +36,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
-      - uses: ALADETAN-IFE/repoguard-action@4436f1e184cbbb7eca932269f8cc8fc5e31ddb2a # v1
+      - uses: ALADETAN-IFE/repoguard-action@${FALLBACK_ACTION_SHA} # v1
         with:
           fail-on: high
 `;
@@ -61,7 +62,7 @@ jobs:
       expect(result.alreadyConfigured).toBe(false);
       expect(result.modified).toBe(true);
       expect(result.newContent).toContain(
-        "uses: ALADETAN-IFE/repoguard-action@4436f1e184cbbb7eca932269f8cc8fc5e31ddb2a # v1",
+        `uses: ALADETAN-IFE/repoguard-action@${FALLBACK_ACTION_SHA} # v1`,
       );
     });
 
@@ -105,7 +106,7 @@ jobs:
         "actions/checkout@v6",
       );
       expect(parsed.jobs["repoguard-security-scan"].steps[1].uses).toContain(
-        "ALADETAN-IFE/repoguard-action@4436f1e184cbbb7eca932269f8cc8fc5e31ddb2a",
+        `ALADETAN-IFE/repoguard-action@${FALLBACK_ACTION_SHA}`,
       );
 
       // Root jobs (lint, test) should now have needs: [repoguard-security-scan]
@@ -251,7 +252,7 @@ jobs:
           return Promise.resolve({
             data: {
               content: Buffer.from(
-                "uses: ALADETAN-IFE/repoguard-action@4436f1e184cbbb7eca932269f8cc8fc5e31ddb2a # v1\n",
+                `uses: ALADETAN-IFE/repoguard-action@${FALLBACK_ACTION_SHA} # v1\n`,
               ).toString("base64"),
               sha: "file-sha",
             },
@@ -338,7 +339,7 @@ jobs:
           return Promise.resolve({
             data: {
               content: Buffer.from(
-                "uses: ALADETAN-IFE/repoguard-action@4436f1e184cbbb7eca932269f8cc8fc5e31ddb2a # v1\n",
+                `uses: ALADETAN-IFE/repoguard-action@${FALLBACK_ACTION_SHA} # v1\n`,
               ).toString("base64"),
               sha: "sha-ci",
             },
