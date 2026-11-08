@@ -22,7 +22,7 @@ export const REPO_GUARD_ACTION_NAME = ["ALADETAN-IFE", "repoguard-action"].join(
   "/",
 );
 export const REPO_GUARD_ACTION_TAG = "v1";
-export const FALLBACK_ACTION_SHA = "1f0c45f68e3b43f3d4fa14029868574cac0a08ad";
+export const FALLBACK_ACTION_SHA = "cc10d86fc9bae100f3f722ec7420946e61aeffc9";
 
 let cachedActionSha: { sha: string; expiresAt: number } | null = null;
 
@@ -68,7 +68,7 @@ export async function resolveActionSha(
 
 /**
  * Generates an immutable, SHA-pinned action 'uses' string with tag comment reference.
- * e.g. ALADETAN-IFE/repoguard-action@1f0c45f68e3b43f3d4fa14029868574cac0a08ad # v1
+ * e.g. ALADETAN-IFE/repoguard-action@cc10d86fc9bae100f3f722ec7420946e61aeffc9 # v1
  */
 export function buildActionUsesString(
   sha: string = FALLBACK_ACTION_SHA,
