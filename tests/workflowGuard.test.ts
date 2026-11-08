@@ -187,32 +187,38 @@ jobs:
     });
 
     it("should create branch, commit standalone workflow, and open PR when no workflows exist", async () => {
-      // 1. Open PRs: none
-      mockOctokit.request.mockResolvedValueOnce({ data: [] });
-      // 2. Repo info
-      mockOctokit.request.mockResolvedValueOnce({
-        data: { default_branch: "main" },
-      });
-      // 3. Workflow list: 404 (no directory)
-      const err404 = new Error("Not Found") as any;
-      err404.status = 404;
-      mockOctokit.request.mockRejectedValueOnce(err404);
-      // 4. Git ref for base branch
-      mockOctokit.request.mockResolvedValueOnce({
-        data: { object: { sha: "base-sha-123" } },
-      });
-      // 5. Create ref
-      mockOctokit.request.mockResolvedValueOnce({
-        data: { ref: "refs/heads/repoguard/ci-protection" },
-      });
-      // 6. Commit file
-      mockOctokit.request.mockResolvedValueOnce({ data: {} });
-      // 7. Open PR
-      mockOctokit.request.mockResolvedValueOnce({
-        data: {
-          number: 101,
-          html_url: "https://github.com/org/repo/pull/101",
-        },
+      mockOctokit.request.mockImplementation((route: string) => {
+        if (route === "GET /repos/{owner}/{repo}/pulls") {
+          return Promise.resolve({ data: [] });
+        }
+        if (route === "GET /repos/{owner}/{repo}") {
+          return Promise.resolve({ data: { default_branch: "main" } });
+        }
+        if (route === "GET /repos/{owner}/{repo}/contents/{path}") {
+          const err404 = new Error("Not Found") as any;
+          err404.status = 404;
+          return Promise.reject(err404);
+        }
+        if (route === "GET /repos/{owner}/{repo}/git/ref/{ref}") {
+          return Promise.resolve({ data: { object: { sha: "base-sha-123" } } });
+        }
+        if (route === "POST /repos/{owner}/{repo}/git/refs") {
+          return Promise.resolve({
+            data: { ref: "refs/heads/repoguard/ci-protection" },
+          });
+        }
+        if (route === "PUT /repos/{owner}/{repo}/contents/{path}") {
+          return Promise.resolve({ data: {} });
+        }
+        if (route === "POST /repos/{owner}/{repo}/pulls") {
+          return Promise.resolve({
+            data: {
+              number: 101,
+              html_url: "https://github.com/org/repo/pull/101",
+            },
+          });
+        }
+        return Promise.resolve({ data: [] });
       });
 
       const res = await suggestActionForRepo(mockOctokit as any, "org", "repo");
@@ -225,6 +231,51 @@ jobs:
         "PUT /repos/{owner}/{repo}/contents/{path}",
         expect.objectContaining({
           path: STANDALONE_WORKFLOW_PATH,
+        }),
+      );
+    });
+
+    it("should rollback and delete created branch if committing workflow fails", async () => {
+      mockOctokit.request.mockImplementation((route: string) => {
+        if (route === "GET /repos/{owner}/{repo}/pulls") {
+          return Promise.resolve({ data: [] });
+        }
+        if (route === "GET /repos/{owner}/{repo}") {
+          return Promise.resolve({ data: { default_branch: "main" } });
+        }
+        if (route === "GET /repos/{owner}/{repo}/contents/{path}") {
+          const err = new Error("404") as any;
+          err.status = 404;
+          return Promise.reject(err);
+        }
+        if (route === "GET /repos/{owner}/{repo}/git/ref/{ref}") {
+          return Promise.resolve({ data: { object: { sha: "base-sha" } } });
+        }
+        if (route === "POST /repos/{owner}/{repo}/git/refs") {
+          return Promise.resolve({ data: {} });
+        }
+        if (route === "PUT /repos/{owner}/{repo}/contents/{path}") {
+          return Promise.reject(
+            new Error(
+              "Resource not accessible by integration - https://docs.github.com/rest/repos/contents#create-or-update-file-contents",
+            ),
+          );
+        }
+        if (route === "DELETE /repos/{owner}/{repo}/git/refs/{ref}") {
+          return Promise.resolve({ data: {} });
+        }
+        return Promise.resolve({ data: [] });
+      });
+
+      const res = await suggestActionForRepo(mockOctokit as any, "org", "repo");
+      expect(res.status).toBe("error");
+      expect(res.message).toContain("Workflows: Read and write");
+      expect(mockOctokit.request).toHaveBeenCalledWith(
+        "DELETE /repos/{owner}/{repo}/git/refs/{ref}",
+        expect.objectContaining({
+          owner: "org",
+          repo: "repo",
+          ref: expect.stringMatching(/^heads\/repoguard\/ci-protection-/),
         }),
       );
     });

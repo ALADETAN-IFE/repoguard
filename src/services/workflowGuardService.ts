@@ -211,6 +211,7 @@ export async function suggestActionForRepo(
   owner: string,
   repo: string,
 ): Promise<SuggestActionResult> {
+  let createdBranchName: string | null = null;
   try {
     // 1. Check if an open suggestion PR already exists
     const { data: openPRs } = await octokit.request(
@@ -371,6 +372,41 @@ export async function suggestActionForRepo(
 
     // 6. Create Git Branch
     const branchName = `repoguard/ci-protection-${Date.now()}`;
+
+    // Clean up any stale orphaned ci-protection branches without PRs
+    try {
+      const { data: matchingRefs } = await octokit.request(
+        "GET /repos/{owner}/{repo}/git/matching-refs/{ref}",
+        {
+          owner,
+          repo,
+          ref: "heads/repoguard/ci-protection",
+        },
+      );
+      if (Array.isArray(matchingRefs)) {
+        for (const item of matchingRefs as Array<{ ref: string }>) {
+          const refShort = item.ref.replace(/^refs\//, "");
+          try {
+            await octokit.request(
+              "DELETE /repos/{owner}/{repo}/git/refs/{ref}",
+              {
+                owner,
+                repo,
+                ref: refShort,
+              },
+            );
+            logger.info(
+              `[workflow-guard] Deleted stale orphaned branch ${item.ref} in ${owner}/${repo}`,
+            );
+          } catch {
+            // Ignore deletion failures for stale branches
+          }
+        }
+      }
+    } catch {
+      // Ignore if matching-refs API is unsupported or empty
+    }
+
     const { data: refData } = await octokit.request(
       "GET /repos/{owner}/{repo}/git/ref/{ref}",
       {
@@ -388,6 +424,7 @@ export async function suggestActionForRepo(
       ref: `refs/heads/${branchName}`,
       sha: baseSha,
     });
+    createdBranchName = branchName;
 
     // 7. Commit changes to branch
     await octokit.request("PUT /repos/{owner}/{repo}/contents/{path}", {
@@ -430,7 +467,34 @@ export async function suggestActionForRepo(
       message: `Suggestion PR #${(pr as { number: number }).number} opened successfully.`,
     };
   } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
+    if (createdBranchName) {
+      try {
+        await octokit.request("DELETE /repos/{owner}/{repo}/git/refs/{ref}", {
+          owner,
+          repo,
+          ref: `heads/${createdBranchName}`,
+        });
+        logger.info(
+          `[workflow-guard] Rolled back and deleted orphaned branch ${createdBranchName} in ${owner}/${repo}`,
+        );
+      } catch (cleanupErr) {
+        logger.warn(
+          `[workflow-guard] Failed to clean up branch ${createdBranchName} in ${owner}/${repo}: ${cleanupErr instanceof Error ? cleanupErr.message : String(cleanupErr)}`,
+        );
+      }
+    }
+
+    let msg = err instanceof Error ? err.message : String(err);
+    if (
+      msg.includes("Resource not accessible by integration") ||
+      msg.includes(
+        "refusing to allow a GitHub App to create or update workflow",
+      )
+    ) {
+      msg =
+        "GitHub permission error: The RepoGuard GitHub App requires 'Workflows: Read and write' repository permission to configure workflow files in .github/workflows/.";
+    }
+
     logger.error(
       `[workflow-guard] Error creating suggestion PR for ${owner}/${repo}: ${msg}`,
     );
