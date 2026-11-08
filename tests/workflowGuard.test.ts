@@ -66,6 +66,27 @@ jobs:
       );
     });
 
+    it("should upgrade an outdated commit SHA to the latest pinned SHA", () => {
+      const oldShaWorkflow = `
+name: CI
+on: [push]
+jobs:
+  security:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: ALADETAN-IFE/repoguard-action@4436f1e184cbbb7eca932269f8cc8fc5e31ddb2a # v1
+        with:
+          fail-on: high
+`;
+      const result = injectRepoGuardIntoWorkflow(oldShaWorkflow);
+      expect(result.alreadyConfigured).toBe(false);
+      expect(result.modified).toBe(true);
+      expect(result.newContent).toContain(
+        `uses: ALADETAN-IFE/repoguard-action@${FALLBACK_ACTION_SHA} # v1`,
+      );
+    });
+
     it("should inject repoguard-security-scan job and attach needs to all root jobs", () => {
       const standardCi = `
 name: Build & Test
@@ -311,7 +332,9 @@ jobs:
         "PUT /repos/{owner}/{repo}/contents/{path}",
         expect.objectContaining({
           branch: "repoguard/ci-protection-12345",
-          message: expect.stringContaining("pin RepoGuard action to commit SHA"),
+          message: expect.stringContaining(
+            "pin RepoGuard action to commit SHA",
+          ),
         }),
       );
     });

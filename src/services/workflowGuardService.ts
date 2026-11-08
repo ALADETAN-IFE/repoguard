@@ -130,38 +130,42 @@ export function injectRepoGuardIntoWorkflow(
   const usesString = actionUses || buildActionUsesString(FALLBACK_ACTION_SHA);
 
   // 1. Detect if RepoGuard is already configured
-  const unpinnedRegex =
-    /uses:\s+ALADETAN-IFE\/repoguard-action@(?![\da-f]{40})[^\s#]+(\s*#[^\n]*)?/;
-  const pinnedRegex = /uses:\s+ALADETAN-IFE\/repoguard-action@[\da-f]{40}/;
+  const actionRegex =
+    /uses:\s+ALADETAN-IFE\/repoguard-action@[^\s#]+(\s*#[^\n]*)?/;
 
   if (
     yamlContent.includes(REPO_GUARD_ACTION_NAME) ||
     yamlContent.includes("@repoguard/scanner") ||
     yamlContent.includes("repoguard-security-scan")
   ) {
-    if (unpinnedRegex.test(yamlContent)) {
-      // Surgically pin to SHA without altering any other lines
+    if (yamlContent.includes(`uses: ${usesString}`)) {
+      return {
+        modified: false,
+        alreadyConfigured: true,
+        reason:
+          "Workflow already contains RepoGuard Action pinned to the latest commit SHA.",
+      };
+    }
+
+    if (actionRegex.test(yamlContent)) {
+      // Surgically update to the latest pinned SHA without altering any other lines
       const updated = yamlContent.replace(
-        /uses:\s+ALADETAN-IFE\/repoguard-action@(?![\da-f]{40})[^\s#]+(\s*#[^\n]*)?/g,
+        /uses:\s+ALADETAN-IFE\/repoguard-action@[^\s#]+(\s*#[^\n]*)?/g,
         `uses: ${usesString}`,
       );
       return {
         modified: true,
         alreadyConfigured: false,
         newContent: updated,
-        reason: "Pinned RepoGuard Action to full commit SHA.",
+        reason: "Updated RepoGuard Action to the latest pinned commit SHA.",
       };
     }
 
-    if (
-      pinnedRegex.test(yamlContent) ||
-      yamlContent.includes("@repoguard/scanner")
-    ) {
+    if (yamlContent.includes("@repoguard/scanner")) {
       return {
         modified: false,
         alreadyConfigured: true,
-        reason:
-          "Workflow already contains RepoGuard Action pinned to a commit SHA.",
+        reason: "Workflow already contains RepoGuard scanner.",
       };
     }
   }
@@ -458,13 +462,17 @@ export async function suggestActionForRepo(
             const rawContent = Buffer.from(fileData.content, "base64").toString(
               "utf8",
             );
-            const unpinnedRegex =
-              /uses:\s+ALADETAN-IFE\/repoguard-action@(?![\da-f]{40})[^\s#]+(\s*#[^\n]*)?/g;
+            const currentUses = `uses: ${actionUses}`;
+            const actionRegex =
+              /uses:\s+ALADETAN-IFE\/repoguard-action@[^\s#]+(\s*#[^\n]*)?/g;
 
-            if (unpinnedRegex.test(rawContent)) {
+            if (
+              !rawContent.includes(currentUses) &&
+              actionRegex.test(rawContent)
+            ) {
               const updatedContent = rawContent.replace(
-                /uses:\s+ALADETAN-IFE\/repoguard-action@(?![\da-f]{40})[^\s#]+(\s*#[^\n]*)?/g,
-                `uses: ${actionUses}`,
+                actionRegex,
+                currentUses,
               );
 
               await octokit.request(
@@ -484,7 +492,7 @@ export async function suggestActionForRepo(
               );
 
               logger.info(
-                `[workflow-guard] Updated existing PR #${existingPR.number} (${workflowFile.filename}) in ${owner}/${repo} to pin RepoGuard Action commit SHA`,
+                `[workflow-guard] Updated existing PR #${existingPR.number} (${workflowFile.filename}) in ${owner}/${repo} to latest RepoGuard Action commit SHA`,
               );
 
               return {
@@ -493,7 +501,7 @@ export async function suggestActionForRepo(
                 prNumber: existingPR.number,
                 prUrl: existingPR.html_url,
                 status: "updated",
-                message: `Updated existing suggestion PR #${existingPR.number} with pinned commit SHA.`,
+                message: `Updated existing suggestion PR #${existingPR.number} with latest pinned commit SHA.`,
               };
             }
           }
@@ -573,22 +581,21 @@ export async function suggestActionForRepo(
           "base64",
         ).toString("utf8");
 
-        const unpinnedRegex =
-          /uses:\s+ALADETAN-IFE\/repoguard-action@(?![\da-f]{40})[^\s#]+(\s*#[^\n]*)?/;
-        const pinnedRegex =
-          /uses:\s+ALADETAN-IFE\/repoguard-action@[\da-f]{40}/;
+        const currentUses = `uses: ${actionUses}`;
+        const actionRegex =
+          /uses:\s+ALADETAN-IFE\/repoguard-action@[^\s#]+(\s*#[^\n]*)?/;
 
-        if (unpinnedRegex.test(rawContent)) {
+        if (rawContent.includes(currentUses)) {
+          alreadyFullyPinned = true;
+          break;
+        } else if (actionRegex.test(rawContent)) {
           workflowNeedsPinning = {
             path: file.path,
             sha: (fileData as { sha: string }).sha,
             rawContent,
           };
           break;
-        } else if (
-          pinnedRegex.test(rawContent) ||
-          rawContent.includes("@repoguard/scanner")
-        ) {
+        } else if (rawContent.includes("@repoguard/scanner")) {
           alreadyFullyPinned = true;
         }
       } catch {
