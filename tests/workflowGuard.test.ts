@@ -129,6 +129,9 @@ jobs:
       expect(body).toContain("my-repo");
       expect(body).toContain("supply chain attacks");
       expect(body).toContain('fail-on: "high"');
+      expect(body).toContain(
+        "https://github.com/marketplace/actions/repoguard-security-scan",
+      );
     });
   });
 

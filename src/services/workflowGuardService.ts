@@ -187,7 +187,7 @@ In modern software development, **supply chain attacks** frequently target CI/CD
 * The runner executes the malicious script, exfiltrating CI environment secrets (\`GITHUB_TOKEN\`, deployment keys, cloud credentials) or launching crypto-miners.
 
 ### How does this PR protect \`${repo}\`?
-This pull request configures the official [**ALADETAN-IFE/repoguard-action@v1**](https://github.com/ALADETAN-IFE/repoguard-action):
+This pull request configures the official [**ALADETAN-IFE/repoguard-action@v1**](https://github.com/marketplace/actions/repoguard-security-scan):
 1. **Runs First:** RepoGuard performs an instantaneous static security scan across all changed code and dependencies **before** any build or test commands execute.
 2. **Hard-Fails Attacks:** If high or critical severity malicious payloads, backdoors, or leaked secrets are detected, the gate fails immediately (\`fail-on: "high"\`), automatically cancelling downstream jobs.
 3. **Tamper-Resistant:** The action securely resolves security configuration from the **default branch** using GitHub's built-in token, preventing an attacker from disabling rules in their own PR branch.
@@ -198,7 +198,9 @@ This pull request configures the official [**ALADETAN-IFE/repoguard-action@v1**]
 * **Workflow:** \`${modifiedFile}\` (${isNewFile ? "New security workflow" : "Injected pre-execution security gate with \`needs: [repoguard-security-scan]\`"})
 * **Action:** \`ALADETAN-IFE/repoguard-action@v1\`
 
-Merge this PR to activate automated CI/CD pipeline protection. To adjust thresholds or customize scan rules, add a \`.repoguard.yml\` configuration file in the default branch.`;
+Merge this PR to activate automated CI/CD pipeline protection. To adjust thresholds or customize scan rules, add a \`.repoguard.yml\` configuration file in the default branch.
+
+📖 **Need more info?** Check out the [RepoGuard Security Scan on GitHub Marketplace](https://github.com/marketplace/actions/repoguard-security-scan) for full documentation, input specifications, and configuration guides.`;
 }
 
 /**
