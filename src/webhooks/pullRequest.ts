@@ -453,10 +453,14 @@ export function handlePullRequestClosed(
     const branchRef = pull_request.head.ref;
     const client = normaliseOctokit(octokit);
     const isFixBranch = branchRef.startsWith("repoguard/fixes-");
+    const isRepoGuardBranch =
+      isFixBranch ||
+      branchRef.startsWith("repoguard/ci-protection") ||
+      branchRef.startsWith("repoguard/pin-ci-protection");
     const wasMerged = pull_request.merged;
 
-    // ── 1. Always clean up the fix branch ──────────────────────────────────
-    if (isFixBranch) {
+    // ── 1. Always clean up the RepoGuard branch on close or merge ──────────
+    if (isRepoGuardBranch) {
       try {
         await client.request("DELETE /repos/{owner}/{repo}/git/refs/{ref}", {
           owner,
