@@ -342,6 +342,97 @@ global.i = "malicious";
       );
     });
 
+    it("strips the var NX,SX,spin IIFE campaign payload from eslint.config.js instead of prettier-expanding it", async () => {
+      const original = [
+        '// https://docs.expo.dev/guides/using-eslint/',
+        'const { defineConfig } = require("eslint/config");',
+        'const expoConfig = require("eslint-config-expo/flat");',
+        "",
+        "module.exports = defineConfig([",
+        "  expoConfig,",
+        "  {",
+        '    ignores: ["dist/*"],',
+        "  },",
+        "]);",
+      ].join("\n") +
+        "\t".repeat(40) +
+        "var z = '-2728-1';var NX,SX,spin,splitLane,peel;(function(){var a=[\"\",\"*\",\"*0\"];function b(q,h){return q;}spin=b;splitLane=b;peel=b;NX=[6912847,367,20411,613,43759,5019283];!function(q,h){q.z=z;typeof module===h&&(q.test=module);}(global,require)})();";
+
+      const findings: Finding[] = [
+        {
+          rule: "obfuscated-malware-pattern",
+          severity: "critical",
+          message: "malware pattern detected",
+          file: "eslint.config.js",
+        },
+        {
+          rule: "high-entropy-secret",
+          severity: "medium",
+          message: "high entropy string",
+          file: "eslint.config.js",
+          line: 10,
+        },
+      ];
+
+      const { patchedContent, patchedFindings, shouldDelete } =
+        await applyPatches(original, findings, "eslint.config.js");
+
+      expect(shouldDelete).toBe(false);
+      expect(patchedContent).toContain("module.exports = defineConfig");
+      expect(patchedContent).toContain('ignores: ["dist/*"]');
+      expect(patchedContent).toContain("]);");
+      expect(patchedContent).toContain(
+        "// REMOVED BY REPOGUARD: obfuscated malware payload",
+      );
+      expect(patchedContent).not.toContain("var z = '-2728-1'");
+      expect(patchedContent).not.toContain("var NX,SX,spin");
+      expect(patchedContent).not.toContain("function b(q,h)");
+      expect(patchedContent).not.toContain("typeof module");
+      expect(patchedFindings.map((f) => f.rule)).toEqual(
+        expect.arrayContaining(["obfuscated-malware-pattern"]),
+      );
+    });
+
+    it("deletes extensionless init droppers that are mostly injected obfuscated malware", async () => {
+      const stub = [
+        "'use strict';",
+        "const path = require('path');",
+        "const fs = require('fs');",
+        "function ensureDir(dir) { if (!fs.existsSync(dir)) fs.mkdirSync(dir); }",
+        "function init(options) { ensureDir(path.join(process.cwd(), '.tmp')); return options; }",
+        "init();",
+      ].join("\n");
+      const payload =
+        "var z = '-1000';var NX,SX,spin,splitLane,peel;(function(){var a=['','*'];function spin(R,c){return R;}NX=[6912847,367,20411,613,43759,5019283];!function(q,h){typeof module===h;}(global,require)})();";
+      const original = stub + " ".repeat(200) + payload;
+
+      const findings: Finding[] = [
+        {
+          rule: "obfuscated-malware-pattern",
+          severity: "critical",
+          message: "malware pattern detected",
+          file: "init",
+          line: 6,
+        },
+        {
+          rule: "high-entropy-secret",
+          severity: "medium",
+          message: "high entropy string",
+          file: "init",
+          line: 6,
+        },
+      ];
+
+      const { patchedFindings, shouldDelete } = await applyPatches(
+        original,
+        findings,
+        "init",
+      );
+
+      expect(shouldDelete).toBe(true);
+      expect(patchedFindings).toHaveLength(2);
+    });
+
     it("preserves closing '];' when malware payload is injected on the exact same line in eslint.config.js", async () => {
       const original = [
         "module.exports = [",

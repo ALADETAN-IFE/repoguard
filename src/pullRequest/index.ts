@@ -832,6 +832,25 @@ async function openSecurityIssue(
   }
 }
 
+// Campaign payloads start with `var z = '…';` then decoder scaffolding
+// (`var NX,SX,spin…` or `var NX=[…]`, `function spin`, or an IIFE).
+const OBFUSCATED_INJECTION_MARKER =
+  /\b(?:var|let|const)\s+z\s*=\s*['"][^'"]*['"]\s*;\s*(?:var\s+NX\b|function\s+(?:spin|splitLane|peel|y7)\b|!function\b|\(\s*function\s*\()/i;
+
+function stripInjectedObfuscatedPayload(content: string): string | null {
+  const idx = content.search(OBFUSCATED_INJECTION_MARKER);
+  if (idx < 0) return null;
+
+  const before = content.slice(0, idx);
+  const lastNl = Math.max(before.lastIndexOf("\n"), before.lastIndexOf("\r"));
+  const linePrefix = before.slice(lastNl + 1).trimEnd();
+  const head = before.slice(0, lastNl + 1);
+  const comment = "// REMOVED BY REPOGUARD: obfuscated malware payload";
+  return linePrefix
+    ? `${head}${linePrefix}\n${comment}\n`
+    : `${head}${comment}\n`;
+}
+
 export async function applyPatches(
   content: string,
   findings: Finding[],
@@ -924,13 +943,30 @@ export async function applyPatches(
       (content.length > 200 && hexCharCount > content.length * 0.3) ||
       (hexCharCount > 50 && hasMalwareSignals);
 
+    const injectionIndex = content.search(OBFUSCATED_INJECTION_MARKER);
+    const payloadRatio =
+      injectionIndex >= 0
+        ? (content.length - injectionIndex) / Math.max(content.length, 1)
+        : 0;
+    // Extensionless droppers (e.g. `init`) used by this campaign, or files
+    // whose remaining non-export stub is dwarfed by the injected payload.
+    const isMajorityPayloadDropper =
+      payloadRatio >= 0.6 && !hasLegitimateExports && hasMalwareSignals;
+    const isExtensionlessDropper =
+      !baseName.includes(".") &&
+      !hasLegitimateExports &&
+      hasMalwareSignals &&
+      (baseName === "init" || payloadRatio >= 0.5);
+
     if (
       (hasStringArray &&
         hasRotationLoop &&
         hasGlobalOrRequire &&
         !hasLegitimateExports) ||
       (hasCreateRequireBypass && !hasLegitimateExports) ||
-      (isHighDensityObfuscation && !hasLegitimateExports)
+      (isHighDensityObfuscation && !hasLegitimateExports) ||
+      isMajorityPayloadDropper ||
+      isExtensionlessDropper
     ) {
       logger.info(
         `[pr] Standalone obfuscated malware file detected: ${filePath} — flagging for auto-deletion`,
@@ -996,7 +1032,11 @@ export async function applyPatches(
           "// REMOVED BY REPOGUARD: base64 obfuscated payload",
         );
         break;
-      case "obfuscated-malware-pattern":
+      case "obfuscated-malware-pattern": {
+        const strippedPayload = stripInjectedObfuscatedPayload(nextPatched);
+        if (strippedPayload !== null) {
+          nextPatched = strippedPayload;
+        }
         nextPatched = nextPatched.replace(
           /\n?import\s*\{\s*createRequire\s*\}\s*from\s*['"]module['"];?/g,
           "// REMOVED BY REPOGUARD: createRequire import for malware",
@@ -1006,14 +1046,11 @@ export async function applyPatches(
           "// REMOVED BY REPOGUARD: require definition for malware",
         );
         // Injected malware payload starting with init() call or var z = ...
+        // Keep a same-line prefix (e.g. `];`) and drop everything from the
+        // payload marker through EOF. Capture groups are indent + prefix only.
         nextPatched = nextPatched.replace(
           /(?:^|[\n\r])([ \t]*)([^\n\r]*?)\binit\s*\(\s*\);?\s*(?:var|let|const)\s+z\s*=[\s\S]*/gm,
-          (
-            _match: string,
-            _newline: string,
-            _indent: string,
-            prefix: string,
-          ) => {
+          (_match: string, _indent: string, prefix: string) => {
             const cleanPrefix = (prefix || "").trimEnd();
             return cleanPrefix
               ? `${cleanPrefix}\n// REMOVED BY REPOGUARD: obfuscated malware payload`
@@ -1021,13 +1058,8 @@ export async function applyPatches(
           },
         );
         nextPatched = nextPatched.replace(
-          /(?:^|[\n\r])([ \t]*)([^\n\r]*?)\b(?:var|let|const)\s+z\s*=\s*['"][^'"]*['"]\s*;\s*(?:var|let|const)\s+[a-zA-Z0-9_$]+\s*=\s*\[[\d\s^,]{10,}\][\s\S]*/gm,
-          (
-            _match: string,
-            _newline: string,
-            _indent: string,
-            prefix: string,
-          ) => {
+          /(?:^|[\n\r])([ \t]*)([^\n\r]*?)\b(?:var|let|const)\s+z\s*=\s*['"][^'"]*['"]\s*;\s*(?:var\s+NX\b|(?:var|let|const)\s+[a-zA-Z0-9_$]+\s*=\s*\[[\d\s^,]{10,}\]|function\s+(?:spin|splitLane|peel|y7)\b|!function|\(\s*function\s*\()[\s\S]*/gm,
+          (_match: string, _indent: string, prefix: string) => {
             const cleanPrefix = (prefix || "").trimEnd();
             return cleanPrefix
               ? `${cleanPrefix}\n// REMOVED BY REPOGUARD: obfuscated malware payload`
@@ -1115,6 +1147,7 @@ export async function applyPatches(
         // Clean up leftover blank lines
         nextPatched = nextPatched.replace(/\n{3,}/g, "\n\n").trimEnd() + "\n";
         break;
+      }
       case "js-obfuscated-charcode":
         nextPatched = nextPatched.replace(
           /String\.fromCharCode\s*\([^)]+\)/g,

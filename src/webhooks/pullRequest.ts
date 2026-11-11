@@ -712,6 +712,13 @@ export function handlePullRequestClosed(
         `[pr] Post-close rescan: ${findings.length} finding(s) still active in ${owner}/${repo}`,
       );
 
+      const senderLogin = payload.sender?.login ?? "";
+      const senderType = payload.sender?.type ?? "";
+      const closedByBot =
+        senderType === "Bot" ||
+        senderLogin.toLowerCase().includes("[bot]") ||
+        senderLogin.toLowerCase().includes("repoguard");
+
       if (isInfectedPRTrigger) {
         // ── "infected pr" comment detected → open a fresh Fix PR ─────────────
         logger.info(
@@ -751,6 +758,14 @@ export function handlePullRequestClosed(
             /* non-fatal */
           }
         }
+      } else if (closedByBot) {
+        // Bot-closed remediation PRs must not auto-open a replacement PR.
+        // Otherwise a failed patch (findings still on the branch) closes the
+        // PR, this handler opens a new one, the new PR fails the same scan,
+        // and we loop (PRs #13–#25).
+        logger.info(
+          `[pr] Fix PR #${pull_request.number} was closed by RepoGuard — skipping auto-reopen to prevent remediation loops`,
+        );
       } else {
         // ── Standard close without "infected pr" → open/update security issue ─
         const { openFixPR } = await import("../pullRequest");

@@ -1245,7 +1245,9 @@ export async function autoHealTenantRepositories(
             // ignore
           }
 
-          if (isConflicted || hasFailingCheck) {
+          const shouldReset = isConflicted || hasFailingCheck;
+
+          if (shouldReset) {
             logger.warn(
               `[workflow-guard] Auto-healing conflicted/failing ${prType} PR #${pr.number} in ${owner}/${repo}`,
             );
