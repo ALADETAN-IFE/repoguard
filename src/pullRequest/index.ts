@@ -1262,6 +1262,28 @@ export async function applyPatches(
           filePath.startsWith(".github/workflows/") &&
           (filePath.endsWith(".yml") || filePath.endsWith(".yaml"))
         ) {
+          // Identify the specific action targeted by this finding so other actions are not touched
+          let targetAction: string | null = null;
+          const snippet = (finding as { matchedSnippet?: string })
+            .matchedSnippet;
+          if (snippet) {
+            const snippetMatch = snippet.match(
+              /(?:uses:\s+)?([a-zA-Z0-9_-]+\/[a-zA-Z0-9_.-]+)@/i,
+            );
+            if (snippetMatch) {
+              targetAction = snippetMatch[1].toLowerCase();
+            }
+          } else if (typeof finding.line === "number" && finding.line > 0) {
+            const lines = nextPatched.split("\n");
+            const flaggedLine = lines[finding.line - 1] || "";
+            const lineMatch = flaggedLine.match(
+              /(?:uses:\s+)?([a-zA-Z0-9_-]+\/[a-zA-Z0-9_.-]+)@/i,
+            );
+            if (lineMatch) {
+              targetAction = lineMatch[1].toLowerCase();
+            }
+          }
+
           const unpinnedRegex =
             /uses:\s+([a-zA-Z0-9_-]+\/[a-zA-Z0-9_.-]+)@(?![\da-f]{40})([^\s#]+)/g;
           let match: RegExpExecArray | null;
@@ -1270,6 +1292,13 @@ export async function applyPatches(
             const fullMatch = match[0];
             const actionRepo = match[1];
             const tag = match[2];
+
+            // Only patch the specific action that triggered this finding!
+            // Never touch other third-party actions (e.g. actions/checkout, actions/setup-node) in this PR.
+            if (targetAction && actionRepo.toLowerCase() !== targetAction) {
+              continue;
+            }
+
             let resolvedSha: string | null = null;
 
             if (octokit) {

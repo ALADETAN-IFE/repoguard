@@ -487,6 +487,40 @@ global.i = "malicious";
       expect(patchedFindings).toHaveLength(1);
     });
 
+    it("patches workflow-unpinned-action only for the specific flagged action and preserves other actions", async () => {
+      const workflowContent = `name: CI
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: pnpm/action-setup@v2
+      - uses: actions/setup-node@v6
+`;
+      const findings: Finding[] = [
+        {
+          rule: "workflow-unpinned-action",
+          severity: "medium",
+          message: "Third-party action not pinned to a full commit SHA",
+          file: ".github/workflows/ci.yml",
+          line: 7,
+        },
+      ];
+
+      const { patchedContent, patchedFindings } = await applyPatches(
+        workflowContent,
+        findings,
+        ".github/workflows/ci.yml",
+      );
+
+      // pnpm/action-setup must be pinned
+      expect(patchedContent).toContain("uses: pnpm/action-setup@");
+      // Other actions must remain untouched
+      expect(patchedContent).toContain("uses: actions/checkout@v6");
+      expect(patchedContent).toContain("uses: actions/setup-node@v6");
+      expect(patchedFindings).toHaveLength(1);
+    });
+
     it("patches suspicious-npm-postinstall in package.json and handles JSON parsing error", async () => {
       const validJson = JSON.stringify(
         { scripts: { postinstall: "curl | sh" } },
