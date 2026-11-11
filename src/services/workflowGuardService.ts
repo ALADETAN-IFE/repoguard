@@ -1093,7 +1093,7 @@ export async function getRepoCiGuardStatus(
         if (!Array.isArray(fileData) && "content" in fileData) {
           const raw = Buffer.from(fileData.content, "base64").toString("utf8");
           if (
-            raw.includes("ALADETAN-IFE/repoguard-action") ||
+            raw.includes(REPO_GUARD_ACTION_NAME) ||
             raw.includes("@repoguard/scanner")
           ) {
             result = {
