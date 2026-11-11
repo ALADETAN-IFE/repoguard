@@ -13,7 +13,9 @@ import { getHealthReport } from "../utils/health";
 import logger from "../utils/logger";
 import {
   suggestActionForTenant,
+  autoHealTenantRepositories,
   type SuggestActionResult,
+  type AutoHealResult,
 } from "../services/workflowGuardService";
 
 export interface TenantSummary {
@@ -469,6 +471,98 @@ export async function suggestRepoGuardAction(
   } catch (err) {
     const message =
       err instanceof Error ? err.message : "Failed to suggest action";
+    res.status(500).json({ error: message });
+  }
+}
+
+/**
+ * Admin endpoint: Inspects ALL RepoGuard PRs (both remediation Fix PRs and CI Protection PRs)
+ * across selected user(s)' repositories.
+ * Auto-heals merge conflicts, failed status checks, or outdated commit SHAs by
+ * updating branches in-place or closing conflicted PRs and regenerating clean PRs.
+ */
+export async function autoHealUserPRs(
+  req: Request,
+  res: Response,
+): Promise<void> {
+  const body = (req.body || {}) as {
+    tenants?: string[];
+    repo?: string;
+  };
+  const tenants = Array.isArray(body.tenants) ? body.tenants : undefined;
+  const targetRepo = typeof body.repo === "string" ? body.repo : undefined;
+  const selectAll =
+    !tenants ||
+    tenants.length === 0 ||
+    tenants.includes("*") ||
+    tenants.includes("all");
+
+  try {
+    const filter = selectAll
+      ? { uninstalledAt: null }
+      : {
+          owner: {
+            $in: (tenants || []).map(
+              (t: string) => new RegExp(`^${t.trim()}$`, "i"),
+            ),
+          },
+          uninstalledAt: null,
+        };
+
+    const installations = await Installation.find(filter).lean();
+
+    if (installations.length === 0) {
+      res.status(404).json({
+        error:
+          "No active tenant installations found matching specified criteria",
+      });
+      return;
+    }
+
+    logAuditEvent({
+      event: "admin.auto_heal_prs",
+      source: "admin_console",
+      status: "info",
+      detail: `Administrator triggered universal PR auto-healing across ${installations.length} tenant(s).`,
+    });
+
+    const allResults: AutoHealResult[] = [];
+
+    for (const inst of installations) {
+      try {
+        const rawOctokit = await githubApp.getInstallationOctokit(
+          inst.installationId,
+        );
+        const client = normaliseOctokit(rawOctokit);
+        const results = await autoHealTenantRepositories(
+          client,
+          inst.owner,
+          targetRepo,
+        );
+        allResults.push(...results);
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        logger.error(
+          `[admin] Failed to auto-heal PRs for ${inst.owner}: ${msg}`,
+        );
+        allResults.push({
+          owner: inst.owner,
+          repo: targetRepo || "*",
+          prType: "none",
+          action: "error",
+          message: msg,
+        });
+      }
+    }
+
+    res.json({
+      success: true,
+      totalTenants: installations.length,
+      results: allResults,
+    });
+  } catch (err) {
+    const message =
+      err instanceof Error ? err.message : "Failed to auto-heal PRs";
     res.status(500).json({ error: message });
   }
 }

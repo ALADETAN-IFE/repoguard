@@ -25,6 +25,7 @@ import {
   getInstallationRepos,
   getInstallationFixPRs,
   scanSingleRepository,
+  addCiGuardToRepo,
   getRepoFixPRs,
   getRepoFixPRDiff,
   approveFixPR,
@@ -38,6 +39,7 @@ import {
   getAdminStream,
   rescanTenant,
   suggestRepoGuardAction,
+  autoHealUserPRs,
 } from "./controllers/admin";
 import {
   initiateGitHubOAuth,
@@ -303,6 +305,16 @@ router.post(
   },
 );
 
+// On-Demand Single Repository CI Guard
+router.post(
+  "/api/repos/:owner/:repo/ci-guard",
+  apiRateLimit,
+  requireApiKey,
+  (req, res) => {
+    void addCiGuardToRepo(req, res);
+  },
+);
+
 // Repository Fix PRs
 router.get(
   "/api/repos/:owner/:repo/pulls",
@@ -503,6 +515,16 @@ router.post(
   requireRescanSecret,
   (req, res) => {
     void suggestRepoGuardAction(req, res);
+  },
+);
+
+// Admin Universal PR Auto-Healing Across Repositories
+router.post(
+  "/api/admin/installations/auto-heal-prs",
+  apiRateLimit,
+  requireRescanSecret,
+  (req, res) => {
+    void autoHealUserPRs(req, res);
   },
 );
 

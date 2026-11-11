@@ -1,6 +1,6 @@
 import yaml from "js-yaml";
 import logger from "../utils/logger";
-import { Installation } from "../models";
+import { Installation, Finding } from "../models";
 import type { OctokitClient } from "../types";
 
 export interface SuggestActionResult {
@@ -428,98 +428,159 @@ export async function suggestActionForRepo(
     );
 
     if (existingPR) {
-      // If a suggestion PR is already open, check if it needs updating to the pinned commit SHA
+      let isConflicted = false;
       try {
-        const { data: prFiles } = await octokit.request(
-          "GET /repos/{owner}/{repo}/pulls/{pull_number}/files",
-          {
-            owner,
-            repo,
-            pull_number: existingPR.number,
-          },
+        const { data: prDetails } = await octokit.request(
+          "GET /repos/{owner}/{repo}/pulls/{pull_number}",
+          { owner, repo, pull_number: existingPR.number },
         );
+        const details = prDetails as {
+          mergeable?: boolean | null;
+          mergeable_state?: string;
+        };
+        if (
+          details.mergeable === false ||
+          details.mergeable_state === "dirty"
+        ) {
+          isConflicted = true;
+        }
+      } catch {
+        // ignore
+      }
 
-        const workflowFile = (
-          prFiles as Array<{ filename: string; status: string }>
-        ).find(
-          (f) =>
-            f.filename.startsWith(".github/workflows/") &&
-            (f.filename.endsWith(".yml") || f.filename.endsWith(".yaml")),
+      if (isConflicted) {
+        logger.warn(
+          `[workflow-guard] Existing suggestion PR #${existingPR.number} in ${owner}/${repo} is conflicted — closing to recreate`,
         );
-
-        if (workflowFile) {
-          const { data: fileData } = await octokit.request(
-            "GET /repos/{owner}/{repo}/contents/{path}",
+        try {
+          await octokit.request(
+            "POST /repos/{owner}/{repo}/issues/{issue_number}/comments",
             {
               owner,
               repo,
-              path: workflowFile.filename,
-              ref: existingPR.head.ref,
+              issue_number: existingPR.number,
+              body: [
+                "⚠️ **RepoGuard Notice: Suggestion PR Reset**",
+                "",
+                "This automated CI protection PR had merge conflicts with the base branch (checks awaiting conflict resolution).",
+                "",
+                "Closing this PR and regenerating a clean, conflict-free PR against current HEAD.",
+              ].join("\n"),
+            },
+          );
+          await octokit.request(
+            "PATCH /repos/{owner}/{repo}/pulls/{pull_number}",
+            { owner, repo, pull_number: existingPR.number, state: "closed" },
+          );
+          try {
+            await octokit.request(
+              "DELETE /repos/{owner}/{repo}/git/refs/{ref}",
+              { owner, repo, ref: `heads/${existingPR.head.ref}` },
+            );
+          } catch {
+            // ignore
+          }
+        } catch (closeErr) {
+          logger.warn(
+            `[workflow-guard] Failed to close conflicted PR #${existingPR.number}: ${String(closeErr)}`,
+          );
+        }
+        // Fall through so the remainder creates a fresh branch & PR against latest commit!
+      } else {
+        // If a suggestion PR is already open and not conflicted, check if it needs updating to the pinned commit SHA
+        try {
+          const { data: prFiles } = await octokit.request(
+            "GET /repos/{owner}/{repo}/pulls/{pull_number}/files",
+            {
+              owner,
+              repo,
+              pull_number: existingPR.number,
             },
           );
 
-          if (!Array.isArray(fileData) && "content" in fileData) {
-            const rawContent = Buffer.from(fileData.content, "base64").toString(
-              "utf8",
-            );
-            const currentUses = `uses: ${actionUses}`;
-            const actionRegex =
-              /uses:\s+ALADETAN-IFE\/repoguard-action@[^\s#]+(\s*#[^\n]*)?/g;
+          const workflowFile = (
+            prFiles as Array<{ filename: string; status: string }>
+          ).find(
+            (f) =>
+              f.filename.startsWith(".github/workflows/") &&
+              (f.filename.endsWith(".yml") || f.filename.endsWith(".yaml")),
+          );
 
-            if (
-              !rawContent.includes(currentUses) &&
-              actionRegex.test(rawContent)
-            ) {
-              const updatedContent = rawContent.replace(
-                actionRegex,
-                currentUses,
-              );
-
-              await octokit.request(
-                "PUT /repos/{owner}/{repo}/contents/{path}",
-                {
-                  owner,
-                  repo,
-                  path: workflowFile.filename,
-                  message:
-                    "ci(security): pin RepoGuard action to commit SHA to satisfy workflow-unpinned-action",
-                  content: Buffer.from(updatedContent, "utf8").toString(
-                    "base64",
-                  ),
-                  branch: existingPR.head.ref,
-                  sha: fileData.sha,
-                },
-              );
-
-              logger.info(
-                `[workflow-guard] Updated existing PR #${existingPR.number} (${workflowFile.filename}) in ${owner}/${repo} to latest RepoGuard Action commit SHA`,
-              );
-
-              return {
+          if (workflowFile) {
+            const { data: fileData } = await octokit.request(
+              "GET /repos/{owner}/{repo}/contents/{path}",
+              {
                 owner,
                 repo,
-                prNumber: existingPR.number,
-                prUrl: existingPR.html_url,
-                status: "updated",
-                message: `Updated existing suggestion PR #${existingPR.number} with latest pinned commit SHA.`,
-              };
+                path: workflowFile.filename,
+                ref: existingPR.head.ref,
+              },
+            );
+
+            if (!Array.isArray(fileData) && "content" in fileData) {
+              const rawContent = Buffer.from(
+                fileData.content,
+                "base64",
+              ).toString("utf8");
+              const currentUses = `uses: ${actionUses}`;
+              const actionRegex =
+                /uses:\s+ALADETAN-IFE\/repoguard-action@[^\s#]+(\s*#[^\n]*)?/g;
+
+              if (
+                !rawContent.includes(currentUses) &&
+                actionRegex.test(rawContent)
+              ) {
+                const updatedContent = rawContent.replace(
+                  actionRegex,
+                  currentUses,
+                );
+
+                await octokit.request(
+                  "PUT /repos/{owner}/{repo}/contents/{path}",
+                  {
+                    owner,
+                    repo,
+                    path: workflowFile.filename,
+                    message:
+                      "ci(security): pin RepoGuard action to commit SHA to satisfy workflow-unpinned-action",
+                    content: Buffer.from(updatedContent, "utf8").toString(
+                      "base64",
+                    ),
+                    branch: existingPR.head.ref,
+                    sha: fileData.sha,
+                  },
+                );
+
+                logger.info(
+                  `[workflow-guard] Updated existing PR #${existingPR.number} (${workflowFile.filename}) in ${owner}/${repo} to latest RepoGuard Action commit SHA`,
+                );
+
+                return {
+                  owner,
+                  repo,
+                  prNumber: existingPR.number,
+                  prUrl: existingPR.html_url,
+                  status: "updated",
+                  message: `Updated existing suggestion PR #${existingPR.number} with latest pinned commit SHA.`,
+                };
+              }
             }
           }
+        } catch (prUpdateErr) {
+          logger.warn(
+            `[workflow-guard] Failed to inspect/update existing PR #${existingPR.number} files in ${owner}/${repo}: ${prUpdateErr instanceof Error ? prUpdateErr.message : String(prUpdateErr)}`,
+          );
         }
-      } catch (prUpdateErr) {
-        logger.warn(
-          `[workflow-guard] Failed to inspect/update existing PR #${existingPR.number} files in ${owner}/${repo}: ${prUpdateErr instanceof Error ? prUpdateErr.message : String(prUpdateErr)}`,
-        );
-      }
 
-      return {
-        owner,
-        repo,
-        prNumber: existingPR.number,
-        prUrl: existingPR.html_url,
-        status: "pr_already_open",
-        message: `A suggestion PR (#${existingPR.number}) is already open.`,
-      };
+        return {
+          owner,
+          repo,
+          prNumber: existingPR.number,
+          prUrl: existingPR.html_url,
+          status: "pr_already_open",
+          message: `A suggestion PR (#${existingPR.number}) is already open.`,
+        };
+      }
     }
 
     // 2. Resolve default branch
@@ -924,6 +985,445 @@ export async function suggestActionForTenant(
       ...(firstCreatedPRNumber ? { actionPRNumber: firstCreatedPRNumber } : {}),
     },
   );
+
+  return results;
+}
+
+// ─── CI Guard Status Helpers & In-Memory Cache ───────────────────────────────
+
+export interface RepoCiGuardStatus {
+  isCiGuarded: boolean;
+  ciGuardStatus: "guarded" | "not_guarded" | "pr_open";
+  ciGuardPrUrl?: string;
+  ciGuardPrNumber?: number;
+}
+
+const ciGuardCache = new Map<
+  string,
+  { data: RepoCiGuardStatus; expiresAt: number }
+>();
+
+export function invalidateCiGuardStatusCache(
+  owner: string,
+  repo?: string,
+): void {
+  if (repo) {
+    ciGuardCache.delete(`${owner}/${repo}`.toLowerCase());
+  } else {
+    for (const key of ciGuardCache.keys()) {
+      if (key.startsWith(`${owner.toLowerCase()}/`)) {
+        ciGuardCache.delete(key);
+      }
+    }
+  }
+}
+
+export async function getRepoCiGuardStatus(
+  octokit: OctokitClient,
+  owner: string,
+  repo: string,
+  defaultBranch = "main",
+): Promise<RepoCiGuardStatus> {
+  const cacheKey = `${owner}/${repo}`.toLowerCase();
+  const cached = ciGuardCache.get(cacheKey);
+  if (cached && cached.expiresAt > Date.now()) {
+    return cached.data;
+  }
+
+  let result: RepoCiGuardStatus = {
+    isCiGuarded: false,
+    ciGuardStatus: "not_guarded",
+  };
+
+  try {
+    // 1. Check open PRs for repoguard/ci-protection
+    const { data: openPRs } = await octokit.request(
+      "GET /repos/{owner}/{repo}/pulls",
+      { owner, repo, state: "open", per_page: 30 },
+    );
+
+    const ciPR = (
+      openPRs as Array<{
+        number: number;
+        html_url: string;
+        head: { ref: string };
+        title: string;
+      }>
+    ).find(
+      (pr) =>
+        pr.head.ref.startsWith("repoguard/ci-protection") ||
+        pr.head.ref.startsWith("repoguard/pin-ci-protection") ||
+        pr.title
+          .toLowerCase()
+          .includes("repoguard pre-execution security gate") ||
+        pr.title.toLowerCase().includes("pin repoguard action"),
+    );
+
+    if (ciPR) {
+      result = {
+        isCiGuarded: false,
+        ciGuardStatus: "pr_open",
+        ciGuardPrUrl: ciPR.html_url,
+        ciGuardPrNumber: ciPR.number,
+      };
+    }
+
+    // 2. Check workflow files on default branch
+    let workflowFiles: Array<{ name: string; path: string }> = [];
+    try {
+      const { data: contents } = await octokit.request(
+        "GET /repos/{owner}/{repo}/contents/{path}",
+        { owner, repo, path: ".github/workflows", ref: defaultBranch },
+      );
+      if (Array.isArray(contents)) {
+        workflowFiles = contents
+          .filter((f) => f.name.endsWith(".yml") || f.name.endsWith(".yaml"))
+          .map((f) => ({ name: f.name, path: f.path }));
+      }
+    } catch {
+      // no .github/workflows directory
+    }
+
+    for (const file of workflowFiles) {
+      try {
+        const { data: fileData } = await octokit.request(
+          "GET /repos/{owner}/{repo}/contents/{path}",
+          { owner, repo, path: file.path, ref: defaultBranch },
+        );
+        if (!Array.isArray(fileData) && "content" in fileData) {
+          const raw = Buffer.from(fileData.content, "base64").toString("utf8");
+          if (
+            raw.includes("ALADETAN-IFE/repoguard-action") ||
+            raw.includes("@repoguard/scanner")
+          ) {
+            result = {
+              isCiGuarded: true,
+              ciGuardStatus: "guarded",
+            };
+            break;
+          }
+        }
+      } catch {
+        // skip unreadable file
+      }
+    }
+  } catch (err) {
+    logger.warn(
+      `[workflow-guard] Error getting CI guard status for ${owner}/${repo}: ${String(err)}`,
+    );
+  }
+
+  ciGuardCache.set(cacheKey, {
+    data: result,
+    expiresAt: Date.now() + 2 * 60 * 1000,
+  });
+  return result;
+}
+
+// ─── Universal Auto-Healing & PR Maintenance Across All RepoGuard PRs ───────
+
+export interface AutoHealResult {
+  owner: string;
+  repo: string;
+  prNumber?: number;
+  prUrl?: string;
+  prType: "fix" | "ci_guard" | "none";
+  action: "recreated" | "updated" | "closed" | "created" | "healthy" | "error";
+  message: string;
+}
+
+export async function autoHealTenantRepositories(
+  octokit: OctokitClient,
+  owner: string,
+  targetRepo?: string,
+): Promise<AutoHealResult[]> {
+  logger.info(
+    `[workflow-guard] Starting auto-heal PR maintenance for tenant "${owner}" (targetRepo: ${targetRepo || "all"})`,
+  );
+
+  let reposToProcess: string[] = [];
+
+  if (targetRepo) {
+    reposToProcess = [targetRepo];
+  } else {
+    try {
+      const allRepos = await fetchTenantRepos(octokit);
+      reposToProcess = allRepos.map((r) => r.name);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      logger.error(
+        `[workflow-guard] Failed to fetch repositories for auto-heal in ${owner}: ${msg}`,
+      );
+      return [
+        {
+          owner,
+          repo: "*",
+          prType: "none",
+          action: "error",
+          message: "Failed to fetch repositories for tenant.",
+        },
+      ];
+    }
+  }
+
+  const results: AutoHealResult[] = [];
+  const { openFixPR } = await import("../pullRequest");
+  const { scanFullRepoWithDetails } = await import("../webhooks/installation");
+
+  for (const repo of reposToProcess) {
+    try {
+      invalidateCiGuardStatusCache(owner, repo);
+
+      // Fetch all open PRs
+      const { data: openPRs } = await octokit.request(
+        "GET /repos/{owner}/{repo}/pulls",
+        { owner, repo, state: "open", per_page: 50 },
+      );
+
+      const repoGuardPRs = (
+        openPRs as Array<{
+          number: number;
+          html_url: string;
+          head: { ref: string; sha?: string };
+          title: string;
+          state: string;
+        }>
+      ).filter(
+        (pr) =>
+          pr.head.ref.startsWith("repoguard/") ||
+          pr.title.toLowerCase().includes("repoguard"),
+      );
+
+      if (repoGuardPRs.length > 0) {
+        for (const pr of repoGuardPRs) {
+          const isFixPR =
+            pr.head.ref.startsWith("repoguard/fixes-") ||
+            pr.title.toLowerCase().includes("threat") ||
+            pr.title.toLowerCase().includes("security vulnerability");
+
+          const prType: "fix" | "ci_guard" = isFixPR ? "fix" : "ci_guard";
+
+          // Fetch detailed status
+          let isConflicted = false;
+          let hasFailingCheck = false;
+
+          try {
+            const { data: prDetails } = await octokit.request(
+              "GET /repos/{owner}/{repo}/pulls/{pull_number}",
+              { owner, repo, pull_number: pr.number },
+            );
+            const details = prDetails as {
+              mergeable?: boolean | null;
+              mergeable_state?: string;
+              head: { sha: string };
+            };
+
+            if (
+              details.mergeable === false ||
+              details.mergeable_state === "dirty"
+            ) {
+              isConflicted = true;
+            }
+
+            if (details.head?.sha) {
+              try {
+                const { data: checkRuns } = await octokit.request(
+                  "GET /repos/{owner}/{repo}/commits/{ref}/check-runs",
+                  { owner, repo, ref: details.head.sha },
+                );
+                const checks = checkRuns as {
+                  check_runs: Array<{ conclusion?: string }>;
+                };
+                if (checks.check_runs.some((c) => c.conclusion === "failure")) {
+                  hasFailingCheck = true;
+                }
+              } catch {
+                // ignore check runs lookup failure
+              }
+            }
+          } catch {
+            // ignore
+          }
+
+          if (isConflicted || hasFailingCheck) {
+            logger.warn(
+              `[workflow-guard] Auto-healing conflicted/failing ${prType} PR #${pr.number} in ${owner}/${repo}`,
+            );
+
+            // Close stale PR
+            try {
+              await octokit.request(
+                "POST /repos/{owner}/{repo}/issues/{issue_number}/comments",
+                {
+                  owner,
+                  repo,
+                  issue_number: pr.number,
+                  body: [
+                    "⚠️ **RepoGuard Notice: PR Auto-Healed and Reset**",
+                    "",
+                    isConflicted
+                      ? "This automated PR had merge conflicts with the base branch (checks awaiting conflict resolution)."
+                      : "This automated PR failed status checks after recent commits.",
+                    "",
+                    "Closing this PR and deleting the branch so RepoGuard can generate a clean, conflict-free PR against current HEAD.",
+                  ].join("\n"),
+                },
+              );
+              await octokit.request(
+                "PATCH /repos/{owner}/{repo}/pulls/{pull_number}",
+                { owner, repo, pull_number: pr.number, state: "closed" },
+              );
+              try {
+                await octokit.request(
+                  "DELETE /repos/{owner}/{repo}/git/refs/{ref}",
+                  { owner, repo, ref: `heads/${pr.head.ref}` },
+                );
+              } catch {
+                // ignore
+              }
+            } catch (closeErr) {
+              logger.warn(
+                `[workflow-guard] Could not cleanly close PR #${pr.number}: ${String(closeErr)}`,
+              );
+            }
+
+            if (isFixPR) {
+              // Rescan repo default branch and recreate Fix PR
+              const scanRes = await scanFullRepoWithDetails(
+                octokit,
+                owner,
+                repo,
+              );
+              if (scanRes.findings.length > 0) {
+                const fixRes = await openFixPR(octokit, {
+                  owner,
+                  repo,
+                  findings: scanRes.findings,
+                });
+                results.push({
+                  owner,
+                  repo,
+                  prNumber: fixRes?.pr?.number,
+                  prUrl: fixRes?.pr?.html_url,
+                  prType: "fix",
+                  action: "recreated",
+                  message: `Closed conflicted Fix PR #${pr.number} and opened fresh clean remediation PR #${fixRes?.pr?.number ?? ""}.`,
+                });
+              } else {
+                results.push({
+                  owner,
+                  repo,
+                  prNumber: pr.number,
+                  prType: "fix",
+                  action: "closed",
+                  message: `Closed obsolete Fix PR #${pr.number} (repository is now clean).`,
+                });
+              }
+            } else {
+              // Recreate CI Guard suggestion PR
+              const ciRes = await suggestActionForRepo(octokit, owner, repo);
+              results.push({
+                owner,
+                repo,
+                prNumber: ciRes.prNumber,
+                prUrl: ciRes.prUrl,
+                prType: "ci_guard",
+                action: "recreated",
+                message: `Closed conflicted CI Guard PR #${pr.number} and opened fresh clean suggestion PR #${ciRes.prNumber ?? ""}.`,
+              });
+            }
+          } else {
+            // PR is not conflicted
+            if (!isFixPR) {
+              // Check if CI suggestion PR has outdated commit SHA and update if needed
+              const ciRes = await suggestActionForRepo(octokit, owner, repo);
+              if (ciRes.status === "updated") {
+                results.push({
+                  owner,
+                  repo,
+                  prNumber: pr.number,
+                  prUrl: pr.html_url,
+                  prType: "ci_guard",
+                  action: "updated",
+                  message: `Updated CI Guard PR #${pr.number} with latest pinned commit SHA.`,
+                });
+              } else {
+                results.push({
+                  owner,
+                  repo,
+                  prNumber: pr.number,
+                  prUrl: pr.html_url,
+                  prType: "ci_guard",
+                  action: "healthy",
+                  message: `CI Guard PR #${pr.number} is healthy and mergeable.`,
+                });
+              }
+            } else {
+              results.push({
+                owner,
+                repo,
+                prNumber: pr.number,
+                prUrl: pr.html_url,
+                prType: "fix",
+                action: "healthy",
+                message: `Remediation Fix PR #${pr.number} is healthy and mergeable.`,
+              });
+            }
+          }
+        }
+      } else {
+        // No open RepoGuard PRs exist on this repository
+        const unresolvedThreats = await Finding.countDocuments({
+          owner: new RegExp(`^${owner}$`, "i"),
+          repo,
+          resolvedAt: null,
+        });
+
+        if (unresolvedThreats > 0) {
+          const scanRes = await scanFullRepoWithDetails(octokit, owner, repo);
+          if (scanRes.findings.length > 0) {
+            const fixRes = await openFixPR(octokit, {
+              owner,
+              repo,
+              findings: scanRes.findings,
+            });
+            results.push({
+              owner,
+              repo,
+              prNumber: fixRes?.pr?.number,
+              prUrl: fixRes?.pr?.html_url,
+              prType: "fix",
+              action: "created",
+              message: `Opened fresh Fix PR #${fixRes?.pr?.number ?? ""} for ${scanRes.findings.length} unresolved finding(s).`,
+            });
+          }
+        } else {
+          const ciStatus = await getRepoCiGuardStatus(octokit, owner, repo);
+          results.push({
+            owner,
+            repo,
+            prType: "ci_guard",
+            action: "healthy",
+            message: ciStatus.isCiGuarded
+              ? "Repository is clean and CI guarded."
+              : "Repository is clean (CI guard not yet configured).",
+          });
+        }
+      }
+    } catch (repoErr) {
+      const msg = repoErr instanceof Error ? repoErr.message : String(repoErr);
+      logger.error(
+        `[workflow-guard] Error auto-healing repo ${owner}/${repo}: ${msg}`,
+      );
+      results.push({
+        owner,
+        repo,
+        prType: "none",
+        action: "error",
+        message: msg,
+      });
+    }
+  }
 
   return results;
 }

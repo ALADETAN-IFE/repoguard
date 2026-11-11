@@ -17,6 +17,11 @@ import {
   getServerSession,
   updateServerSessionTokens,
 } from "../services/sessionStore";
+import {
+  getRepoCiGuardStatus,
+  invalidateCiGuardStatusCache,
+  suggestActionForRepo,
+} from "../services/workflowGuardService";
 import { isAuthorizedFixBranchPusher } from "../utils/botAuth";
 import type { AuthenticatedRequest } from "../middleware";
 import type { GitHubInstallationRepository } from "../types";
@@ -222,7 +227,7 @@ export const getInstallationRepos = async (
 
     const reposWithStats = await Promise.all(
       reposData.map(async (r: GitHubInstallationRepository) => {
-        const [latestScan, openFindingsCount] = await Promise.all([
+        const [latestScan, openFindingsCount, ciStatus] = await Promise.all([
           Scan.findOne({
             installationId: installation.installationId,
             repo: r.name,
@@ -234,6 +239,12 @@ export const getInstallationRepos = async (
             repo: r.name,
             resolvedAt: null,
           }),
+          getRepoCiGuardStatus(
+            client,
+            installation.owner,
+            r.name,
+            r.default_branch || "main",
+          ),
         ]);
 
         return {
@@ -247,6 +258,10 @@ export const getInstallationRepos = async (
           lastScanAt: latestScan?.completedAt || latestScan?.startedAt || null,
           findingsCount: openFindingsCount,
           openFixPrsCount: openFindingsCount > 0 ? 1 : 0,
+          isCiGuarded: ciStatus.isCiGuarded,
+          ciGuardStatus: ciStatus.ciGuardStatus,
+          ciGuardPrUrl: ciStatus.ciGuardPrUrl,
+          ciGuardPrNumber: ciStatus.ciGuardPrNumber,
         };
       }),
     );
@@ -1248,5 +1263,55 @@ export const getFindings = async (
     const message = err instanceof Error ? err.message : String(err);
     logger.error(`[api/findings] ERROR: Failed to get findings: ${message}`);
     res.status(500).json({ error: "Internal server error" });
+  }
+};
+
+/**
+ * POST /api/repos/:owner/:repo/ci-guard
+ * User endpoint: Dispatches RepoGuard CI protection suggestion PR to a single repository
+ */
+export const addCiGuardToRepo = async (
+  req: Request,
+  res: Response,
+): Promise<void> => {
+  const { owner, repo } = req.params;
+  logger.info(`[api/repos/ci-guard] Adding CI guard for ${owner}/${repo}`);
+
+  try {
+    const session = (req as AuthenticatedRequest).userSession;
+    if (session && !isAuthorizedForOwner(session, owner)) {
+      res
+        .status(403)
+        .json({ error: "Access denied for this repository owner" });
+      return;
+    }
+
+    const installation = await Installation.findOne({
+      owner: new RegExp(`^${owner}$`, "i"),
+      uninstalledAt: null,
+    }).lean();
+
+    if (!installation) {
+      res
+        .status(404)
+        .json({ error: `Installation not found for owner '${owner}'` });
+      return;
+    }
+
+    const octokit = await githubApp.getInstallationOctokit(
+      installation.installationId,
+    );
+    const client = normaliseOctokit(octokit);
+
+    invalidateCiGuardStatusCache(owner, repo);
+    const result = await suggestActionForRepo(client, owner, repo);
+
+    res.json({ success: true, result });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    logger.error(
+      `[api/repos/ci-guard] Error adding CI guard for ${owner}/${repo}: ${message}`,
+    );
+    res.status(500).json({ error: message });
   }
 };
