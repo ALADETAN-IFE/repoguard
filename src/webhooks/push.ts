@@ -5,8 +5,8 @@ import { createCheckRun, updateCheckRun } from "../checks";
 import { sendAlert } from "../alerts";
 import {
   closeRepoGuardPRsAndIssues,
+  getExistingRepoGuardFixPR,
   getOpenRepoGuardIssue,
-  hasOpenRepoGuardFixPR,
   openFixPR,
   postReviewComments,
 } from "../pullRequest";
@@ -505,16 +505,110 @@ export function handlePush(
               );
             }
           } else {
-            const hasFixPR = await hasOpenRepoGuardFixPR(client, owner, repo);
-            if (hasFixPR) {
-              logger.info(
-                `[push] Open RepoGuard fix PR already exists for ${owner}/${repo} — skipping`,
-              );
+            const existingPR = await getExistingRepoGuardFixPR(
+              client,
+              owner,
+              repo,
+            );
+            if (existingPR) {
+              let shouldRecreate = payload.forced === true;
+              if (!shouldRecreate) {
+                try {
+                  const { data: prDetails } = await client.request(
+                    "GET /repos/{owner}/{repo}/pulls/{pull_number}",
+                    { owner, repo, pull_number: existingPR.number },
+                  );
+                  const isConflicted =
+                    (
+                      prDetails as {
+                        mergeable?: boolean;
+                        mergeable_state?: string;
+                      }
+                    ).mergeable === false ||
+                    (
+                      prDetails as {
+                        mergeable?: boolean;
+                        mergeable_state?: string;
+                      }
+                    ).mergeable_state === "dirty";
+                  if (isConflicted) {
+                    shouldRecreate = true;
+                  }
+                } catch {
+                  // ignore
+                }
+              }
+
+              if (shouldRecreate) {
+                logger.warn(
+                  `[push] Fix PR #${existingPR.number} is stale, conflicted, or base branch was force-pushed — resetting PR and branch`,
+                );
+                try {
+                  await client.request(
+                    "POST /repos/{owner}/{repo}/issues/{issue_number}/comments",
+                    {
+                      owner,
+                      repo,
+                      issue_number: existingPR.number,
+                      body: [
+                        "⚠️ **RepoGuard Notice: Remediation PR Reset Due to Base Branch Update**",
+                        "",
+                        payload.forced
+                          ? "The default branch was force-pushed, causing this automated remediation branch to be out of sync or conflicted."
+                          : "This automated remediation branch has merge conflicts with the default branch.",
+                        "",
+                        "Closing this PR and regenerating a clean, conflict-free remediation PR against current HEAD.",
+                      ].join("\n"),
+                    },
+                  );
+                  await client.request(
+                    "PATCH /repos/{owner}/{repo}/pulls/{pull_number}",
+                    {
+                      owner,
+                      repo,
+                      pull_number: existingPR.number,
+                      state: "closed",
+                    },
+                  );
+                  try {
+                    await client.request(
+                      "DELETE /repos/{owner}/{repo}/git/refs/{ref}",
+                      {
+                        owner,
+                        repo,
+                        ref: `heads/${existingPR.head.ref}`,
+                      },
+                    );
+                  } catch {
+                    // ignore
+                  }
+                } catch (err) {
+                  logger.warn(
+                    `[push] Could not cleanly close stale fix PR #${existingPR.number}: ${String(err)}`,
+                  );
+                }
+
+                logger.warn(
+                  `[push] ${findings.length} finding${findings.length > 1 ? "s" : ""} on default branch — opening fresh fix PR`,
+                );
+                await openFixPR(client, { owner, repo, findings, revertFiles });
+              } else {
+                logger.info(
+                  `[push] Open RepoGuard fix PR #${existingPR.number} already exists and is healthy for ${owner}/${repo} — skipping`,
+                );
+              }
             } else {
-              logger.warn(
-                `[push] ${findings.length} finding${findings.length > 1 ? "s" : ""} on default branch — opening fix PR`,
-              );
-              await openFixPR(client, { owner, repo, findings, revertFiles });
+              const issue = await getOpenRepoGuardIssue(client, owner, repo);
+              if (issue) {
+                logger.info(
+                  `[push] Open RepoGuard issue #${issue.number} already exists for ${owner}/${repo} — skipping`,
+                );
+              } else {
+                logger.warn(
+                  `[push] ${findings.length} finding${findings.length > 1 ? "s" : ""} on default branch — opening fix PR`,
+                );
+                await openFixPR(client, { owner, repo, findings, revertFiles });
+              }
             }
           }
         }

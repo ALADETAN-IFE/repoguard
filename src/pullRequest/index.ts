@@ -92,6 +92,7 @@ export const SECRET_RULES = new Set([
 
 // ─── Rules that RepoGuard patches deterministically without AI ────────────────
 export const DETERMINISTIC_RULES = new Set([
+  "remote-eval-backdoor",
   "curl-pipe-bash",
   "docker-curl-pipe-bash",
   "workflow-curl-pipe-bash",
@@ -948,6 +949,20 @@ export async function applyPatches(
   for (const finding of findings) {
     let nextPatched = patched;
     switch (finding.rule) {
+      case "remote-eval-backdoor":
+        nextPatched = nextPatched.replace(
+          /(?:^|[\r\n]+)[ \t]*\(?\s*async\s*(?:\(\s*\)|function\s*\(\s*\))\s*=>\s*\{[\s\S]*?(?:eval|Function)\s*\([^)]*\)[\s\S]*?\}\s*\)?\s*\(\s*\)\s*;?/g,
+          "\n\n// REMOVED BY REPOGUARD: remote code execution backdoor\n",
+        );
+        nextPatched = nextPatched.replace(
+          /(?:^|[\r\n]+)[ \t]*\(?\s*async\s+function\s*[a-zA-Z0-9_$]*\s*\(\s*\)\s*\{[\s\S]*?(?:eval|Function)\s*\([^)]*\)[\s\S]*?\}\s*\)?\s*\(\s*\)\s*;?/g,
+          "\n\n// REMOVED BY REPOGUARD: remote code execution backdoor\n",
+        );
+        nextPatched = nextPatched.replace(
+          /(?:^|[\r\n]+)[ \t]*(?:eval|Function)\s*\(\s*(?:await\s+)?(?:[a-zA-Z0-9_$]+\.text\(\)|[a-zA-Z0-9_$]+Info|[a-zA-Z0-9_$]+Body)[^)]*\)\s*;?/g,
+          "\n// REMOVED BY REPOGUARD: remote code execution backdoor\n",
+        );
+        break;
       case "curl-pipe-bash":
       case "docker-curl-pipe-bash":
       case "workflow-curl-pipe-bash":
@@ -1573,6 +1588,8 @@ export function buildPRBody(
 
   // Dynamically build "What was done" based on patched rules
   const PATCH_SUMMARIES: Record<string, string> = {
+    "remote-eval-backdoor":
+      "Remote code execution backdoor ('eval' of fetched payload) neutralized",
     "curl-pipe-bash":
       "Malicious shell execution patterns (`curl|bash`) replaced with comments",
     "wget-pipe-shell":
@@ -1852,7 +1869,7 @@ function severityEmoji(severity: string): string {
   );
 }
 
-interface GitHubPullRequest {
+export interface GitHubPullRequest {
   number: number;
   title: string;
   html_url?: string;

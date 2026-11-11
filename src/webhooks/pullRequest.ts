@@ -22,10 +22,13 @@ interface PullRequestOpenedPayload {
     head: { sha: string; ref: string };
     changed_files: number;
     html_url?: string;
+    mergeable?: boolean | null;
+    mergeable_state?: string;
   };
   repository: {
     name: string;
     owner: { login: string };
+    default_branch?: string;
   };
   sender?: { login: string; type?: string };
 }
@@ -348,7 +351,121 @@ export function handlePullRequestOpened(
         return;
       }
 
+      // ── Safeguard: Automatically close conflicted Fix PRs ─────────────────
+      if (
+        isFixBranch &&
+        (pull_request.mergeable === false ||
+          pull_request.mergeable_state === "dirty")
+      ) {
+        logger.warn(
+          `[pr] Fix PR #${prNumber} (${pull_request.head.ref}) has merge conflicts with base branch — closing to allow clean regeneration`,
+        );
+
+        try {
+          await client.request(
+            "POST /repos/{owner}/{repo}/issues/{issue_number}/comments",
+            {
+              owner,
+              repo,
+              issue_number: prNumber,
+              body: [
+                "⚠️ **RepoGuard Notice: Merge Conflict on Remediation Branch**",
+                "",
+                `This automated remediation branch (\`${pull_request.head.ref}\`) has merge conflicts with the base branch (checks awaiting conflict resolution).`,
+                "",
+                "Closing this PR and deleting the branch so RepoGuard can regenerate a clean remediation against current HEAD.",
+              ].join("\n"),
+            },
+          );
+
+          await client.request(
+            "PATCH /repos/{owner}/{repo}/pulls/{pull_number}",
+            {
+              owner,
+              repo,
+              pull_number: prNumber,
+              state: "closed",
+            },
+          );
+
+          try {
+            await client.request(
+              "DELETE /repos/{owner}/{repo}/git/refs/{ref}",
+              {
+                owner,
+                repo,
+                ref: `heads/${pull_request.head.ref}`,
+              },
+            );
+          } catch {
+            // ignore
+          }
+        } catch (err) {
+          logger.warn(
+            `[pr] Could not close conflicted fix PR #${prNumber}: ${String(err)}`,
+          );
+        }
+
+        return;
+      }
+
       if (findings.length > 0) {
+        if (isFixBranch) {
+          logger.warn(
+            `[pr] Fix PR #${prNumber} (${pull_request.head.ref}) failed security check with ${findings.length} finding(s) — closing invalid fix branch`,
+          );
+
+          try {
+            await client.request(
+              "POST /repos/{owner}/{repo}/issues/{issue_number}/comments",
+              {
+                owner,
+                repo,
+                issue_number: prNumber,
+                body: [
+                  "⚠️ **RepoGuard Notice: Automated Remediation Check Failed**",
+                  "",
+                  `This remediation branch (\`${pull_request.head.ref}\`) failed the security scan with ${findings.length} finding(s) (likely due to a manual push, force-push, or altered patch).`,
+                  "",
+                  "Automated remediation branches must remain 100% clean and verifiable. Closing this PR and deleting the branch so RepoGuard can regenerate a clean automated fix.",
+                ].join("\n"),
+              },
+            );
+
+            await client.request(
+              "PATCH /repos/{owner}/{repo}/pulls/{pull_number}",
+              {
+                owner,
+                repo,
+                pull_number: prNumber,
+                state: "closed",
+              },
+            );
+
+            try {
+              await client.request(
+                "DELETE /repos/{owner}/{repo}/git/refs/{ref}",
+                {
+                  owner,
+                  repo,
+                  ref: `heads/${pull_request.head.ref}`,
+                },
+              );
+              logger.info(
+                `[pr] Deleted failed fix branch ${pull_request.head.ref} in ${owner}/${repo}`,
+              );
+            } catch {
+              // ignore
+            }
+          } catch (err) {
+            logger.warn(
+              `[pr] Could not close failed fix PR #${prNumber}: ${String(err)}`,
+            );
+          }
+
+          return;
+        }
+
         logger.warn(
           `[pr] ${findings.length} finding(s) in PR #${prNumber} — posting review comments`,
         );

