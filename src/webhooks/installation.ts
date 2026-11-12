@@ -155,8 +155,11 @@ export async function scanRepoList(
   const checkpoint = await Checkpoint.findOne({ installationKey }).lean();
   const alreadyScanned = checkpoint?.scanned ?? [];
 
-  const pending = repos.filter((r) => !alreadyScanned.includes(r.full_name));
-  const alreadyDone = repos.length - pending.length;
+  const pending =
+    trigger === "manual"
+      ? repos
+      : repos.filter((r) => !alreadyScanned.includes(r.full_name));
+  const alreadyDone = trigger === "manual" ? 0 : repos.length - pending.length;
 
   if (alreadyDone > 0) {
     logger.info(
