@@ -28,7 +28,7 @@ RepoGuard is a GitHub App that scans your repositories for malicious code, obfus
 | `obfuscated-base64` | Critical | Base64-encoded eval payloads |
 | `python-exec-compile` | Critical | Python exec or compile-based code execution payloads |
 | `python-subprocess-network` | Critical | Python subprocess calls that reach out over the network |
-| `powershell&#8209;encoded&#8209;command` | Critical | Encoded PowerShell command execution |
+| `powershell-encoded-command` | Critical | Encoded PowerShell command execution |
 | `js-obfuscated-charcode` | Critical | JavaScript charCode-based obfuscation patterns |
 | `reverse-shell` | Critical | Bash and netcat reverse shell patterns |
 | `curl-pipe-bash` | Critical | Remote code execution via curl/wget piped to shell |
