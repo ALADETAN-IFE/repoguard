@@ -87,24 +87,49 @@ export const webhookRateLimit: RequestHandler = rateLimit({
   message: { error: "Too many requests" },
 });
 
-// ─── Security: Auth Endpoint Rate Limiter (Brute-Force Protection) ────────────
-// Drastically slows down scanning endpoints to a maximum of 5 requests per minute.
-
-export const authRateLimit: RequestHandler = rateLimit({
-  windowMs: RATE_LIMIT_WINDOW_MS, // 1 minute window
-  max: 5, // Max 5 attempts per minute per IP
+// ─── Security: Auth Initiation Rate Limiter (Brute-Force Protection) ──────────
+// Limits how many times a single IP can START the OAuth flow.
+// 20 per minute is plenty for a real user refreshing the login page; bots will
+// still be blocked long before they can enumerate anything useful.
+export const authInitRateLimit: RequestHandler = rateLimit({
+  windowMs: RATE_LIMIT_WINDOW_MS,
+  max: 20, // 20 login initiations per minute per IP
   standardHeaders: true,
   legacyHeaders: false,
   store: createRedisStore(),
   handler: (req, res, _next, options) => {
     logger.warn(
-      `[security] Brute-force protection triggered on auth route from IP ${getClientIp(req)}`,
+      `[security] Auth initiation rate limit triggered from IP ${getClientIp(req)}`,
     );
     res
       .status(options.statusCode)
       .json({ error: "Too many requests. Please try again later." });
   },
 });
+
+// ─── Security: OAuth Callback Rate Limiter ────────────────────────────────────
+// The callback is already protected by GitHub's one-time state+code parameters.
+// A higher limit prevents legitimate users being blocked if their browser
+// follows the redirect multiple times or retries on a slow connection.
+export const authCallbackRateLimit: RequestHandler = rateLimit({
+  windowMs: RATE_LIMIT_WINDOW_MS,
+  max: 40, // 40 callbacks per minute per IP
+  standardHeaders: true,
+  legacyHeaders: false,
+  store: createRedisStore(),
+  handler: (req, res, _next, options) => {
+    logger.warn(
+      `[security] Auth callback rate limit triggered from IP ${getClientIp(req)}`,
+    );
+    res
+      .status(options.statusCode)
+      .json({ error: "Too many requests. Please try again later." });
+  },
+});
+
+// Backward-compat alias — any other callers that import authRateLimit
+// (e.g. /api/scans) continue to work unchanged with the initiation limiter.
+export const authRateLimit = authInitRateLimit;
 
 // ─── Security: Dashboard API Rate Limiter ────────────────────────────────────
 // Allows smooth navigation and background SWR revalidation across pages (120 req/min)

@@ -2,6 +2,8 @@ import express, { raw, type Request, type Response } from "express";
 import {
   apiRateLimit,
   authRateLimit,
+  authInitRateLimit,
+  authCallbackRateLimit,
   handleWebhook,
   requireApiKey,
   requireRescanSecret,
@@ -94,13 +96,13 @@ router.get("/auth/callback", (req: Request, res: Response) => {
 });
 
 // GitHub OAuth Sign-In & Session Routes
-router.get("/auth/github", authRateLimit, (req: Request, res: Response) => {
+router.get("/auth/github", authInitRateLimit, (req: Request, res: Response) => {
   initiateGitHubOAuth(req, res);
 });
 
 router.get(
   "/auth/github/callback",
-  authRateLimit,
+  authCallbackRateLimit,
   (req: Request, res: Response) => {
     void handleGitHubOAuthCallback(req, res);
   },
