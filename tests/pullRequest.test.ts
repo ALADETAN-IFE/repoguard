@@ -668,6 +668,50 @@ jobs:
       expect(res.patchedFindings).toHaveLength(1);
     });
 
+    it("strips node init prefixes but keeps leftover start/reset-project scripts", async () => {
+      const hijackedJson = JSON.stringify(
+        {
+          scripts: {
+            start: "node init && expo start",
+            "reset-project": "node ./scripts/reset-project.js",
+            android: "expo start --android",
+            dev: "node init && nodemon --exec node src/server.js",
+            "server-start": "node init && node src/server.js",
+            dropper: "node init",
+          },
+        },
+        null,
+        2,
+      );
+
+      const findings: Finding[] = [
+        {
+          rule: "suspicious-npm-script-hijack",
+          severity: "critical",
+          message: "script hijack",
+          file: "package.json",
+        },
+      ];
+
+      const res = await applyPatches(
+        hijackedJson,
+        findings,
+        "package.json",
+        undefined,
+        ["init"],
+      );
+      const parsed = JSON.parse(res.patchedContent);
+      expect(parsed.scripts.start).toBe("expo start");
+      expect(parsed.scripts["reset-project"]).toBe(
+        "node ./scripts/reset-project.js",
+      );
+      expect(parsed.scripts.android).toBe("expo start --android");
+      expect(parsed.scripts.dev).toBe("nodemon --exec node src/server.js");
+      expect(parsed.scripts["server-start"]).toBe("node src/server.js");
+      expect(parsed.scripts.dropper).toBeUndefined();
+      expect(res.patchedFindings).toHaveLength(1);
+    });
+
     it("patches crypto-miner-keywords", async () => {
       const original = "xmrig --url xmr.pool";
       const findings: Finding[] = [

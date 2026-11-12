@@ -1421,12 +1421,26 @@ export async function applyPatches(
                     }
                   }
 
-                  // 4. Strip standalone inline curl / wget / powershell / node execution
-                  if (
+                  // 4. Drop only leftover malware commands. Keep real
+                  // `node src/server.js` / `node ./scripts/reset-project.js`.
+                  const isMalwareCommand =
                     /\b(?:curl|wget|powershell|node\s+-e)\b/i.test(cleaned) ||
-                    /^\s*node\s+[\w./\\-]+\s*$/i.test(cleaned) ||
-                    /^\s*[\w./\\-]*\binit(?:\.js)?\s*$/i.test(cleaned)
-                  ) {
+                    /^\s*(?:node\s+)?[\w./\\-]*\binit(?:\.js)?\s*$/i.test(
+                      cleaned,
+                    ) ||
+                    Boolean(
+                      deletedTargets?.some((target) => {
+                        const escaped = target.replace(
+                          /[.*+?^${}()|[\]\\]/g,
+                          "\\$&",
+                        );
+                        return new RegExp(
+                          `^\\s*(?:node\\s+)?[\\w./\\\\-]*${escaped}(?:\\.js)?\\s*$`,
+                          "i",
+                        ).test(cleaned);
+                      }),
+                    );
+                  if (isMalwareCommand) {
                     cleaned = "";
                   }
 
