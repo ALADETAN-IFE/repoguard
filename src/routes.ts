@@ -47,6 +47,7 @@ import {
   initiateGitHubOAuth,
   handleGitHubOAuthCallback,
   getCurrentUser,
+  logoutUser,
   isAuthorizedForOwner,
 } from "./controllers/auth";
 
@@ -110,6 +111,10 @@ router.get(
 
 router.get("/auth/me", (req: Request, res: Response) => {
   getCurrentUser(req, res);
+});
+
+router.post("/auth/logout", (req: Request, res: Response) => {
+  void logoutUser(req, res);
 });
 
 // Marketplace billing webhook — receives purchase/change/cancel events from GitHub

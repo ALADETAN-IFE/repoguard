@@ -2,7 +2,11 @@ import { type Request, type Response } from "express";
 import crypto from "crypto";
 import { Installation } from "../models";
 import logger from "../utils/logger";
-import { generateSessionId, saveServerSession } from "../services/sessionStore";
+import {
+  generateSessionId,
+  saveServerSession,
+  deleteServerSession,
+} from "../services/sessionStore";
 
 if (!process.env.SESSION_SECRET && process.env.NODE_ENV !== "test") {
   throw new Error("FATAL: SESSION_SECRET environment variable is missing.");
@@ -651,5 +655,47 @@ export const getCurrentUser = (req: Request, res: Response): void => {
     const message = err instanceof Error ? err.message : String(err);
     logger.error(`[auth/me] ERROR: ${message}`);
     res.status(500).json({ error: "Internal server error" });
+  }
+};
+
+/**
+ * POST /auth/logout
+ * Invalidates the server-side session in Redis and clears the session cookie.
+ * Client-side token cleanup is the caller's responsibility.
+ */
+export const logoutUser = async (
+  req: Request,
+  res: Response,
+): Promise<void> => {
+  try {
+    const cookies = parseCookies(req);
+    const authHeader = req.headers.authorization;
+    const token = authHeader?.startsWith("Bearer ")
+      ? authHeader.substring(7)
+      : cookies["repoguard_session"] || null;
+
+    if (token) {
+      const session = verifySessionToken(token);
+      if (session?.sessionId) {
+        await deleteServerSession(session.sessionId);
+        logger.info(
+          `[auth/logout] Server session invalidated for @${session.user?.login ?? "unknown"}`,
+        );
+      }
+    }
+
+    // Always clear the cookie regardless of token validity
+    res.clearCookie("repoguard_session", {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === "production",
+      sameSite: "lax",
+    });
+
+    res.json({ success: true });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    logger.error(`[auth/logout] ERROR: ${message}`);
+    // Still return success — the client should clear its local state
+    res.json({ success: true });
   }
 };
