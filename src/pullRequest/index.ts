@@ -447,7 +447,7 @@ export async function openFixPR(
             (f) => !file.patchedFindings.includes(f),
           );
           const header =
-            fileUnpatched.length > 0
+            fileUnpatched.length > 0 && canHaveCommentHeader(file.filePath)
               ? buildFileHeader(fileUnpatched, file.filePath)
               : "";
           const finalContent = header + file.patchedContent;
@@ -624,12 +624,13 @@ export async function openFixPR(
       // Only add a header comment block when there are findings that STILL need
       // manual review in this file. Fully auto-patched files don't get a header
       // — the inline replacement comments ("// REMOVED BY REPOGUARD: …") are
-      // already self-documenting.
+      // already self-documenting. JSON files never get a header — comments are
+      // not valid JSON and would corrupt the file.
       const fileUnpatched = file.fileFindings.filter(
         (f) => !file.patchedFindings.includes(f),
       );
       const header =
-        fileUnpatched.length > 0
+        fileUnpatched.length > 0 && canHaveCommentHeader(file.filePath)
           ? buildFileHeader(fileUnpatched, file.filePath)
           : "";
       const finalContent = header + file.patchedContent;
@@ -1817,6 +1818,26 @@ function getCommentPrefix(filePath: string): string {
     "php",
   ]);
   return slashSlashExts.has(ext) ? "//" : "#";
+}
+
+/**
+ * Returns false for file types that cannot contain freeform comment syntax.
+ * JSON files must never receive a `# REPOGUARD …` header — it produces
+ * invalid JSON that breaks every toolchain that reads the file.
+ */
+function canHaveCommentHeader(filePath: string): boolean {
+  const ext = filePath.split(".").pop()?.toLowerCase() ?? "";
+  const noCommentExts = new Set(["json", "jsonc"]);
+  const noCommentBasenames = new Set([
+    "package-lock.json",
+    "yarn.lock",
+    "pnpm-lock.yaml",
+    "composer.lock",
+    "Gemfile.lock",
+    "poetry.lock",
+  ]);
+  const basename = filePath.split("/").pop() ?? filePath;
+  return !noCommentExts.has(ext) && !noCommentBasenames.has(basename);
 }
 
 function buildFileHeader(findings: Finding[], filePath: string): string {
