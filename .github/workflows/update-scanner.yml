@@ -63,8 +63,27 @@ jobs:
           git commit -m "chore(deps): update @repoguard/scanner to ${RAW_VERSION}"
           git push origin "$BRANCH"
 
+          cat << EOF > pr_body.md
+          ## 📦 Dependency Update: \`@repoguard/scanner\`
+
+          Automated Pull Request to update \`@repoguard/scanner\` to \`${RAW_VERSION}\`.
+
+          ### Verification Results
+          - ✅ \`npm run check-format\` (Prettier)
+          - ✅ \`npm run typecheck\` (TypeScript)
+          - ✅ \`npm run lint\` (ESLint)
+          - ✅ \`npm test\` (Jest)
+          - ✅ \`npm run build\`
+
+          ---
+          *Triggered by GitHub Action run: [${{ github.run_id }}](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})*
+          EOF
+
+          # Remove 10-space leading indent from here-doc
+          sed -i 's/^          //' pr_body.md
+
           gh pr create \
             --title "chore(deps): update @repoguard/scanner to ${RAW_VERSION}" \
-            --body "Automated Pull Request to update \`@repoguard/scanner\` to \`${RAW_VERSION}\`.\n\nPassed \`npm run check-format\`, \`npm run typecheck\`, \`npm run lint\`, \`npm test\`, and \`npm run build\`.\n\nTriggered by GitHub Action run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}" \
+            --body-file pr_body.md \
             --base "${{ github.ref_name }}" \
             --head "$BRANCH"
