@@ -54,9 +54,10 @@ export function requireWebhookSignature(
 
 // ─── Shared Redis Configuration helper ────────────────────────────────────────
 
-const createRedisStore = (): RedisStore | undefined => {
+const createRedisStore = (prefix = "rl:"): RedisStore | undefined => {
   return redis
     ? new RedisStore({
+        prefix,
         // @ts-expect-error - Safely routes commands across different client versions
         // sendCommand: (...args: string[]) => redis.sendCommand(args),
         // For ioredis, use client.call(...) and spread the arguments list
@@ -77,7 +78,7 @@ export const webhookRateLimit: RequestHandler = rateLimit({
   standardHeaders: true,
   legacyHeaders: false,
   keyGenerator: (req) => getClientIp(req),
-  store: createRedisStore(),
+  store: createRedisStore("rl:webhook:"),
 
   handler: (req, res, _next, options) => {
     logger.warn(`[security] Rate limit exceeded for IP ${getClientIp(req)}`);
@@ -96,7 +97,8 @@ export const authInitRateLimit: RequestHandler = rateLimit({
   max: 20, // 20 login initiations per minute per IP
   standardHeaders: true,
   legacyHeaders: false,
-  store: createRedisStore(),
+  keyGenerator: (req) => getClientIp(req),
+  store: createRedisStore("rl:auth_init:"),
   handler: (req, res, _next, options) => {
     logger.warn(
       `[security] Auth initiation rate limit triggered from IP ${getClientIp(req)}`,
@@ -116,7 +118,8 @@ export const authCallbackRateLimit: RequestHandler = rateLimit({
   max: 40, // 40 callbacks per minute per IP
   standardHeaders: true,
   legacyHeaders: false,
-  store: createRedisStore(),
+  keyGenerator: (req) => getClientIp(req),
+  store: createRedisStore("rl:auth_callback:"),
   handler: (req, res, _next, options) => {
     logger.warn(
       `[security] Auth callback rate limit triggered from IP ${getClientIp(req)}`,
@@ -138,7 +141,8 @@ export const apiRateLimit: RequestHandler = rateLimit({
   max: 120, // Max 120 requests per minute per IP
   standardHeaders: true,
   legacyHeaders: false,
-  store: createRedisStore(),
+  keyGenerator: (req) => getClientIp(req),
+  store: createRedisStore("rl:api:"),
   handler: (req, res, _next, options) => {
     logger.warn(
       `[security] API rate limit exceeded on route from IP ${getClientIp(req)}`,
