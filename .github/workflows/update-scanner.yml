@@ -1,0 +1,68 @@
+name: Update Scanner Version
+
+on:
+  workflow_dispatch:
+    inputs:
+      scanner_version:
+        description: "Scanner version to install (e.g. latest, 1.0.10)"
+        required: true
+        default: "latest"
+        type: string
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  update-scanner:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: "npm"
+
+      - name: Configure git bot
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+      - name: Update @repoguard/scanner
+        run: |
+          npm install @repoguard/scanner@${{ inputs.scanner_version }}
+
+      - name: Run verification
+        run: |
+          npm run check-format
+          npm run typecheck
+          npm run lint
+          npm test
+          npm run build
+
+      - name: Commit and create Pull Request
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          VERSION=$(node -p "require('./package.json').dependencies['@repoguard/scanner']")
+          git add package.json package-lock.json
+          if git diff --staged --quiet; then
+            echo "No changes detected. Scanner is already at version ${VERSION}."
+            exit 0
+          fi
+
+          BRANCH="chore/update-scanner-${VERSION}-${{ github.run_number }}"
+          git checkout -b "$BRANCH"
+          git commit -m "chore(deps): update @repoguard/scanner to ${VERSION}"
+          git push origin "$BRANCH"
+
+          gh pr create \
+            --title "chore(deps): update @repoguard/scanner to ${VERSION}" \
+            --body "Automated Pull Request to update \`@repoguard/scanner\` to \`${VERSION}\`.\n\nPassed \`npm run check-format\`, \`npm run typecheck\`, \`npm run lint\`, \`npm test\`, and \`npm run build\`.\n\nTriggered by GitHub Action run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}" \
+            --base "${{ github.ref_name }}" \
+            --head "$BRANCH"
