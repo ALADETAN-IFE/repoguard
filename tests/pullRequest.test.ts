@@ -4,6 +4,9 @@ import {
   openFixPR,
   closeRepoGuardPRsAndIssues,
   postReviewComments,
+  resolveFindingLine,
+  MANUAL_REVIEW_SUMMARIES,
+  RULE_ACTIONABLE_DETAILS,
   SECRET_RULES,
   DETERMINISTIC_RULES,
   getExistingRepoGuardFixPR,
@@ -343,20 +346,21 @@ global.i = "malicious";
     });
 
     it("strips the var NX,SX,spin IIFE campaign payload from eslint.config.js instead of prettier-expanding it", async () => {
-      const original = [
-        '// https://docs.expo.dev/guides/using-eslint/',
-        'const { defineConfig } = require("eslint/config");',
-        'const expoConfig = require("eslint-config-expo/flat");',
-        "",
-        "module.exports = defineConfig([",
-        "  expoConfig,",
-        "  {",
-        '    ignores: ["dist/*"],',
-        "  },",
-        "]);",
-      ].join("\n") +
+      const original =
+        [
+          "// https://docs.expo.dev/guides/using-eslint/",
+          'const { defineConfig } = require("eslint/config");',
+          'const expoConfig = require("eslint-config-expo/flat");',
+          "",
+          "module.exports = defineConfig([",
+          "  expoConfig,",
+          "  {",
+          '    ignores: ["dist/*"],',
+          "  },",
+          "]);",
+        ].join("\n") +
         "\t".repeat(40) +
-        "var z = '-2728-1';var NX,SX,spin,splitLane,peel;(function(){var a=[\"\",\"*\",\"*0\"];function b(q,h){return q;}spin=b;splitLane=b;peel=b;NX=[6912847,367,20411,613,43759,5019283];!function(q,h){q.z=z;typeof module===h&&(q.test=module);}(global,require)})();";
+        'var z = \'-2728-1\';var NX,SX,spin,splitLane,peel;(function(){var a=["","*","*0"];function b(q,h){return q;}spin=b;splitLane=b;peel=b;NX=[6912847,367,20411,613,43759,5019283];!function(q,h){q.z=z;typeof module===h&&(q.test=module);}(global,require)})();';
 
       const findings: Finding[] = [
         {
@@ -2452,6 +2456,126 @@ jobs:
         "```suggestion\nconst token = process.env.GITHUB_TOKEN || '';\n```",
       );
       expect(commentBody).toContain("Rotate this secret immediately");
+    });
+
+    it("resolves line number and adds actionable guidance for dependency-wildcard-version without line", async () => {
+      const pkgContent = JSON.stringify(
+        {
+          name: "test-app",
+          dependencies: {
+            react: "^18.0.0",
+            "@vercel/analytics": "latest",
+          },
+        },
+        null,
+        2,
+      );
+
+      const findings: Finding[] = [
+        {
+          rule: "dependency-wildcard-version",
+          severity: "medium",
+          message:
+            "Insecure wildcard dependency version or direct HTTP tarball reference",
+          file: "package.json",
+          line: null as unknown as number,
+        },
+      ];
+
+      const patchedContent = new Map([["package.json", pkgContent]]);
+
+      await postReviewComments(
+        mockOctokit,
+        "owner",
+        "repo",
+        10,
+        "sha123",
+        findings,
+        patchedContent,
+        [],
+      );
+
+      const reviewCall = requestMock.mock.calls.find(
+        (c) =>
+          c[0] === "POST /repos/{owner}/{repo}/pulls/{pull_number}/reviews",
+      );
+      expect(reviewCall).toBeDefined();
+      const comment = reviewCall[1].comments[0];
+      expect(comment.path).toBe("package.json");
+      expect(comment.line).toBe(5); // line with "@vercel/analytics": "latest"
+      expect(comment.body).toContain(
+        "**RepoGuard** detected `dependency-wildcard-version`",
+      );
+      expect(comment.body).toContain("Pin exact version");
+      expect(comment.body).toContain("npm outdated");
+    });
+
+    it("gracefully falls back to individual review comments and PR comment if batch review fails", async () => {
+      requestMock.mockImplementation((endpoint: string) => {
+        if (
+          endpoint === "POST /repos/{owner}/{repo}/pulls/{pull_number}/reviews"
+        ) {
+          return Promise.reject(new Error("line must be part of the diff"));
+        }
+        return Promise.resolve({ data: {} });
+      });
+
+      const findings: Finding[] = [
+        {
+          rule: "docker-run-as-root",
+          severity: "medium",
+          message: "Container running as root user",
+          file: "Dockerfile",
+          line: 4,
+        },
+      ];
+
+      const patchedContent = new Map([
+        [
+          "Dockerfile",
+          "FROM node:20\nWORKDIR /app\nCOPY . .\nUSER root\nCMD ['node', 'index.js']",
+        ],
+      ]);
+
+      await postReviewComments(
+        mockOctokit,
+        "owner",
+        "repo",
+        10,
+        "sha123",
+        findings,
+        patchedContent,
+        [],
+      );
+
+      // Verifies that it attempted individual comment endpoint
+      expect(requestMock).toHaveBeenCalledWith(
+        "POST /repos/{owner}/{repo}/pulls/{pull_number}/comments",
+        expect.objectContaining({
+          path: "Dockerfile",
+          line: 4,
+          side: "RIGHT",
+          body: expect.stringContaining("USER appuser"),
+        }),
+      );
+    });
+
+    it("verifies MANUAL_REVIEW_SUMMARIES contains actionable guidance across key manual review rules", () => {
+      expect(
+        MANUAL_REVIEW_SUMMARIES["dependency-wildcard-version"],
+      ).toBeDefined();
+      expect(MANUAL_REVIEW_SUMMARIES["dependency-wildcard-version"]).toContain(
+        "Pin wildcard",
+      );
+      expect(
+        MANUAL_REVIEW_SUMMARIES["dependency-insecure-git-protocol"],
+      ).toContain("Insecure git dependency protocol");
+      expect(MANUAL_REVIEW_SUMMARIES["docker-run-as-root"]).toContain(
+        "Container runs as root",
+      );
+      expect(MANUAL_REVIEW_SUMMARIES["powershell-encoded-command"]).toContain(
+        "Encoded PowerShell command",
+      );
     });
   });
 

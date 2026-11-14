@@ -128,6 +128,341 @@ export const MANUAL_REVIEW_RULES = new Set([
   "workflow-pull-request-target-checkout",
 ]);
 
+// ─── Human-readable actionable summaries for unpatched rules (used in PR description) ───
+export const MANUAL_REVIEW_SUMMARIES: Record<string, string> = {
+  // Dependencies & packages
+  "dependency-wildcard-version":
+    '**Pin wildcard / latest dependency versions** — replace `latest`, `*`, or raw `.tgz` references with pinned semantic versions (e.g., `"2.1.4"`). Run `npm outdated` to check current releases.',
+  "dependency-insecure-git-protocol":
+    "**Insecure git dependency protocol** — replace unencrypted `git://` URLs with secure `https://` or `git+ssh://` protocols.",
+  "npm-typosquatted-package":
+    "**Typosquatted npm package** — verify package names against official documentation. Typosquatted packages mimic legitimate libraries to distribute malware.",
+  "pypi-typosquatted-package":
+    "**Typosquatted PyPI package** — verify package names in requirements.txt against official PyPI entries.",
+  "suspicious-npm-script-hijack":
+    "**Suspicious npm script hijack** — review package.json scripts for chained malware commands, unauthorized curl/wget executions, or foreign binaries.",
+  "suspicious-npm-postinstall":
+    "**Suspicious npm postinstall script** — postinstall scripts run automatically on `npm install`. Inspect the script for unauthorized downloads or execution.",
+  "suspicious-registry-url":
+    "**Non-standard package registry URL** — verify registry URLs in npm/pip configurations before installing dependencies.",
+
+  // Secrets & Environment
+  "hardcoded-secret":
+    "**Hardcoded secrets** — rotate any exposed credentials immediately",
+  "high-entropy-secret":
+    "**High-entropy secret** — high-entropy string consistent with an API key/token detected. Invalidate and re-issue in your provider dashboard.",
+  "env-exfiltration":
+    "**Env exfiltration** — audit any network calls that reference env variables",
+  "committed-env-file":
+    "**Committed .env file** — rotate all secrets in the committed environment file immediately, purge from git history, and add to `.gitignore`.",
+  "dotenv-file-committed":
+    "**Committed .env file** — rotate all secrets in the committed environment file immediately, purge from git history, and add to `.gitignore`.",
+
+  // Docker
+  "docker-run-as-root":
+    "**Container runs as root** — create and specify a non-root `USER` (e.g. `USER appuser`) to adhere to least privilege.",
+  "docker-no-user-directive":
+    "**No USER directive in Dockerfile** — specify an explicit non-root `USER` so containers do not execute as root by default.",
+  "docker-add-remote-url":
+    "**ADD directive with remote URL** — replace `ADD <url>` with `RUN curl/wget` accompanied by explicit checksum verification.",
+  "docker-latest-tag":
+    "**Mutable Docker base image** — pin base images to specific version tags or digests (e.g. `node:20-alpine`) instead of `:latest`.",
+  "docker-curl-pipe-bash":
+    "**Dockerfile curl|bash pipe** — download remote scripts, verify sha256 checksums or GPG signatures, and execute as separate steps.",
+
+  // Workflows / CI
+  "workflow-unpinned-action":
+    "**Unpinned Actions** — pin third-party GitHub Actions to a full 40-character commit SHA (e.g., `uses: actions/checkout@b4ffde... # v4.1.1`).",
+  "workflow-curl-pipe-bash":
+    "**Workflow curl|bash** — verify if curl/wget is required in workflow and replace direct shell pipes with signed or pinned scripts.",
+  "workflow-exfiltrate-secrets":
+    "**Workflow secrets exfiltration** — ensure `secrets.*` are not sent to untrusted network destinations or external composite actions.",
+  "workflow-suspicious-trigger":
+    "**Workflow broad trigger** — restrict the triggers in workflow file. Avoid running on untrusted PR heads.",
+  "workflow-pull-request-target-checkout":
+    "**Dangerous pull_request_target checkout** — never check out untrusted pull request code into workflows running with write permissions or secrets.",
+
+  // Malware & Obfuscation
+  "reverse-shell":
+    "**Reverse shell detected** — remote connection backdoor pattern found. Remove immediately and inspect repository for compromise.",
+  "remote-eval-backdoor":
+    "**Remote eval backdoor** — dynamic evaluation (`eval`, `Function`) of fetched code detected. Remove and bundle dependencies statically.",
+  "powershell-encoded-command":
+    "**Encoded PowerShell command** — base64-encoded PowerShell execution detected. Decode and verify the payload or replace with clear scripts.",
+  "crypto-miner-keywords":
+    "**Cryptocurrency miner indicators** — mining pool or protocol keywords detected. Audit processes and dependencies.",
+  "obfuscated-base64":
+    "**Obfuscated base64 payload** — encoded executable payload detected. Decode, inspect intent, and remove if unauthorized.",
+  "obfuscated-malware-pattern":
+    "**Obfuscated malware pattern** — obfuscated string arrays or loader bypasses detected. Inspect and remove.",
+  "js-obfuscated-charcode":
+    "**Obfuscated JavaScript charCode** — dynamic string evaluation via charCode detected. Replace with clear code or remove.",
+  "js-obfuscated-constructors":
+    "**Obfuscated JavaScript constructor** — dynamic function constructor execution detected. Remove unauthorized dynamic execution.",
+  "js-obfuscated-hex":
+    "**Obfuscated JavaScript hex strings** — hex-encoded string evaluation detected. Decode and review.",
+  "python-exec-compile":
+    "**Python dynamic exec(compile)** — dynamic execution of compiled code strings detected. Replace with static code.",
+  "python-obfuscated-base64-exec":
+    "**Python base64 exec** — dynamic execution of base64-decoded code detected. Remove obfuscated execution.",
+  "python-subprocess-network":
+    "**Python subprocess network call** — subprocess invoking remote network payloads detected. Audit command parameters.",
+  "python-dynamic-import":
+    "**Python dynamic import** — dynamic module import via variable names detected. Validate module names against an allowlist.",
+  "suspicious-gitignore-entry":
+    "**Suspicious .gitignore entry** — ignore rule hiding sensitive artifacts or malware output. Remove suspicious entries.",
+  "curl-pipe-bash":
+    "**Curl piped to bash** — avoid piping remote scripts directly to shell. Download, verify hash, and execute separately.",
+  "wget-pipe-shell":
+    "**Wget piped to shell** — avoid piping remote scripts directly to shell. Download, verify hash, and execute separately.",
+  "dockerfile-modified-with-malware":
+    "**Dockerfile modified with malware** — suspicious commands detected in Dockerfile build instructions. Review build instructions.",
+};
+
+// ─── Detailed step-by-step remediation guidance for line-level review comments ───
+export const RULE_ACTIONABLE_DETAILS: Record<string, string[]> = {
+  "dependency-wildcard-version": [
+    '**Pin exact version:** Replace `"latest"`, `"*"`, or raw `.tgz` tarball URLs with a specific, pinned semantic version (e.g., `"2.1.4"`).',
+    "**Supply-chain risk:** Unpinned wildcard dependencies automatically pull newer upstream releases, making builds non-reproducible and vulnerable to supply-chain package takeovers.",
+    "**Verify current stable release:** Run `npm outdated` or check the package on https://www.npmjs.com to find the current vetted version.",
+  ],
+  "dependency-insecure-git-protocol": [
+    "**Use secure protocol:** Replace unencrypted `git://` dependency URLs with `https://` or `git+ssh://`.",
+    "**Transport security risk:** The `git://` protocol does not encrypt traffic or authenticate the server, leaving dependency downloads vulnerable to man-in-the-middle (MITM) tampering.",
+  ],
+  "npm-typosquatted-package": [
+    "**Verify package authenticity:** Attackers publish packages with names very similar to popular libraries (e.g., `axois` vs `axios`).",
+    "**Replace with legitimate dependency:** Confirm the intended package name on https://www.npmjs.com and update `package.json`.",
+  ],
+  "pypi-typosquatted-package": [
+    "**Verify package authenticity:** Confirm the intended package name on https://pypi.org.",
+    "**Replace with legitimate dependency:** Update `requirements.txt` to point to the correct, verified package name.",
+  ],
+  "suspicious-npm-script-hijack": [
+    "**Review package scripts:** Inspect commands defined under `scripts` in `package.json`.",
+    "**Remove chained execution:** Remove unauthorized command prefixes (e.g., `node malware.js && ...`) or calls to external scripts/binaries.",
+  ],
+  "suspicious-npm-postinstall": [
+    "**Audit postinstall lifecycle:** Postinstall scripts execute automatically upon `npm install` on all developer machines and CI runners.",
+    "**Remove or sandbox:** Ensure the script does not download remote payloads, invoke foreign shells, or exfiltrate environment data.",
+  ],
+  "suspicious-registry-url": [
+    "**Verify package registry:** Ensure `.npmrc` or package configurations point to trusted, official registries.",
+    "**Avoid untrusted registries:** Third-party package registries may serve malicious packages or outdated mirrors.",
+  ],
+  "docker-run-as-root": [
+    "**Run as unprivileged user:** Add a dedicated non-root user (e.g. `RUN useradd -m -u 1001 appuser && USER appuser`) before the application entrypoint.",
+    "**Least privilege:** Running container workloads as root grants processes root capabilities inside the container and increases the risk of container breakouts.",
+  ],
+  "docker-no-user-directive": [
+    "**Add USER directive:** Define an explicit non-root `USER` directive in your Dockerfile.",
+    "**Default privileges:** Containers without a `USER` directive run as root by default.",
+  ],
+  "docker-add-remote-url": [
+    "**Avoid remote ADD:** Replace `ADD <url> <dest>` with `RUN curl -fsSL <url> -o <dest>` accompanied by a checksum verification step.",
+    "**Integrity:** The `ADD` instruction does not perform cryptographic checksum validation on remote resources.",
+  ],
+  "docker-latest-tag": [
+    "**Pin base image:** Change `FROM <image>:latest` to an immutable tag or digest (e.g., `FROM node:20.18-alpine` or `FROM node@sha256:...`).",
+    "**Build stability:** Mutable `:latest` tags can pull breaking upstream changes without notice.",
+  ],
+  "docker-curl-pipe-bash": [
+    "**Avoid piping remote scripts to shell:** Do not run `curl/wget ... | bash/sh` inside Dockerfile build instructions.",
+    "**Download and verify:** Fetch the script, verify its sha256 checksum or GPG signature, and run it as an independent command.",
+  ],
+  "workflow-unpinned-action": [
+    "**Pin to immutable commit SHA:** Replace mutable branch or tag refs (e.g., `@v4`) with the full 40-character commit SHA: `uses: actions/checkout@b4ffde... # v4.1.1`.",
+    "**Tamper resistance:** Tags can be force-pushed or compromised if an action maintainer's account is breached.",
+  ],
+  "workflow-curl-pipe-bash": [
+    "**Avoid piping remote scripts into shell in CI:** Do not execute `curl ... | bash` in GitHub Actions workflow steps.",
+    "**Pre-install or pin:** Check scripts into version control, install verified packages via package managers, or verify SHA-256 integrity hashes before execution.",
+  ],
+  "workflow-exfiltrate-secrets": [
+    "**Audit secret usage:** Ensure GitHub Actions secrets are only passed to trusted, first-party tools and endpoints.",
+    "**Block unauthorized network calls:** Verify that workflow steps with access to `secrets.*` do not invoke curl, wget, or third-party webhooks with secret data.",
+  ],
+  "workflow-suspicious-trigger": [
+    "**Restrict workflow triggers:** Limit automated execution to authorized branch pushes and internal pull requests.",
+    "**Prevent fork abuse:** Avoid running privileged workflows automatically against pull requests from public forks.",
+  ],
+  "workflow-pull-request-target-checkout": [
+    "**Do not check out untrusted PR head:** Never run `actions/checkout` with `ref: ${{ github.event.pull_request.head.sha }}` inside a `pull_request_target` workflow.",
+    "**High-severity privilege escalation:** `pull_request_target` workflows run with base repository write access and secrets; checking out untrusted PR code allows attackers to execute arbitrary code with those permissions.",
+    "**Remediation:** Use standard `on: pull_request` instead, or isolate untrusted code builds to a separate workflow that has no repository secrets.",
+  ],
+  "reverse-shell": [
+    "**Immediate threat:** A reverse shell pattern opens an interactive command prompt to a remote network listener.",
+    "**Remove malicious code:** Delete the offending line/file immediately.",
+    "**Incident response:** Treat the repository as compromised. Investigate git commit history, audit CI runners, and revoke active deployment credentials.",
+  ],
+  "remote-eval-backdoor": [
+    "**Dynamic code execution risk:** Fetching code over HTTP/HTTPS and executing it via `eval()`, `new Function()`, or dynamic compilation is a high-risk backdoor pattern.",
+    "**Remove remote eval:** Remove dynamic network evaluation and bundle verified dependencies statically through your build system.",
+  ],
+  "powershell-encoded-command": [
+    "**Decode and audit:** Base64-encoded PowerShell commands (`powershell -EncodedCommand ...`) obfuscate execution payloads.",
+    "**Replace with explicit scripts:** Decode the base64 string to verify its behavior, and replace with plain-text readable PowerShell or shell scripts.",
+  ],
+  "crypto-miner-keywords": [
+    "**Remove unauthorized miner:** Keywords matching known cryptocurrency mining software (stratum, xmrig, supportxmr) were detected.",
+    "**Audit dependencies:** Check whether an unauthorized package or dependency was introduced into your build pipeline.",
+  ],
+  "obfuscated-base64": [
+    "**Inspect payload:** Decode the base64 string to review what code is being executed.",
+    "**Remove obfuscation:** Legitimate repository code should be clearly readable. Remove unauthorized or hidden payloads.",
+  ],
+  "obfuscated-malware-pattern": [
+    "**Malware indicator:** Obfuscated string array loaders and require bypasses are typical of credential stealers and dropper malware.",
+    "**Remove file/code:** Delete the obfuscated routine and inspect commit origin.",
+  ],
+  "js-obfuscated-charcode": [
+    "**Inspect dynamic string evaluation:** Converting character codes into executable strings (`String.fromCharCode(...)`) hides malicious intent.",
+    "**Replace with clear code:** Remove obfuscated charCode invocations.",
+  ],
+  "js-obfuscated-constructors": [
+    "**Dynamic Function execution:** Invoking `Function(...)()` or constructor chains bypasses static code analysis.",
+    "**Remove dynamic execution:** Refactor to static functions or remove unauthorized code.",
+  ],
+  "js-obfuscated-hex": [
+    "**Hex-encoded payload:** Hex escape sequences (`\\x65\\x76\\x61\\x6c`) are used to conceal malicious strings.",
+    "**Decode and verify:** Remove obfuscated hex strings from source code.",
+  ],
+  "python-exec-compile": [
+    "**Dynamic Python compilation:** `exec(compile(...))` is frequently abused to run encrypted or packed payloads.",
+    "**Remove dynamic compilation:** Use static Python imports and functions.",
+  ],
+  "python-obfuscated-base64-exec": [
+    "**Base64 dynamic execution:** Base64-decoded code executed via `exec()` should be removed.",
+    "**Decode and review:** Inspect the decoded script to verify its origin.",
+  ],
+  "python-subprocess-network": [
+    "**Subprocess network call:** Subprocess execution invoking remote network tools (curl, wget, nc) detected.",
+    "**Audit command arguments:** Ensure external network commands are not downloading untrusted payloads.",
+  ],
+  "python-dynamic-import": [
+    "**Dynamic module loading:** Dynamic `__import__()` or `importlib.import_module()` with variable arguments can load arbitrary code.",
+    "**Validate module name:** Ensure imported module names are strictly validated against an explicit whitelist.",
+  ],
+  "suspicious-gitignore-entry": [
+    "**Review ignored paths:** Check `.gitignore` for patterns that suppress security tools, lockfiles, or dropped payload artifacts.",
+    "**Remove suspicious rules:** Ensure all critical application files and configs are tracked in version control.",
+  ],
+  "curl-pipe-bash": [
+    "**Piping remote URL to shell:** `curl ... | bash` executes untrusted remote code without verification.",
+    "**Download and verify:** Download the script, check its cryptographic signature or sha256 checksum, and run separately.",
+  ],
+  "wget-pipe-shell": [
+    "**Piping remote URL to shell:** `wget ... | sh` executes untrusted remote code without verification.",
+    "**Download and verify:** Download the script, verify integrity, and run as a distinct command.",
+  ],
+  "committed-env-file": [
+    "**Compromised credentials:** Environment configuration files (`.env`) checked into git history expose all contained secrets.",
+    "**Rotate all secrets immediately:** Consider every token, database URI, and API key in this file compromised.",
+    "**Purge from git history:** Remove the file from git tracking (`git rm --cached .env`), add `.env` to `.gitignore`, and rewrite git history.",
+  ],
+  "dotenv-file-committed": [
+    "**Compromised credentials:** Environment configuration files (`.env`) checked into git history expose all contained secrets.",
+    "**Rotate all secrets immediately:** Consider every token, database URI, and API key in this file compromised.",
+    "**Purge from git history:** Remove the file from git tracking (`git rm --cached .env`), add `.env` to `.gitignore`, and rewrite git history.",
+  ],
+  "env-exfiltration": [
+    "**Exfiltration risk:** Network requests attempting to transmit environment variables detected.",
+    "**Audit endpoints:** Verify where environment data was sent and revoke all environment secrets immediately.",
+  ],
+};
+
+export function resolveFindingLine(
+  finding: Finding,
+  fileContent?: string,
+): number | null {
+  if (finding.line && finding.line > 0) return finding.line;
+  if (!fileContent) return null;
+
+  const lines = fileContent.split("\n");
+
+  if (finding.rule === "dependency-wildcard-version") {
+    const idx = lines.findIndex((l) =>
+      /:\s*["'](?:latest|\*|https?:\/\/.*\.tgz)["']/i.test(l),
+    );
+    if (idx >= 0) return idx + 1;
+  }
+
+  if (finding.rule === "dependency-insecure-git-protocol") {
+    const idx = lines.findIndex((l) => /:\s*["']git(?:\+http)?:\/\//i.test(l));
+    if (idx >= 0) return idx + 1;
+  }
+
+  if (finding.rule === "npm-typosquatted-package") {
+    const idx = lines.findIndex((l) =>
+      Object.keys(KNOWN_NPM_TYPOSQUATS).some(
+        (pkg) => l.includes(`"${pkg}"`) || l.includes(`'${pkg}'`),
+      ),
+    );
+    if (idx >= 0) return idx + 1;
+  }
+
+  if (finding.rule === "pypi-typosquatted-package") {
+    const idx = lines.findIndex((l) =>
+      Object.keys(KNOWN_PYPI_TYPOSQUATS).some((pkg) =>
+        new RegExp(`^\\s*${pkg}\\b`, "i").test(l),
+      ),
+    );
+    if (idx >= 0) return idx + 1;
+  }
+
+  if (finding.rule === "docker-run-as-root") {
+    const idx = lines.findIndex((l) => /^\s*USER\s+root\b/i.test(l));
+    if (idx >= 0) return idx + 1;
+  }
+
+  if (finding.rule === "docker-latest-tag") {
+    const idx = lines.findIndex((l) => /^\s*FROM\s+[^:\s]+:latest\b/i.test(l));
+    if (idx >= 0) return idx + 1;
+  }
+
+  if (finding.rule === "docker-add-remote-url") {
+    const idx = lines.findIndex((l) => /^\s*ADD\s+https?:\/\//i.test(l));
+    if (idx >= 0) return idx + 1;
+  }
+
+  if (finding.rule === "docker-no-user-directive") {
+    const idx = lines.findIndex((l) => /^\s*FROM\b/i.test(l));
+    if (idx >= 0) return idx + 1;
+  }
+
+  if (
+    finding.rule === "docker-curl-pipe-bash" ||
+    finding.rule === "curl-pipe-bash" ||
+    finding.rule === "wget-pipe-shell" ||
+    finding.rule === "workflow-curl-pipe-bash"
+  ) {
+    const idx = lines.findIndex((l) =>
+      /(?:curl|wget)\s+[^|]+\|\s*(?:bash|sh)/i.test(l),
+    );
+    if (idx >= 0) return idx + 1;
+  }
+
+  if (
+    finding.rule === "workflow-pull-request-target-checkout" ||
+    finding.rule === "workflow-suspicious-trigger"
+  ) {
+    const idx = lines.findIndex((l) =>
+      /pull_request_target|actions\/checkout/i.test(l),
+    );
+    if (idx >= 0) return idx + 1;
+  }
+
+  if (finding.rule === "powershell-encoded-command") {
+    const idx = lines.findIndex((l) =>
+      /powershell(?:\.exe)?\s+.*(?:-e|-encodedcommand)\b/i.test(l),
+    );
+    if (idx >= 0) return idx + 1;
+  }
+
+  return lines.length > 0 ? 1 : null;
+}
+
 export async function openFixPR(
   octokit: OctokitClient,
   { owner, repo, findings, issueNumber, revertFiles }: OpenFixPROptions,
@@ -1717,21 +2052,6 @@ export function buildPRBody(
   const whatWasDone = whatWasDoneList.join("\n") || "_None_";
 
   // Dynamically build "What requires manual review"
-  const MANUAL_REVIEW_SUMMARIES: Record<string, string> = {
-    "env-exfiltration":
-      "**Env exfiltration** — audit any network calls that reference env variables",
-    "hardcoded-secret":
-      "**Hardcoded secrets** — rotate any exposed credentials immediately",
-    "workflow-unpinned-action":
-      "**Unpinned Actions** — pin third-party GitHub Actions to a full commit SHA",
-    "workflow-curl-pipe-bash":
-      "**Workflow curl|bash** — verify if curl/wget is required in workflow",
-    "workflow-exfiltrate-secrets":
-      "**Workflow secrets exfiltration** — check if secrets are sent externally",
-    "workflow-suspicious-trigger":
-      "**Workflow broad trigger** — restrict the triggers in workflow file",
-  };
-
   const uniqueUnpatchedRules = [
     ...new Set(unpatchedFindings.map((f) => f.rule)),
   ];
@@ -2161,7 +2481,7 @@ export async function closeRepoGuardPRsAndIssues(
 interface ReviewComment {
   path: string;
   line: number;
-  side: string;
+  side: "RIGHT" | "LEFT";
   body: string;
 }
 
@@ -2179,10 +2499,14 @@ export async function postReviewComments(
   const comments: ReviewComment[] = [];
 
   for (const finding of findings) {
-    if (!finding.file || !finding.line) continue;
+    if (!finding.file) continue;
 
     // Skip if the file was deleted (not present in patchedContent map)
     if (!patchedContent.has(finding.file)) continue;
+
+    const fileText = patchedContent.get(finding.file) || "";
+    const resolvedLine = resolveFindingLine(finding, fileText);
+    if (!resolvedLine) continue;
 
     const isPatched =
       allPatchedFindings.includes(finding) ||
@@ -2190,7 +2514,7 @@ export async function postReviewComments(
         (pf) =>
           pf.rule === finding.rule &&
           pf.file === finding.file &&
-          pf.line === finding.line,
+          (pf.line === resolvedLine || pf.line === finding.line),
       );
 
     // Patched findings don't need a comment — the code diff already shows the fix.
@@ -2202,7 +2526,10 @@ export async function postReviewComments(
     let body: string;
     if (isSecret) {
       const suggestionCode =
-        fileSuggestions?.get(finding.file)?.get(finding.line) ||
+        fileSuggestions?.get(finding.file)?.get(resolvedLine) ||
+        (finding.line
+          ? fileSuggestions?.get(finding.file)?.get(finding.line)
+          : undefined) ||
         "// TODO: Replace hardcoded credential with process.env variable";
 
       body = [
@@ -2221,21 +2548,26 @@ export async function postReviewComments(
         `\`\`\``,
       ].join("\n");
     } else {
+      const details = RULE_ACTIONABLE_DETAILS[finding.rule] ?? [
+        "This finding cannot be automatically fixed. Please review and remediate manually.",
+      ];
+
       body = [
         `**RepoGuard** detected \`${finding.rule}\` (${finding.severity})`,
         `> ${finding.message}`,
         ``,
-        `<details>`,
+        `<details open>`,
         `<summary>⚠️ Manual review required</summary>`,
         ``,
-        `This finding cannot be automatically fixed. Please review and remediate manually.`,
+        `#### 💡 Recommended Action:`,
+        ...details.map((d) => `- ${d}`),
         `</details>`,
       ].join("\n");
     }
 
     comments.push({
       path: finding.file,
-      line: finding.line,
+      line: resolvedLine,
       side: "RIGHT",
       body,
     });
@@ -2260,33 +2592,66 @@ export async function postReviewComments(
     );
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
-    logger.error(
-      `[pr] Failed to post inline review comments: ${message}. Falling back to PR comment...`,
+    logger.warn(
+      `[pr] Failed to post batch review comments: ${message}. Attempting individual comments...`,
     );
-    try {
-      const summaryText = comments
-        .map((c) => `### 📄 \`${c.path}\` (line ${c.line})\n\n${c.body}`)
-        .join("\n\n---\n\n");
-      await octokit.request(
-        "POST /repos/{owner}/{repo}/issues/{issue_number}/comments",
-        {
-          owner,
-          repo,
-          issue_number: prNumber,
-          body: `## 🛡️ RepoGuard Security Findings & Remediation\n\n${summaryText}`,
-        },
-      );
+
+    const failedComments: ReviewComment[] = [];
+    let postedCount = 0;
+
+    for (const comment of comments) {
+      try {
+        await octokit.request(
+          "POST /repos/{owner}/{repo}/pulls/{pull_number}/comments",
+          {
+            owner,
+            repo,
+            pull_number: prNumber,
+            commit_id: headSha,
+            path: comment.path,
+            line: comment.line,
+            side: comment.side,
+            body: comment.body,
+          },
+        );
+        postedCount++;
+      } catch {
+        failedComments.push(comment);
+      }
+    }
+
+    if (postedCount > 0) {
       logger.info(
-        `[pr] Fallback: Posted security findings comment on PR #${prNumber}`,
+        `[pr] Successfully posted ${postedCount} individual inline review comment(s) on PR #${prNumber}`,
       );
-    } catch (fallbackErr) {
-      const fallbackMsg =
-        fallbackErr instanceof Error
-          ? fallbackErr.message
-          : String(fallbackErr);
-      logger.error(
-        `[pr] Failed fallback comment on PR #${prNumber}: ${fallbackMsg}`,
-      );
+    }
+
+    if (failedComments.length > 0) {
+      try {
+        const summaryText = failedComments
+          .map((c) => `### 📄 \`${c.path}\` (line ${c.line})\n\n${c.body}`)
+          .join("\n\n---\n\n");
+        await octokit.request(
+          "POST /repos/{owner}/{repo}/issues/{issue_number}/comments",
+          {
+            owner,
+            repo,
+            issue_number: prNumber,
+            body: `## 🛡️ RepoGuard Security Findings & Remediation\n\n${summaryText}`,
+          },
+        );
+        logger.info(
+          `[pr] Fallback: Posted security findings comment on PR #${prNumber}`,
+        );
+      } catch (fallbackErr) {
+        const fallbackMsg =
+          fallbackErr instanceof Error
+            ? fallbackErr.message
+            : String(fallbackErr);
+        logger.error(
+          `[pr] Failed fallback comment on PR #${prNumber}: ${fallbackMsg}`,
+        );
+      }
     }
   }
 }
