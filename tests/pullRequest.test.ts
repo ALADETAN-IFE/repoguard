@@ -1,6 +1,7 @@
 import {
   applyPatches,
   buildPRBody,
+  buildPRReport,
   openFixPR,
   closeRepoGuardPRsAndIssues,
   postReviewComments,
@@ -1280,6 +1281,32 @@ jobs:
       expect(body).toContain(
         "Fully-malicious files deleted: `deleted-file.sh`",
       );
+    });
+
+    it("caps PR body and generates overflow comments when findings span hundreds of files", () => {
+      // Generate 250 findings across 250 files
+      const findings: Finding[] = Array.from({ length: 250 }, (_, i) => ({
+        rule: "curl-pipe-bash",
+        severity: "critical",
+        message: `Remote code execution backdoor in module ${i}`,
+        file: `src/subproject-${i}/deep/nested/path/component-${i}.js`,
+      }));
+
+      const report = buildPRReport(findings, findings, []);
+
+      // Body must be strictly under GitHub's 65,536 limit
+      expect(report.body.length).toBeLessThan(55000);
+      expect(report.body).toContain("Showing detailed findings for the first");
+      expect(report.body).toContain(
+        "The remaining file details are posted in follow-up comments",
+      );
+
+      // Overflow comments must exist and each must also be under 55,000 characters
+      expect(report.overflowComments.length).toBeGreaterThan(0);
+      for (const comment of report.overflowComments) {
+        expect(comment.length).toBeLessThan(55000);
+        expect(comment).toContain("RepoGuard Security Report (Continued");
+      }
     });
   });
 

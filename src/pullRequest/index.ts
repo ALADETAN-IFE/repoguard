@@ -988,23 +988,108 @@ export async function openFixPR(
     const deletedFiles = filesToPatch
       .filter((f) => f.shouldDelete)
       .map((f) => f.filePath);
-    const { data: pr } = await octokit.request(
-      "POST /repos/{owner}/{repo}/pulls",
-      {
-        owner,
-        repo,
-        title: `🔒 RepoGuard: Security fixes — ${totalAllPatchedFindings} issue${totalAllPatchedFindings > 1 ? "s" : ""} resolved`,
-        body: buildPRBody(
-          findings,
-          allPatchedFindings,
-          allUnpatchedFindings,
-          deletedFiles,
-          issueNumber,
-        ),
-        head: branch,
-        base: defaultBranch,
-      },
+
+    const { body: prBody, overflowComments } = buildPRReport(
+      findings,
+      allPatchedFindings,
+      allUnpatchedFindings,
+      deletedFiles,
+      issueNumber,
     );
+
+    let pr: {
+      number: number;
+      html_url: string;
+      head?: { sha?: string };
+    };
+
+    try {
+      const { data } = await octokit.request(
+        "POST /repos/{owner}/{repo}/pulls",
+        {
+          owner,
+          repo,
+          title: `🔒 RepoGuard: Security fixes — ${totalAllPatchedFindings} issue${totalAllPatchedFindings > 1 ? "s" : ""} resolved`,
+          body: prBody,
+          head: branch,
+          base: defaultBranch,
+        },
+      );
+      pr = data;
+    } catch (createErr: unknown) {
+      const errMsg =
+        createErr instanceof Error ? createErr.message : String(createErr);
+      if (errMsg.includes("body is too long")) {
+        logger.warn(
+          `[pr] PR body exceeded GitHub limit in ${owner}/${repo} — retrying with minimal summary and posting full report in comments`,
+        );
+        const minimalBody = [
+          ...(issueNumber ? [`Fixes #${issueNumber}`, ""] : []),
+          "## 🔒 RepoGuard Security Report",
+          "",
+          "> This PR was opened automatically by RepoGuard after scanning your codebase.",
+          `> Resolved **${totalAllPatchedFindings}** finding${totalAllPatchedFindings > 1 ? "s" : ""} across the repository. Complete findings by file are detailed in the comments below.`,
+          "",
+          "## Summary",
+          "",
+          "| 🔴 Critical | 🟠 High | 🟡 Medium |",
+          "|-------------|---------|-----------|",
+          `| ${findings.filter((f) => f.severity === "critical").length} | ${findings.filter((f) => f.severity === "high").length} | ${findings.filter((f) => f.severity === "medium").length} |`,
+          "",
+          "---",
+          "_Opened by RepoGuard · Do not ignore this PR_",
+        ].join("\n");
+
+        const retryResponse = await octokit.request(
+          "POST /repos/{owner}/{repo}/pulls",
+          {
+            owner,
+            repo,
+            title: `🔒 RepoGuard: Security fixes — ${totalAllPatchedFindings} issue${totalAllPatchedFindings > 1 ? "s" : ""} resolved`,
+            body: minimalBody,
+            head: branch,
+            base: defaultBranch,
+          },
+        );
+        pr = retryResponse.data;
+      } else {
+        throw createErr;
+      }
+    }
+
+    logger.info(`[pr] Opened PR #${pr.number} in ${owner}/${repo}`);
+
+    // Post overflow comments sequentially with a 1.5s delay to avoid secondary rate limits
+    if (overflowComments.length > 0) {
+      logger.info(
+        `[pr] Posting ${overflowComments.length} overflow report comment(s) on PR #${pr.number}`,
+      );
+      for (let cIdx = 0; cIdx < overflowComments.length; cIdx++) {
+        const commentBody = overflowComments[cIdx];
+        try {
+          await octokit.request(
+            "POST /repos/{owner}/{repo}/issues/{issue_number}/comments",
+            {
+              owner,
+              repo,
+              issue_number: pr.number,
+              body: commentBody,
+            },
+          );
+          if (cIdx < overflowComments.length - 1) {
+            await new Promise((resolve) => setTimeout(resolve, 1500));
+          }
+        } catch (commentErr: unknown) {
+          const cMsg =
+            commentErr instanceof Error
+              ? commentErr.message
+              : String(commentErr);
+          logger.warn(
+            `[pr] Failed to post overflow comment ${cIdx + 1} on PR #${pr.number}: ${cMsg}`,
+          );
+        }
+      }
+    }
 
     // ✅ Post inline review comments (exclude deleted files)
     const patchedMap = new Map(
@@ -1043,8 +1128,6 @@ export async function openFixPR(
       allPatchedFindings,
       fileSuggestions,
     );
-
-    logger.info(`[pr] Opened PR #${pr.number} in ${owner}/${repo}`);
 
     // ── 8. Request review from admins ───────────────────────────────────────
     const reviewers = await getAdminLogins(octokit, owner, repo);
@@ -1091,12 +1174,17 @@ async function openSecurityIssue(
     ).length;
     const highCount = findings.filter((f) => f.severity === "high").length;
 
-    const findingsList = findings
+    const MAX_ISSUE_FINDINGS = 100;
+    const displayedFindings = findings.slice(0, MAX_ISSUE_FINDINGS);
+    let findingsList = displayedFindings
       .map(
         (f) =>
           `- **[${f.severity.toUpperCase()}]** \`${f.rule}\` in \`${f.file ?? "unknown"}\`: ${f.message}`,
       )
       .join("\n");
+    if (findings.length > MAX_ISSUE_FINDINGS) {
+      findingsList += `\n\n> ℹ️ *Showing first ${MAX_ISSUE_FINDINGS} of ${findings.length} findings. View all findings in the RepoGuard security dashboard.*`;
+    }
 
     const issueTitle =
       reason === "no_write_permission"
@@ -1954,13 +2042,46 @@ export async function applyPatches(
 
 // ─── PR body builder ──────────────────────────────────────────────────────────
 
-export function buildPRBody(
+function buildFileSection(
+  file: string,
+  fileFindings: Finding[],
+  patchedFindings: Finding[],
+  deletedFiles: string[],
+): string {
+  const rows = fileFindings
+    .map((f) => {
+      const isPatched = patchedFindings.includes(f);
+      const isDeleted = deletedFiles.includes(file);
+      const status = isDeleted
+        ? "🗑️ Deleted"
+        : isPatched
+          ? "✅ Patched"
+          : "⚠️ Requires Manual Review";
+      return `| ${severityEmoji(f.severity)} ${f.severity} | \`${f.rule}\` | ${f.message} | ${status} |`;
+    })
+    .join("\n");
+  return [
+    `### 📄 \`${file}\``,
+    "",
+    "| Severity | Rule | Description | Status |",
+    "|----------|------|-------------|--------|",
+    rows,
+    "",
+  ].join("\n");
+}
+
+export interface PRReportResult {
+  body: string;
+  overflowComments: string[];
+}
+
+export function buildPRReport(
   findings: Finding[],
   patchedFindings: Finding[],
   unpatchedFindings: Finding[],
   deletedFiles: string[] = [],
   issueNumber?: number,
-): string {
+): PRReportResult {
   const criticalCount = findings.filter(
     (f) => f.severity === "critical",
   ).length;
@@ -1973,30 +2094,10 @@ export function buildPRBody(
     return acc;
   }, {});
 
-  const fileDetails = Object.entries(groupedByFile)
-    .map(([file, fileFindings]) => {
-      const rows = fileFindings
-        .map((f) => {
-          const isPatched = patchedFindings.includes(f);
-          const isDeleted = deletedFiles.includes(file);
-          const status = isDeleted
-            ? "🗑️ Deleted"
-            : isPatched
-              ? "✅ Patched"
-              : "⚠️ Requires Manual Review";
-          return `| ${severityEmoji(f.severity)} ${f.severity} | \`${f.rule}\` | ${f.message} | ${status} |`;
-        })
-        .join("\n");
-      return [
-        `### 📄 \`${file}\``,
-        "",
-        "| Severity | Rule | Description | Status |",
-        "|----------|------|-------------|--------|",
-        rows,
-        "",
-      ].join("\n");
-    })
-    .join("\n");
+  const fileEntries = Object.entries(groupedByFile);
+  const fileSections = fileEntries.map(([file, fileFindings]) =>
+    buildFileSection(file, fileFindings, patchedFindings, deletedFiles),
+  );
 
   // Dynamically build "What was done" based on patched rules
   const PATCH_SUMMARIES: Record<string, string> = {
@@ -2065,6 +2166,32 @@ export function buildPRBody(
   const totalPatchedFindings = patchedFindings.length;
   const totalUnpatchedFindings = unpatchedFindings.length;
 
+  // Keep file details in main PR body within 40,000 chars to comfortably fit GitHub 65,536 limit
+  const MAX_MAIN_FILE_DETAILS_LENGTH = 40000;
+  const includedFileSections: string[] = [];
+  const overflowFileSections: string[] = [];
+  let currentFileDetailsLength = 0;
+
+  for (const section of fileSections) {
+    if (
+      overflowFileSections.length === 0 &&
+      currentFileDetailsLength + section.length <= MAX_MAIN_FILE_DETAILS_LENGTH
+    ) {
+      includedFileSections.push(section);
+      currentFileDetailsLength += section.length;
+    } else {
+      overflowFileSections.push(section);
+    }
+  }
+
+  if (overflowFileSections.length > 0) {
+    includedFileSections.push(
+      `> ℹ️ **Notice**: Showing detailed findings for the first ${includedFileSections.length} of ${fileSections.length} affected files. The remaining file details are posted in follow-up comments on this PR below.\n`,
+    );
+  }
+
+  const fileDetails = includedFileSections.join("\n");
+
   const bodyParts = [
     ...(issueNumber ? [`Fixes #${issueNumber}`, ""] : []),
     "## 🔒 RepoGuard Security Report",
@@ -2110,7 +2237,61 @@ export function buildPRBody(
     "_Opened by RepoGuard · Do not ignore this PR_",
   );
 
-  return bodyParts.join("\n");
+  // Group overflow sections into chunks capped at 45,000 chars per comment
+  const overflowComments: string[] = [];
+  if (overflowFileSections.length > 0) {
+    let currentChunk: string[] = [];
+    let currentChunkLength = 0;
+
+    for (const section of overflowFileSections) {
+      if (
+        currentChunkLength + section.length > 45000 &&
+        currentChunk.length > 0
+      ) {
+        overflowComments.push(currentChunk.join("\n"));
+        currentChunk = [];
+        currentChunkLength = 0;
+      }
+      currentChunk.push(section);
+      currentChunkLength += section.length;
+    }
+    if (currentChunk.length > 0) {
+      overflowComments.push(currentChunk.join("\n"));
+    }
+  }
+
+  const formattedComments = overflowComments.map((content, idx) => {
+    return [
+      `### 🔒 RepoGuard Security Report (Continued — Part ${idx + 1} of ${overflowComments.length})`,
+      "",
+      "> Detailed file findings continued from PR description:",
+      "",
+      content,
+      "---",
+      "_RepoGuard Automated Security Scan_",
+    ].join("\n");
+  });
+
+  return {
+    body: bodyParts.join("\n"),
+    overflowComments: formattedComments,
+  };
+}
+
+export function buildPRBody(
+  findings: Finding[],
+  patchedFindings: Finding[],
+  unpatchedFindings: Finding[],
+  deletedFiles: string[] = [],
+  issueNumber?: number,
+): string {
+  return buildPRReport(
+    findings,
+    patchedFindings,
+    unpatchedFindings,
+    deletedFiles,
+    issueNumber,
+  ).body;
 }
 
 function getCommentPrefix(filePath: string): string {
