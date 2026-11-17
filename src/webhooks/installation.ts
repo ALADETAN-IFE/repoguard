@@ -683,6 +683,81 @@ async function scanViaZipball(
   return { findings, filesScanned, commitSha, branch };
 }
 
+// ─── Rate Limit & Backoff Helpers for File-by-File Scans ─────────────────────
+
+function isRateLimitError(err: unknown): {
+  isRateLimit: boolean;
+  retryAfterMs: number;
+} {
+  const status = (err as { status?: number })?.status;
+  const message = (err as Error)?.message?.toLowerCase() || "";
+  const responseHeaders = (
+    err as { response?: { headers?: Record<string, string> } }
+  )?.response?.headers;
+
+  const is429 = status === 429;
+  const is403RateLimit =
+    status === 403 &&
+    (message.includes("rate limit") ||
+      message.includes("secondary") ||
+      message.includes("abuse"));
+
+  if (!is429 && !is403RateLimit) {
+    return { isRateLimit: false, retryAfterMs: 0 };
+  }
+
+  if (responseHeaders && responseHeaders["retry-after"]) {
+    const seconds = parseInt(responseHeaders["retry-after"], 10);
+    if (!isNaN(seconds) && seconds > 0) {
+      return { isRateLimit: true, retryAfterMs: seconds * 1000 };
+    }
+  }
+
+  return { isRateLimit: true, retryAfterMs: 2500 };
+}
+
+async function fetchFileContentWithBackoff(
+  client: OctokitClient,
+  owner: string,
+  repo: string,
+  path: string,
+  maxRetries = 3,
+): Promise<string | null> {
+  for (let attempt = 1; attempt <= maxRetries; attempt++) {
+    try {
+      const { data } = await client.request(
+        "GET /repos/{owner}/{repo}/contents/{path}",
+        { owner, repo, path },
+      );
+
+      if (Array.isArray(data) || data.type !== "file" || !("content" in data)) {
+        return null;
+      }
+
+      return Buffer.from(data.content || "", "base64").toString("utf8");
+    } catch (err: unknown) {
+      const { isRateLimit, retryAfterMs } = isRateLimitError(err);
+      if (isRateLimit && attempt < maxRetries) {
+        const backoffMs =
+          retryAfterMs * attempt + Math.floor(Math.random() * 500);
+        logger.warn(
+          `[scan] Rate limit hit fetching ${owner}/${repo}/${path} — backing off for ${backoffMs}ms (attempt ${attempt}/${maxRetries})`,
+        );
+        await new Promise((resolve) => setTimeout(resolve, backoffMs));
+        continue;
+      }
+
+      const status = (err as { status?: number })?.status;
+      if (status !== 404) {
+        const msg = err instanceof Error ? err.message : String(err);
+        logger.warn(`[scan] Skipped ${owner}/${repo}/${path}: ${msg}`);
+      }
+      return null;
+    }
+  }
+  return null;
+}
+
 async function scanViaTreeAndIndividualFiles(
   client: OctokitClient,
   owner: string,
@@ -754,40 +829,46 @@ async function scanViaTreeAndIndividualFiles(
   );
 
   const filesScanned = blobs.length;
+  logger.info(
+    `[scan] Discovered ${filesScanned} candidate file(s) in tree for ${owner}/${repo}`,
+  );
 
   for (let i = 0; i < blobs.length; i += BATCH_SIZE) {
+    if (i > 0 && i % 50 === 0) {
+      logger.info(
+        `[scan] ${owner}/${repo} — scanned ${i}/${filesScanned} files...`,
+      );
+    }
     const batch = blobs.slice(i, i + BATCH_SIZE);
 
     await Promise.all(
       batch.map(async (item: { path?: string }) => {
-        const binary = isBinaryPath(item.path!);
-        try {
-          const { data } = await client.request(
-            "GET /repos/{owner}/{repo}/contents/{path}",
-            { owner, repo, path: item.path! },
-          );
+        if (!item.path) return;
+        const binary = isBinaryPath(item.path);
+        const content = await fetchFileContentWithBackoff(
+          client,
+          owner,
+          repo,
+          item.path,
+        );
 
-          if (
-            Array.isArray(data) ||
-            data.type !== "file" ||
-            !("content" in data)
-          )
-            return;
+        if (content === null) return;
+        if (binary && !looksLikeJavaScript(content)) return;
 
-          const content = Buffer.from(data.content || "", "base64").toString(
-            "utf8",
-          );
-
-          if (binary && !looksLikeJavaScript(content)) return;
-
-          // ✅ Scan immediately — no files array accumulation
-          findings.push(...scanFileContent(content, item.path));
-        } catch {
-          // File deleted or inaccessible — skip
-        }
+        // ✅ Scan immediately — no files array accumulation
+        findings.push(...scanFileContent(content, item.path));
       }),
     );
+
+    // Cooperative delay between batches to avoid burst triggers on secondary rate limits
+    if (i + BATCH_SIZE < blobs.length) {
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    }
   }
+
+  logger.info(
+    `[scan] Completed file-by-file scan for ${owner}/${repo} (${filesScanned} files scanned, ${findings.length} finding${findings.length === 1 ? "" : "s"})`,
+  );
 
   return { findings, filesScanned, commitSha, branch };
 }
