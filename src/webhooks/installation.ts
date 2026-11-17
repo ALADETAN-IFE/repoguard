@@ -151,8 +151,35 @@ export async function scanRepoList(
   owner: string,
   repos: Array<{ full_name: string; name: string }>,
   trigger: "installation" | "manual" = "installation",
+  installationId?: number,
 ): Promise<void> {
   const checkpoint = await Checkpoint.findOne({ installationKey }).lean();
+  let resolvedInstallationId = installationId ?? checkpoint?.installationId;
+
+  if (!resolvedInstallationId) {
+    const match = installationKey.match(/-(\d+)$/);
+    if (match && match[1]) {
+      const parsed = parseInt(match[1], 10);
+      if (!isNaN(parsed) && parsed > 0) {
+        resolvedInstallationId = parsed;
+      }
+    }
+  }
+
+  if (!resolvedInstallationId) {
+    try {
+      const inst = await Installation.findOne({
+        owner: new RegExp(`^${owner}$`, "i"),
+        uninstalledAt: null,
+      }).lean();
+      if (inst?.installationId) {
+        resolvedInstallationId = inst.installationId;
+      }
+    } catch {
+      // ignore
+    }
+  }
+
   const alreadyScanned = checkpoint?.scanned ?? [];
 
   const pending =
@@ -194,7 +221,7 @@ export async function scanRepoList(
       type: "CREATE_SCAN",
       data: {
         scanId: scanId.toHexString(),
-        installationId: checkpoint?.installationId,
+        installationId: resolvedInstallationId,
         owner,
         repo: repo.name,
         branch,
@@ -230,7 +257,7 @@ export async function scanRepoList(
           data: {
             findings: findings.map((f) => ({
               scanId: scanId.toHexString(),
-              installationId: checkpoint?.installationId,
+              installationId: resolvedInstallationId,
               owner,
               repo: repo.name,
               rule: f.rule,
@@ -448,7 +475,14 @@ export function handleInstallation(
       }
     })();
 
-    await scanRepoList(client, installationKey, owner, allRepos);
+    await scanRepoList(
+      client,
+      installationKey,
+      owner,
+      allRepos,
+      "installation",
+      installation.id,
+    );
   };
 }
 
@@ -522,7 +556,14 @@ export function handleInstallationRepositories(
     });
 
     // Scan only the newly added repos
-    await scanRepoList(client, installationKey, owner, repositories_added);
+    await scanRepoList(
+      client,
+      installationKey,
+      owner,
+      repositories_added,
+      "installation",
+      installation.id,
+    );
   };
 }
 

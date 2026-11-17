@@ -339,6 +339,7 @@ export const scanSingleRepository = async (
       installation.owner,
       repoList,
       "manual",
+      installation.installationId,
     );
 
     res.json({

@@ -356,6 +356,8 @@ export async function rescanTenant(req: Request, res: Response): Promise<void> {
           installationKey,
           installation.owner,
           repoList,
+          "manual",
+          installation.installationId,
         );
 
         logAuditEvent({

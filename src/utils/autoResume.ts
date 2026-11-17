@@ -80,6 +80,8 @@ export async function resumeIncompleteScans(): Promise<void> {
           installationKey,
           owner,
           remaining,
+          "installation",
+          entry.installationId,
         );
         continue;
       }
@@ -102,6 +104,8 @@ export async function resumeIncompleteScans(): Promise<void> {
         installationKey,
         owner,
         repos,
+        "installation",
+        entry.installationId,
       );
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);

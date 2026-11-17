@@ -445,6 +445,8 @@ export const rescanAll = async (req: Request, res: Response): Promise<void> => {
             installationKey,
             installation.owner,
             repoList,
+            "manual",
+            installation.installationId,
           );
           logger.info(`[rescan] Completed rescan for ${installation.owner}`);
         } catch (err) {
