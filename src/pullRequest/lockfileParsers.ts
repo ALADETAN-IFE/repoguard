@@ -1,6 +1,41 @@
 import type { OctokitClient } from "../types/index";
 import logger from "../utils/logger";
 
+// ─── Typed interfaces for lockfile JSON shapes ───────────────────────────────
+
+interface PackageLockEntry {
+  version?: string;
+  dependencies?: Record<string, string>;
+  devDependencies?: Record<string, string>;
+}
+
+interface PackageLockJson {
+  packages?: Record<string, PackageLockEntry>;
+  dependencies?: Record<string, { version?: string }>;
+}
+
+interface BunLockEntry {
+  version?: string;
+}
+
+interface BunLockJson {
+  packages?: Record<string, string | BunLockEntry>;
+}
+
+interface PipfilePackageEntry {
+  version?: string;
+}
+
+interface PipfileLockJson {
+  default?: Record<string, PipfilePackageEntry>;
+  develop?: Record<string, PipfilePackageEntry>;
+  packages?: Record<string, PipfilePackageEntry>;
+}
+
+interface PackageJson {
+  packageManager?: string;
+}
+
 // ─── npm package-lock.json parser ───────────────────────────────────────────
 // Supports lockfileVersion: 1, 2, and 3
 export function parsePackageLock(
@@ -8,7 +43,7 @@ export function parsePackageLock(
   packageName: string,
 ): string | null {
   try {
-    const parsed = JSON.parse(content);
+    const parsed = JSON.parse(content) as PackageLockJson;
 
     // Lockfile v2 & v3: check packages["node_modules/<pkg>"]
     if (parsed.packages && typeof parsed.packages === "object") {
@@ -18,9 +53,9 @@ export function parsePackageLock(
       }
 
       // Check root packages entry
-      const rootDeps = {
-        ...(parsed.packages[""]?.dependencies || {}),
-        ...(parsed.packages[""]?.devDependencies || {}),
+      const rootDeps: Record<string, string> = {
+        ...(parsed.packages[""]?.dependencies ?? {}),
+        ...(parsed.packages[""]?.devDependencies ?? {}),
       };
       if (
         rootDeps[packageName] &&
@@ -100,7 +135,7 @@ export function parseBunLock(
   packageName: string,
 ): string | null {
   try {
-    const parsed = JSON.parse(content);
+    const parsed = JSON.parse(content) as BunLockJson;
     if (parsed.packages && typeof parsed.packages === "object") {
       const match = parsed.packages[packageName];
       if (typeof match === "string") return match.replace(/^[\^~>=<\s]+/, "");
@@ -144,10 +179,10 @@ export function parsePipfileLock(
   packageName: string,
 ): string | null {
   try {
-    const parsed = JSON.parse(content);
+    const parsed = JSON.parse(content) as PipfileLockJson;
     const pkg =
-      parsed.default?.[packageName] ||
-      parsed.develop?.[packageName] ||
+      parsed.default?.[packageName] ??
+      parsed.develop?.[packageName] ??
       parsed.packages?.[packageName];
     if (pkg?.version) {
       return String(pkg.version).replace(/^==/, "");
@@ -364,8 +399,8 @@ export async function findLockfileVersion(
     try {
       const manifestRaw = await fetchFile("package.json");
       if (manifestRaw) {
-        const pkgJson = JSON.parse(manifestRaw);
-        const pm: string = pkgJson.packageManager || "";
+        const pkgJson = JSON.parse(manifestRaw) as PackageJson;
+        const pm: string = pkgJson.packageManager ?? "";
         if (pm.startsWith("yarn")) {
           const match = discovered.find((d) => d.type === "yarn");
           if (match) chosen = match;
