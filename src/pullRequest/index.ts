@@ -7,6 +7,7 @@ import {
   KNOWN_PYPI_TYPOSQUATS,
 } from "@repoguard/scanner";
 import { generateAIPatch, isAIEnabled } from "../services/aiService";
+import { generateSuggestionForFinding } from "./suggestions";
 
 interface OpenFixPROptions {
   owner: string;
@@ -2737,6 +2738,9 @@ export async function postReviewComments(
     const resolvedLine = resolveFindingLine(finding, fileText);
     if (!resolvedLine) continue;
 
+    const fileLines = fileText.split("\n");
+    const lineContent = fileLines[resolvedLine - 1] || "";
+
     const isPatched =
       allPatchedFindings.includes(finding) ||
       allPatchedFindings.some(
@@ -2781,17 +2785,52 @@ export async function postReviewComments(
         "This finding cannot be automatically fixed. Please review and remediate manually.",
       ];
 
-      body = [
+      // Generate 1-click code suggestion (CodeRabbit-style)
+      const suggestionResult = await generateSuggestionForFinding(
+        finding,
+        lineContent,
+        { octokit, owner, repo, ref: headSha },
+      );
+
+      const bodyParts: string[] = [
         `**RepoGuard** detected \`${finding.rule}\` (${finding.severity})`,
         `> ${finding.message}`,
         ``,
+      ];
+
+      if (suggestionResult.conflictWarning) {
+        bodyParts.push(suggestionResult.conflictWarning, ``);
+      }
+
+      bodyParts.push(
         `<details open>`,
         `<summary>⚠️ Manual review required</summary>`,
         ``,
         `#### 💡 Recommended Action:`,
         ...details.map((d) => `- ${d}`),
-        `</details>`,
-      ].join("\n");
+      );
+
+      if (suggestionResult.sourceNote) {
+        bodyParts.push(`- **Suggested Fix:** ${suggestionResult.sourceNote}`);
+      }
+      if (suggestionResult.diagnosticCommand) {
+        bodyParts.push(
+          `- **Diagnostic Command:** Run \`${suggestionResult.diagnosticCommand}\` to inspect current resolved version.`,
+        );
+      }
+
+      bodyParts.push(`</details>`);
+
+      if (suggestionResult.suggestionCode) {
+        bodyParts.push(
+          ``,
+          `\`\`\`suggestion`,
+          suggestionResult.suggestionCode,
+          `\`\`\``,
+        );
+      }
+
+      body = bodyParts.join("\n");
     }
 
     comments.push({
