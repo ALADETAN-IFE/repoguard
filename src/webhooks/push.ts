@@ -705,6 +705,9 @@ export function handlePush(
               repo,
             );
             if (fullRepoFindings.length === 0) {
+              logger.info(
+                `[push] Full repository verification clean for ${owner}/${repo} — 0 vulnerabilities found`,
+              );
               await closeRepoGuardPRsAndIssues(client, owner, repo);
             } else {
               logger.info(

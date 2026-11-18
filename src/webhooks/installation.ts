@@ -581,6 +581,7 @@ async function scanViaZipball(
   owner: string,
   repo: string,
 ): Promise<FullRepoScanResult> {
+  const startTime = Date.now();
   const findings: Finding[] = [];
   logger.info(`[scan-size] Downloading zipball for ${owner}/${repo}`);
 
@@ -680,6 +681,11 @@ async function scanViaZipball(
     findings.push(...scanFileContent(content, filePath));
   }
 
+  const durationSec = ((Date.now() - startTime) / 1000).toFixed(2);
+  logger.info(
+    `[scan] Completed zipball scan for ${owner}/${repo} (${filesScanned} files scanned, ${findings.length} finding${findings.length === 1 ? "" : "s"} in ${durationSec}s)`,
+  );
+
   return { findings, filesScanned, commitSha, branch };
 }
 
@@ -763,6 +769,7 @@ async function scanViaTreeAndIndividualFiles(
   owner: string,
   repo: string,
 ): Promise<FullRepoScanResult> {
+  const startTime = Date.now();
   const findings: Finding[] = [];
 
   let treeSha = "HEAD";
@@ -866,8 +873,9 @@ async function scanViaTreeAndIndividualFiles(
     }
   }
 
+  const durationSec = ((Date.now() - startTime) / 1000).toFixed(2);
   logger.info(
-    `[scan] Completed file-by-file scan for ${owner}/${repo} (${filesScanned} files scanned, ${findings.length} finding${findings.length === 1 ? "" : "s"})`,
+    `[scan] Completed file-by-file scan for ${owner}/${repo} (${filesScanned} files scanned, ${findings.length} finding${findings.length === 1 ? "" : "s"} in ${durationSec}s)`,
   );
 
   return { findings, filesScanned, commitSha, branch };
