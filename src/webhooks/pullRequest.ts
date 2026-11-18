@@ -411,74 +411,24 @@ export function handlePullRequestOpened(
 
       if (findings.length > 0) {
         if (isFixBranch) {
+          logger.info(
+            `[pr] Fix PR #${prNumber} (${pull_request.head.ref}) has ${findings.length} remaining manual-review finding(s) — PR remains open for review`,
+          );
+        } else {
           logger.warn(
-            `[pr] Fix PR #${prNumber} (${pull_request.head.ref}) failed security check with ${findings.length} finding(s) — closing invalid fix branch`,
+            `[pr] ${findings.length} finding(s) in PR #${prNumber} — posting review comments`,
           );
 
-          try {
-            await client.request(
-              "POST /repos/{owner}/{repo}/issues/{issue_number}/comments",
-              {
-                owner,
-                repo,
-                issue_number: prNumber,
-                body: [
-                  "⚠️ **RepoGuard Notice: Automated Remediation Check Failed**",
-                  "",
-                  `This remediation branch (\`${pull_request.head.ref}\`) failed the security scan with ${findings.length} finding(s) (likely due to a manual push, force-push, or altered patch).`,
-                  "",
-                  "Automated remediation branches must remain 100% clean and verifiable. Closing this PR and deleting the branch so RepoGuard can regenerate a clean automated fix.",
-                ].join("\n"),
-              },
-            );
-
-            await client.request(
-              "PATCH /repos/{owner}/{repo}/pulls/{pull_number}",
-              {
-                owner,
-                repo,
-                pull_number: prNumber,
-                state: "closed",
-              },
-            );
-
-            try {
-              await client.request(
-                "DELETE /repos/{owner}/{repo}/git/refs/{ref}",
-                {
-                  owner,
-                  repo,
-                  ref: `heads/${pull_request.head.ref}`,
-                },
-              );
-              logger.info(
-                `[pr] Deleted failed fix branch ${pull_request.head.ref} in ${owner}/${repo}`,
-              );
-            } catch {
-              // ignore
-            }
-          } catch (err) {
-            logger.warn(
-              `[pr] Could not close failed fix PR #${prNumber}: ${String(err)}`,
-            );
-          }
-
-          return;
+          await postReviewComments(
+            client,
+            owner,
+            repo,
+            prNumber,
+            headSha,
+            findings,
+            new Map(), // no pre-patched content for PR scans
+          );
         }
-
-        logger.warn(
-          `[pr] ${findings.length} finding(s) in PR #${prNumber} — posting review comments`,
-        );
-
-        await postReviewComments(
-          client,
-          owner,
-          repo,
-          prNumber,
-          headSha,
-          findings,
-          new Map(), // no pre-patched content for PR scans
-        );
       } else {
         logger.info(`[pr] PR #${prNumber} is clean`);
 

@@ -463,6 +463,23 @@ export function resolveFindingLine(
   return lines.length > 0 ? 1 : null;
 }
 
+async function isPRStillOpen(
+  octokit: OctokitClient,
+  owner: string,
+  repo: string,
+  prNumber: number,
+): Promise<boolean> {
+  try {
+    const { data: currentPr } = await octokit.request(
+      "GET /repos/{owner}/{repo}/pulls/{pull_number}",
+      { owner, repo, pull_number: prNumber },
+    );
+    return currentPr?.state !== "closed";
+  } catch {
+    return true; // if check fails due to rate limits or transient errors, don't abort
+  }
+}
+
 export async function openFixPR(
   octokit: OctokitClient,
   { owner, repo, findings, issueNumber, revertFiles }: OpenFixPROptions,
@@ -1061,6 +1078,14 @@ export async function openFixPR(
 
     // Post overflow comments sequentially with a 1.5s delay to avoid secondary rate limits
     if (overflowComments.length > 0) {
+      const stillOpen = await isPRStillOpen(octokit, owner, repo, pr.number);
+      if (!stillOpen) {
+        logger.warn(
+          `[pr] PR #${pr.number} is no longer open — skipping overflow comments`,
+        );
+        return { pr: { number: pr.number, html_url: pr.html_url } };
+      }
+
       logger.info(
         `[pr] Posting ${overflowComments.length} overflow report comment(s) on PR #${pr.number}`,
       );
@@ -1089,6 +1114,15 @@ export async function openFixPR(
           );
         }
       }
+    }
+
+    // Verify PR is still open before posting inline review comments and requesting reviews
+    const isStillOpen = await isPRStillOpen(octokit, owner, repo, pr.number);
+    if (!isStillOpen) {
+      logger.warn(
+        `[pr] PR #${pr.number} is no longer open — skipping review comments, reviewers, and labels`,
+      );
+      return { pr: { number: pr.number, html_url: pr.html_url } };
     }
 
     // ✅ Post inline review comments (exclude deleted files)
@@ -1128,6 +1162,20 @@ export async function openFixPR(
       allPatchedFindings,
       fileSuggestions,
     );
+
+    // Verify PR is still open before requesting reviewers and applying labels
+    const stillOpenBeforeReviewers = await isPRStillOpen(
+      octokit,
+      owner,
+      repo,
+      pr.number,
+    );
+    if (!stillOpenBeforeReviewers) {
+      logger.warn(
+        `[pr] PR #${pr.number} is no longer open — skipping reviewers and labels`,
+      );
+      return { pr: { number: pr.number, html_url: pr.html_url } };
+    }
 
     // ── 8. Request review from admins ───────────────────────────────────────
     const reviewers = await getAdminLogins(octokit, owner, repo);
