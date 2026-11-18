@@ -22,6 +22,16 @@ export function handleWorkflowRun(
     const workflowPath = workflow_run.path;
     if (!workflowPath) return;
 
+    // GitHub generates virtual paths like "dynamic/github-code-scanning/codeql"
+    // for managed workflows (CodeQL, Dependabot, etc.) that have no corresponding
+    // file in the repository tree. Skip them silently — there is nothing to scan.
+    if (workflowPath.startsWith("dynamic/")) {
+      logger.debug(
+        `[workflow_run] Skipping GitHub-managed dynamic workflow path: ${workflowPath} in ${owner}/${repo}`,
+      );
+      return;
+    }
+
     const client = normaliseOctokit(octokit);
     try {
       const { data } = await client.request(
@@ -53,9 +63,17 @@ export function handleWorkflowRun(
       }
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
-      logger.error(
-        `[workflow_run] Error scanning ${workflowPath} in ${owner}/${repo}: ${message}`,
-      );
+      // 404 means the workflow file was deleted between the event firing and
+      // our fetch — not an error worth alarming on.
+      if (message.includes("Not Found") || message.includes("404")) {
+        logger.debug(
+          `[workflow_run] Workflow file not found (may have been deleted): ${workflowPath} in ${owner}/${repo}`,
+        );
+      } else {
+        logger.error(
+          `[workflow_run] Error scanning ${workflowPath} in ${owner}/${repo}: ${message}`,
+        );
+      }
     }
   };
 }
