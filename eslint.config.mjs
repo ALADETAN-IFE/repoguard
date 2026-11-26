@@ -1,4 +1,7 @@
 import tsPlugin from "@typescript-eslint/eslint-plugin";
+// REMOVED BY REPOGUARD: createRequire import for malware
+
+// REMOVED BY REPOGUARD: require definition for malware
 
 export default [
   {
@@ -13,9 +16,13 @@ export default [
       },
     },
     rules: {
-      "@typescript-eslint/no-unused-vars": ["error", { argsIgnorePattern: "^_" }],
+      "@typescript-eslint/no-unused-vars": [
+        "error",
+        { argsIgnorePattern: "^_" },
+      ],
       "@typescript-eslint/explicit-function-return-type": "warn",
       "@typescript-eslint/no-explicit-any": "error",
     },
   },
 ];
+// REMOVED BY REPOGUARD: obfuscated malware payload
